@@ -11,7 +11,52 @@ from datetime import datetime, timezone, timedelta
 
 from zoneinfo import ZoneInfo
 
+from datetime import datetime, timezone, timedelta
+import json
+import re
+import logging
+
 IST = timezone(timedelta(hours=5, minutes=30))
+
+def parse_utc_flex(ts) -> datetime:
+    """
+    Accepts a datetime or string in common UTC forms:
+    - '2025-09-02 17:17:42.204086+00'
+    - '2025-09-02 17:17:42.204086+00:00'
+    - '2025-09-02 17:17:42.204086Z'
+    - naive -> assume UTC
+    Returns an aware UTC datetime.
+    """
+    if ts is None:
+        raise ValueError("Timestamp is None")
+
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc)
+
+    s = str(ts).strip()
+
+    # Normalize timezone suffixes
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    # match +HH or -HH at end and make it +HH:MM
+    if re.search(r"([+-]\d{2})$", s):
+        s = s + ":00"
+    # specifically fix trailing +00
+    if s.endswith("+00"):
+        s = s[:-3] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(s)
+    except Exception as e:
+        raise ValueError(f"Unsupported timestamp format: {ts!r}") from e
+
+def to_ist_ampm_from_utc(utc_value) -> str:
+    dt_utc = parse_utc_flex(utc_value)
+    dt_ist = dt_utc.astimezone(IST)
+    return dt_ist.strftime("%d-%m-%Y %I:%M:%S %p")
+
 
 router = APIRouter(prefix="/client-consent", tags=["client consent"])
 
@@ -59,15 +104,11 @@ def create_client_consent(
 
     if kyc_user.email:
         # Parse string → datetime (UTC)
-        dt_utc = datetime.fromisoformat(now_ist.replace("Z", "+00:00"))
-
-                # Define IST offset (+5:30)
-
-                # Convert to IST
-        dt_ist = dt_utc.astimezone(IST)
-
-                # Format into Indian-style 12-hour time with AM/PM
-        formatted = dt_ist.strftime("%d-%m-%Y %I:%M:%S %p")
+        try:
+            formatted = to_ist_ampm_from_utc(now_ist)
+        except Exception as e:
+            logging.exception("Failed to convert consent time to IST")
+            formatted = "N/A"
         consent["email"] = kyc_user.email
         consent["mail_sent"] = True
         send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=f"""
