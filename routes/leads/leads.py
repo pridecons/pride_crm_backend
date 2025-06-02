@@ -28,6 +28,9 @@ router = APIRouter(
     tags=["leads"],
 )
 
+# Define IST offset (+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
 UPLOAD_DIR = "static/lead_documents"
 
 # ----------------- NEW: Filters + Response wrappers -----------------
@@ -673,9 +676,6 @@ def update_lead(
             if client_consent:
                 # Parse string → datetime (UTC)
                 dt_utc = datetime.fromisoformat(client_consent.consented_at_ist.replace("Z", "+00:00"))
-
-                # Define IST offset (+5:30)
-                IST = timezone(timedelta(hours=5, minutes=30))
 
                 # Convert to IST
                 dt_ist = dt_utc.astimezone(IST)

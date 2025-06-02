@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 
 from zoneinfo import ZoneInfo
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 router = APIRouter(prefix="/client-consent", tags=["client consent"])
 
 def _get_client_ip(request: Request) -> str:
@@ -60,7 +62,6 @@ def create_client_consent(
         dt_utc = datetime.fromisoformat(now_ist.replace("Z", "+00:00"))
 
                 # Define IST offset (+5:30)
-        IST = timezone(timedelta(hours=5, minutes=30))
 
                 # Convert to IST
         dt_ist = dt_utc.astimezone(IST)
