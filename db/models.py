@@ -773,10 +773,26 @@ class SMSLog(Base):
     body = Column(Text, nullable=False)
     sms_type = Column(String(50), nullable=True)
     status = Column(String(50), nullable=True)
+    sent_id = Column(String(100), nullable=True)
     sent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     user_id = Column(String(50), nullable=False, index=True)
 
     template = relationship("SMSTemplate", back_populates="logs")
+
+
+class WhatsappLog(Base):
+    __tablename__ = "crm_whatsapp_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    template_id = Column(Integer, ForeignKey("crm_sms_templates.id"), nullable=True)
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
+    recipient_phone_number = Column(String(320), nullable=False, index=True)
+    sent_id = Column(String(100), nullable=True)
+    template = Column(Text, nullable=False)
+    sms_type = Column(String(50), nullable=True)
+    status = Column(String(50), nullable=True)
+    sent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    user_id = Column(String(50), nullable=False, index=True)
 
 class EmailLog(Base):
     __tablename__ = "crm_email_logs"
@@ -789,6 +805,7 @@ class EmailLog(Base):
     subject         = Column(String(200), nullable=False)
     body            = Column(Text, nullable=False)
     user_id         = Column(String(50), nullable=False, index=True)
+    sent_id = Column(String(100), nullable=True)
     sent_at         = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     template = relationship("EmailTemplate", back_populates="logs")
