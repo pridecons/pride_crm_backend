@@ -671,6 +671,19 @@ def update_lead(
             )
 
             if client_consent:
+                from datetime import datetime, timezone, timedelta
+
+                # Parse string → datetime (UTC)
+                dt_utc = datetime.fromisoformat(client_consent.consented_at_ist.replace("Z", "+00:00"))
+
+                # Define IST offset (+5:30)
+                IST = timezone(timedelta(hours=5, minutes=30))
+
+                # Convert to IST
+                dt_ist = dt_utc.astimezone(IST)
+
+                # Format into Indian-style 12-hour time with AM/PM
+                formatted = dt_ist.strftime("%d-%m-%Y %I:%M:%S %p")
                 # call your mailer with the correct signature
                 send_mail_by_client_with_file(
                     to_email=update_data["email"],
@@ -689,7 +702,7 @@ def update_lead(
                         <tr><td><b>Device Info</b></td><td><pre>{client_consent.device_info or {} }</pre></td></tr>
                         <tr><td><b>Timezone Offset (minutes)</b></td><td>{client_consent.tz_offset_minutes}</td></tr>
                         <tr><td><b>Consented At (UTC)</b></td><td>{client_consent.consented_at_utc}</td></tr>
-                        <tr><td><b>Consented At (IST)</b></td><td>{client_consent.consented_at_ist.strftime("%d-%m-%Y %I:%M %p")}</td></tr>
+                        <tr><td><b>Consented At (IST)</b></td><td>{formatted}</td></tr>
                         <tr><td><b>Reference ID</b></td><td>{client_consent.ref_id}</td></tr>
                         </table>
                         """,

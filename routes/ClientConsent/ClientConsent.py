@@ -56,6 +56,19 @@ def create_client_consent(
     )
 
     if kyc_user.email:
+        from datetime import datetime, timezone, timedelta
+
+        # Parse string → datetime (UTC)
+        dt_utc = datetime.fromisoformat(now_ist.replace("Z", "+00:00"))
+
+                # Define IST offset (+5:30)
+        IST = timezone(timedelta(hours=5, minutes=30))
+
+                # Convert to IST
+        dt_ist = dt_utc.astimezone(IST)
+
+                # Format into Indian-style 12-hour time with AM/PM
+        formatted = dt_ist.strftime("%d-%m-%Y %I:%M:%S %p")
         consent["email"] = kyc_user.email
         consent["mail_sent"] = True
         send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=f"""
@@ -71,7 +84,7 @@ def create_client_consent(
         <tr><td><b>Device Info</b></td><td><pre>{payload.device_info or {} }</pre></td></tr>
         <tr><td><b>Timezone Offset (minutes)</b></td><td>{payload.tz_offset_minutes}</td></tr>
         <tr><td><b>Consented At (UTC)</b></td><td>{now_utc}</td></tr>
-        <tr><td><b>Consented At (IST)</b></td><td>{now_ist.strftime("%d-%m-%Y %I:%M %p")}</td></tr>
+        <tr><td><b>Consented At (IST)</b></td><td>{formatted}</td></tr>
         <tr><td><b>Reference ID</b></td><td>{consent.ref_id}</td></tr>
         </table>
         """
