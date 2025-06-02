@@ -2,7 +2,7 @@ import os
 import uuid
 import json
 from typing import Optional, List, Any, Dict, Union, Literal, Tuple
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
