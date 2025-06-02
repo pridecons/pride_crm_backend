@@ -7,8 +7,8 @@ from db.models import ClientConsent, Lead
 from db.Schema.client_consent import ClientConsentCreate, ClientConsentOut
 from utils.time_and_ids import gen_ref, now_utc_ist
 from services.mail_with_file import send_mail_by_client_with_file
+from datetime import datetime, timezone, timedelta
 
-from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 router = APIRouter(prefix="/client-consent", tags=["client consent"])
@@ -56,8 +56,6 @@ def create_client_consent(
     )
 
     if kyc_user.email:
-        from datetime import datetime, timezone, timedelta
-
         # Parse string → datetime (UTC)
         dt_utc = datetime.fromisoformat(now_ist.replace("Z", "+00:00"))
 

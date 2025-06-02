@@ -671,8 +671,6 @@ def update_lead(
             )
 
             if client_consent:
-                from datetime import datetime, timezone, timedelta
-
                 # Parse string → datetime (UTC)
                 dt_utc = datetime.fromisoformat(client_consent.consented_at_ist.replace("Z", "+00:00"))
 
