@@ -1,10 +1,21 @@
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
-    JSON, ARRAY, ForeignKey, func
+    JSON, ARRAY, ForeignKey, func, Enum
 )
 from sqlalchemy.orm import relationship
 from db.connection import Base
 import uuid
+import enum
+
+
+class UserRoleEnum(str, enum.Enum):
+    SUPERADMIN = "SUPERADMIN"
+    BRANCH_MANAGER = "BRANCH MANAGER"
+    SALES_MANAGER = "SALES MANAGER"
+    TL = "TL"  # Team Leader
+    HR = "HR"
+    BA = "BA"  # Business Associate
+    SBA = "SBA"  # Senior Business Associate
 
 
 class OTP(Base):
@@ -24,7 +35,7 @@ class UserDetails(Base):
     email             = Column(String(100), nullable=False, unique=True, index=True)
     name              = Column(String(100), nullable=False)
     password          = Column(String(255), nullable=False)
-    role              = Column(String(30), nullable=False, default="user")
+    role              = Column(Enum(UserRoleEnum), nullable=False, default=UserRoleEnum.BA)
 
     father_name       = Column(String(100), nullable=False)
     is_active         = Column(Boolean, nullable=False, default=True)
@@ -43,9 +54,11 @@ class UserDetails(Base):
 
     comment           = Column(Text, nullable=True)
 
-    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=False)
+    # Foreign Keys
+    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # SUPERADMIN won't have branch
     manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
 
+    # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at        = Column(
                          DateTime(timezone=True),
@@ -54,8 +67,28 @@ class UserDetails(Base):
                          nullable=False
                        )
 
-    # relationships
-    branch            = relationship("BranchDetails", back_populates="users")
+    # Relationships with explicit foreign_keys
+    branch            = relationship(
+                         "BranchDetails", 
+                         back_populates="users",
+                         foreign_keys=[branch_id]
+                       )
+    
+    # Self-referential relationship for manager hierarchy
+    manager           = relationship(
+                         "UserDetails",
+                         remote_side=[employee_code],
+                         back_populates="subordinates",
+                         foreign_keys=[manager_id]
+                       )
+    subordinates      = relationship(
+                         "UserDetails",
+                         back_populates="manager",
+                         foreign_keys=[manager_id],
+                         cascade="all, delete-orphan"
+                       )
+
+    # Branch management relationship (only for BRANCH MANAGER)
     manages_branch    = relationship(
                          "BranchDetails",
                          back_populates="manager",
@@ -63,17 +96,7 @@ class UserDetails(Base):
                          foreign_keys="[BranchDetails.manager_id]"
                        )
 
-    manager           = relationship(
-                         "UserDetails",
-                         remote_side=[employee_code],
-                         back_populates="subordinates"
-                       )
-    subordinates      = relationship(
-                         "UserDetails",
-                         back_populates="manager",
-                         cascade="all, delete-orphan"
-                       )
-
+    # Other relationships
     permission        = relationship(
                          "PermissionDetails",
                          back_populates="user",
@@ -112,11 +135,39 @@ class UserDetails(Base):
                     cascade="all, delete-orphan"
                 )
 
+    def get_hierarchy_level(self):
+        """Get hierarchy level based on role"""
+        hierarchy = {
+            UserRoleEnum.SUPERADMIN: 1,
+            UserRoleEnum.BRANCH_MANAGER: 2,
+            UserRoleEnum.SALES_MANAGER: 3,
+            UserRoleEnum.HR: 3,
+            UserRoleEnum.TL: 4,
+            UserRoleEnum.BA: 5,
+            UserRoleEnum.SBA: 5
+        }
+        return hierarchy.get(self.role, 6)
+
+    def can_manage(self, other_user):
+        """Check if this user can manage another user"""
+        return self.get_hierarchy_level() < other_user.get_hierarchy_level()
+
+    def get_required_manager_role(self):
+        """Get the role that should be this user's manager"""
+        manager_mapping = {
+            UserRoleEnum.BRANCH_MANAGER: UserRoleEnum.SUPERADMIN,
+            UserRoleEnum.SALES_MANAGER: UserRoleEnum.BRANCH_MANAGER,
+            UserRoleEnum.HR: UserRoleEnum.BRANCH_MANAGER,
+            UserRoleEnum.TL: UserRoleEnum.SALES_MANAGER,
+            UserRoleEnum.BA: UserRoleEnum.TL,
+            UserRoleEnum.SBA: UserRoleEnum.TL
+        }
+        return manager_mapping.get(self.role)
+
 
 class TokenDetails(Base):
     __tablename__ = "crm_token_details"
 
-    # Use a UUID4 string ID (36 chars including hyphens)
     id = Column(
         String(36),
         primary_key=True,
@@ -125,7 +176,6 @@ class TokenDetails(Base):
         nullable=False
     )
 
-    # Link to the UserDetails.employee_code
     user_id = Column(
         String(100),
         ForeignKey("crm_user_details.employee_code", ondelete="CASCADE"),
@@ -134,16 +184,13 @@ class TokenDetails(Base):
 
     refresh_token = Column(String(255), unique=True, nullable=False)
 
-    # Use server-side timestamp for consistency
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False
     )
 
-    # relationship back to UserDetails
     user = relationship("UserDetails", back_populates="tokens")
-
 
 
 class BranchDetails(Base):
@@ -166,7 +213,10 @@ class BranchDetails(Base):
                          nullable=False
                        )
 
+    # Branch Manager (one-to-one relationship)
     manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), unique=True, nullable=True)
+    
+    # Relationships
     manager           = relationship(
                          "UserDetails",
                          back_populates="manages_branch",
@@ -177,6 +227,7 @@ class BranchDetails(Base):
     users             = relationship(
                          "UserDetails",
                          back_populates="branch",
+                         foreign_keys="[UserDetails.branch_id]",
                          cascade="all, delete-orphan"
                        )
     leads             = relationship(
@@ -192,14 +243,17 @@ class PermissionDetails(Base):
     id              = Column(Integer, primary_key=True, autoincrement=True)
     user_id         = Column(String(100), ForeignKey("crm_user_details.employee_code"), unique=True, nullable=False)
 
+    # User Management Permissions
     add_user        = Column(Boolean, default=False)
     edit_user       = Column(Boolean, default=False)
     delete_user     = Column(Boolean, default=False)
 
+    # Lead Management Permissions
     add_lead        = Column(Boolean, default=False)
     edit_lead       = Column(Boolean, default=False)
     delete_lead     = Column(Boolean, default=False)
 
+    # View Permissions
     view_users      = Column(Boolean, default=False)
     view_lead       = Column(Boolean, default=False)
     view_branch     = Column(Boolean, default=False)
@@ -210,6 +264,7 @@ class PermissionDetails(Base):
     view_invoice    = Column(Boolean, default=False)
     view_kyc        = Column(Boolean, default=False)
 
+    # Special Permissions
     approval        = Column(Boolean, default=False)
     internal_mailing= Column(Boolean, default=False)
     chatting        = Column(Boolean, default=False)
@@ -218,6 +273,76 @@ class PermissionDetails(Base):
     fetch_lead      = Column(Boolean, default=False)
 
     user            = relationship("UserDetails", back_populates="permission")
+
+    @classmethod
+    def get_default_permissions(cls, role: UserRoleEnum):
+        """Get default permissions based on user role"""
+        permissions = {
+            UserRoleEnum.SUPERADMIN: {
+                'add_user': True, 'edit_user': True, 'delete_user': True,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': True,
+                'view_users': True, 'view_lead': True, 'view_branch': True,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': True, 'internal_mailing': True, 'chatting': True,
+                'targets': True, 'reports': True, 'fetch_lead': True
+            },
+            UserRoleEnum.BRANCH_MANAGER: {
+                'add_user': True, 'edit_user': True, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': True,
+                'view_users': True, 'view_lead': True, 'view_branch': True,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': True, 'internal_mailing': True, 'chatting': True,
+                'targets': True, 'reports': True, 'fetch_lead': True
+            },
+            UserRoleEnum.SALES_MANAGER: {
+                'add_user': False, 'edit_user': False, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
+                'view_users': True, 'view_lead': True, 'view_branch': False,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': False, 'internal_mailing': True, 'chatting': True,
+                'targets': True, 'reports': True, 'fetch_lead': True
+            },
+            UserRoleEnum.HR: {
+                'add_user': True, 'edit_user': True, 'delete_user': False,
+                'add_lead': False, 'edit_lead': False, 'delete_lead': False,
+                'view_users': True, 'view_lead': False, 'view_branch': True,
+                'view_accounts': False, 'view_research': False, 'view_client': False,
+                'view_payment': False, 'view_invoice': False, 'view_kyc': False,
+                'approval': False, 'internal_mailing': True, 'chatting': True,
+                'targets': False, 'reports': True, 'fetch_lead': False
+            },
+            UserRoleEnum.TL: {
+                'add_user': False, 'edit_user': False, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
+                'view_users': True, 'view_lead': True, 'view_branch': False,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': False, 'internal_mailing': True, 'chatting': True,
+                'targets': True, 'reports': True, 'fetch_lead': True
+            },
+            UserRoleEnum.BA: {
+                'add_user': False, 'edit_user': False, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
+                'view_users': False, 'view_lead': True, 'view_branch': False,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': False, 'internal_mailing': False, 'chatting': True,
+                'targets': False, 'reports': False, 'fetch_lead': True
+            },
+            UserRoleEnum.SBA: {
+                'add_user': False, 'edit_user': False, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
+                'view_users': False, 'view_lead': True, 'view_branch': False,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': False, 'internal_mailing': False, 'chatting': True,
+                'targets': False, 'reports': False, 'fetch_lead': True
+            }
+        }
+        return permissions.get(role, {})
 
 
 class LeadSource(Base):
@@ -399,4 +524,3 @@ class Campaign(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     owner       = relationship("UserDetails", back_populates="campaigns")
-
