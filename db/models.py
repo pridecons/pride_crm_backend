@@ -11,11 +11,11 @@ import enum
 class UserRoleEnum(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
     BRANCH_MANAGER = "BRANCH MANAGER"
+    HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
     TL = "TL"  # Team Leader
-    HR = "HR"
-    BA = "BA"  # Business Associate
     SBA = "SBA"  # Senior Business Associate
+    BA = "BA"  # Business Associate
 
 
 class OTP(Base):
@@ -57,6 +57,8 @@ class UserDetails(Base):
     # Foreign Keys
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # SUPERADMIN won't have branch
     manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    sales_manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    tl_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
 
     # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
