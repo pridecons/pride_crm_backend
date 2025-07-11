@@ -21,6 +21,8 @@ class UserBase(BaseModel):
     comment: Optional[str] = None
     branch_id: Optional[int] = None
     manager_id: Optional[str] = None
+    sales_manager_id: Optional[str] = None
+    tl_id: Optional[str] = None
 
 
 class UserCreate(UserBase):
@@ -47,6 +49,8 @@ class UserUpdate(BaseModel):
     comment: Optional[str]
     branch_id: Optional[int]
     manager_id: Optional[str]
+    sales_manager_id: Optional[str]
+    tl_id: Optional[str]
 
 
 class UserOut(UserBase):
