@@ -359,14 +359,19 @@ class LeadAssignment(Base):
     lead         = relationship("Lead", back_populates="assignment")
     user         = relationship("UserDetails")
 
+# db/models.py - FIXED LeadFetchConfig Model
+
 class LeadFetchConfig(Base):
     __tablename__ = "crm_lead_fetch_config"
     id                = Column(Integer, primary_key=True, autoincrement=True)
-    role              = Column(Enum(UserRoleEnum), nullable=True)        # e.g. SALES_MANAGER, TL...
-    user_id           = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    role              = Column(Enum(UserRoleEnum), nullable=True)
+    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # ✅ FIXED: Integer instead of String
     per_request_limit = Column(Integer, nullable=False)
     daily_call_limit  = Column(Integer, nullable=False)
     assignment_ttl_hours = Column(Integer, nullable=False, default=24*7)
+
+    # Add relationship
+    branch = relationship("BranchDetails", foreign_keys=[branch_id])
 
 class LeadFetchHistory(Base):
     __tablename__ = "crm_lead_fetch_history"

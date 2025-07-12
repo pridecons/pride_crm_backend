@@ -1,4 +1,4 @@
-# routes/leads/leads_fetch.py - FIXED VERSION
+# routes/leads/leads_fetch.py - Updated for Branch-wise Config
 
 from datetime import datetime, date, timedelta
 from typing import Optional
@@ -33,26 +33,65 @@ class LeadFetchResponse(BaseModel):
     lead_response_id: Optional[int] = None
 
 def load_fetch_config(db: Session, user: UserDetails) -> LeadFetchConfig:
-    """Load fetch configuration for user"""
-    # Try per-user override first
-    cfg = (
-        db.query(LeadFetchConfig)
-        .filter(LeadFetchConfig.user_id == user.employee_code)
-        .first()
-    )
+    """Load fetch configuration for user - Updated for branch-wise config"""
+    
+    # Priority order:
+    # 1. Role + Branch specific config
+    # 2. Global role config  
+    # 3. Global branch config
+    # 4. Fallback defaults
+    
+    cfg = None
+    
+    # 1. Try role + branch specific config
+    if user.role and user.branch_id:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=user.role, 
+            branch_id=user.branch_id
+        ).first()
+    
+    # 2. Fallback to global role config
+    if not cfg and user.role:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=user.role, 
+            branch_id=None
+        ).first()
+    
+    # 3. Fallback to global branch config
+    if not cfg and user.branch_id:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=None, 
+            branch_id=user.branch_id
+        ).first()
+    
+    # 4. If no config found, use defaults based on role
     if not cfg:
-        # Fallback to role-based config
-        cfg = (
-            db.query(LeadFetchConfig)
-            .filter(LeadFetchConfig.role == user.role)
-            .first()
-        )
-    if not cfg:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No fetch configuration found for your account/role",
-        )
+        default_configs = {
+            "SUPERADMIN": {"per_request_limit": 100, "daily_call_limit": 50, "assignment_ttl_hours": 24},
+            "BRANCH_MANAGER": {"per_request_limit": 50, "daily_call_limit": 30, "assignment_ttl_hours": 48},
+            "SALES_MANAGER": {"per_request_limit": 30, "daily_call_limit": 20, "assignment_ttl_hours": 72},
+            "TL": {"per_request_limit": 20, "daily_call_limit": 15, "assignment_ttl_hours": 72},
+            "BA": {"per_request_limit": 10, "daily_call_limit": 10, "assignment_ttl_hours": 168},
+            "SBA": {"per_request_limit": 15, "daily_call_limit": 12, "assignment_ttl_hours": 120}
+        }
+        
+        role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
+        default_config = default_configs.get(role_str, {
+            "per_request_limit": 10, 
+            "daily_call_limit": 5, 
+            "assignment_ttl_hours": 168
+        })
+        
+        # Create a temporary config object
+        class TempConfig:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+        
+        cfg = TempConfig(**default_config)
+    
     return cfg
+
 
 @router.post("/fetch", response_model=list[LeadFetchResponse])
 def fetch_leads(
@@ -61,10 +100,10 @@ def fetch_leads(
     current_user: UserDetails = Depends(require_permission("fetch_lead")),
 ):
     """
-    Fetch leads for the current user based on their role and configuration
+    Fetch leads for the current user based on their role and branch configuration
     """
     try:
-        # Load limits (per-request, daily-call, TTL)
+        # Load limits (per-request, daily-call, TTL) - Updated for branch-wise config
         config = load_fetch_config(db, current_user)
 
         # 1. Enforce daily-call limit
@@ -91,7 +130,7 @@ def fetch_leads(
         # Build query based on user's branch
         query = db.query(Lead).outerjoin(LeadAssignment)
         
-        # Filter by branch if user has one
+        # Filter by branch if user has one (branch-wise lead distribution)
         if current_user.branch_id:
             query = query.filter(Lead.branch_id == current_user.branch_id)
         
@@ -172,88 +211,44 @@ def fetch_leads(
             detail=f"Error fetching leads: {str(e)}"
         )
 
-@router.get("/fetch-config")
-def get_fetch_config(
+
+@router.post("/release-expired")
+def release_expired_assignments(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get current user's fetch configuration"""
+    """Manually release expired lead assignments"""
     try:
         config = load_fetch_config(db, current_user)
         
-        # Get today's usage
-        today = date.today()
-        hist = (
-            db.query(LeadFetchHistory)
-            .filter_by(user_id=current_user.employee_code, date=today)
-            .first()
-        )
+        # Calculate expiry cutoff
+        now = datetime.utcnow()
+        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
         
-        calls_today = hist.call_count if hist else 0
+        # Find expired assignments
+        expired_assignments = db.query(LeadAssignment).filter(
+            LeadAssignment.fetched_at < expiry_cutoff
+        ).all()
         
-        return {
-            "per_request_limit": config.per_request_limit,
-            "daily_call_limit": config.daily_call_limit,
-            "assignment_ttl_hours": config.assignment_ttl_hours,
-            "calls_today": calls_today,
-            "remaining_calls": max(0, config.daily_call_limit - calls_today),
-            "can_fetch": calls_today < config.daily_call_limit
-        }
+        expired_count = len(expired_assignments)
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting fetch config: {str(e)}"
-        )
-
-@router.get("/my-assigned-leads")
-def get_my_assigned_leads(
-    current_user: UserDetails = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get leads assigned to current user"""
-    try:
-        # Get all lead assignments for current user
-        assignments = (
-            db.query(LeadAssignment)
-            .filter_by(user_id=current_user.employee_code)
-            .all()
-        )
+        # Delete expired assignments
+        for assignment in expired_assignments:
+            db.delete(assignment)
         
-        # Get the actual leads
-        lead_ids = [assignment.lead_id for assignment in assignments]
-        leads = db.query(Lead).filter(Lead.id.in_(lead_ids)).all()
-        
-        # Convert to response format
-        response_leads = []
-        for lead in leads:
-            try:
-                lead_response = LeadFetchResponse(
-                    id=lead.id,
-                    full_name=lead.full_name,
-                    email=lead.email,
-                    mobile=lead.mobile,
-                    city=lead.city,
-                    occupation=lead.occupation,
-                    investment=lead.investment,
-                    created_at=lead.created_at,
-                    lead_source_id=lead.lead_source_id,
-                    lead_response_id=lead.lead_response_id,
-                )
-                response_leads.append(lead_response)
-            except Exception as e:
-                print(f"Error converting lead {lead.id}: {e}")
-                continue
+        db.commit()
         
         return {
-            "total_assigned": len(leads),
-            "leads": response_leads
+            "message": f"Released {expired_count} expired lead assignments",
+            "expired_count": expired_count,
+            "expiry_cutoff": expiry_cutoff.isoformat(),
+            "assignment_ttl_hours": config.assignment_ttl_hours
         }
         
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching assigned leads: {str(e)}"
+            detail=f"Error releasing expired assignments: {str(e)}"
         )
+    
