@@ -47,3 +47,4 @@ htmlcov/
 *.sublime-workspace
 *.sublime-project
 
+certificate.pfx

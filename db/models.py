@@ -349,6 +349,33 @@ class PermissionDetails(Base):
         return permissions.get(role, {})
 
 
+class LeadAssignment(Base):
+    __tablename__ = "crm_lead_assignments"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id      = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, unique=True)
+    user_id      = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
+    fetched_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    lead         = relationship("Lead", back_populates="assignment")
+    user         = relationship("UserDetails")
+
+class LeadFetchConfig(Base):
+    __tablename__ = "crm_lead_fetch_config"
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    role              = Column(Enum(UserRoleEnum), nullable=True)        # e.g. SALES_MANAGER, TL...
+    user_id           = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    per_request_limit = Column(Integer, nullable=False)
+    daily_call_limit  = Column(Integer, nullable=False)
+    assignment_ttl_hours = Column(Integer, nullable=False, default=24*7)
+
+class LeadFetchHistory(Base):
+    __tablename__ = "crm_lead_fetch_history"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    user_id     = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
+    date        = Column(Date, nullable=False, index=True)
+    call_count  = Column(Integer, default=0, nullable=False)
+
+
 class LeadSource(Base):
     __tablename__ = "crm_lead_source"
 
@@ -455,6 +482,8 @@ class Lead(Base):
     stories           = relationship("LeadStory", back_populates="lead", cascade="all, delete-orphan")
     lead_source       = relationship("LeadSource", back_populates="leads")
     lead_response     = relationship("LeadResponse", back_populates="leads")
+    assignment = relationship("LeadAssignment", back_populates="lead", uselist=False)
+       
 
 
 class AuditLog(Base):
