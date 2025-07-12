@@ -18,7 +18,7 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch
 from routes.auth.create_admin import create_admin
 
 # Configure logging
@@ -144,6 +144,7 @@ try:
     app.include_router(leads.router, prefix="/api/v1")
     app.include_router(lead_sources.router, prefix="/api/v1")
     app.include_router(bulk_leads.router, prefix="/api/v1")
+    app.include_router(leads_fetch.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     
 except Exception as e:
@@ -170,4 +171,3 @@ if __name__ == "__main__":
         log_level="info"
     )
 
-    
