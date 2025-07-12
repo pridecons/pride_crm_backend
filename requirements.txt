@@ -15,4 +15,5 @@ python-jose==3.4.0
 psycopg2-binary==2.9.10
 passlib==1.7.4
 pandas==2.2.3
+httpx==0.28.1
 bcrypt

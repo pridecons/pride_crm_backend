@@ -18,8 +18,10 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config,lead_responses
 from routes.auth.create_admin import create_admin
+from routes.services import services
+from routes.payments import Cashfree
 
 # Configure logging
 logging.basicConfig(
@@ -130,6 +132,7 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
+    # app.include_router(Cashfree.router, prefix="/api/v1")
     # Authentication routes
     app.include_router(login.router, prefix="/api/v1")
     app.include_router(register.router, prefix="/api/v1")
@@ -141,11 +144,13 @@ try:
     logger.info("✅ Core business routes registered")
     
     # Lead management routes
-    app.include_router(leads.router, prefix="/api/v1")
     app.include_router(lead_sources.router, prefix="/api/v1")
+    app.include_router(lead_responses.router, prefix="/api/v1")
+    app.include_router(leads.router, prefix="/api/v1")
     app.include_router(bulk_leads.router, prefix="/api/v1")
     app.include_router(fetch_config.router, prefix="/api/v1")
     app.include_router(leads_fetch.router, prefix="/api/v1")
+    app.include_router(services.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     
 except Exception as e:

@@ -2,7 +2,7 @@
 
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
-    JSON, ARRAY, ForeignKey, func, Enum
+    JSON, ARRAY, ForeignKey, func, Enum, Enum as SAEnum
 )
 from sqlalchemy.orm import relationship
 from db.connection import Base
@@ -562,3 +562,38 @@ class Campaign(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     owner       = relationship("UserDetails", back_populates="campaigns")
+
+class BillingCycleEnum(str, enum.Enum):
+    MONTHLY = "MONTHLY"
+    YEARLY  = "YEARLY"
+    CALL = "CALL"
+
+class Service(Base):
+    __tablename__ = "crm_services"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    name             = Column(String(100), nullable=False, unique=True, index=True)
+    description      = Column(Text, nullable=True)
+
+    # Base price before discount
+    price            = Column(Float, nullable=False)
+
+    CALL            = Column(Integer, nullable=True)
+
+    # Discount percentage (0–100)
+    discount_percent = Column(Float, nullable=True, default=0.0)
+
+    billing_cycle    = Column(
+                          SAEnum(BillingCycleEnum),
+                          nullable=False,
+                          default=BillingCycleEnum.MONTHLY
+                       )
+
+    @property
+    def discounted_price(self) -> float:
+        """Compute price after discount"""
+        return round(self.price * (1 - self.discount_percent / 100), 2)
+
+
+
+
