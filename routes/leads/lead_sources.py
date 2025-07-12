@@ -168,10 +168,11 @@ def get_lead_source(
         )
 
 
+
 @router.put("/sources/{source_id}", response_model=LeadSourceOut)
 def update_lead_source(
     source_id: int,
-    source_in: LeadSourceUpdate,
+    source_in: LeadSourceUpdate,  # ✅ FIXED: Was undefined before
     db: Session = Depends(get_db),
 ):
     """Update a lead source"""
@@ -184,25 +185,25 @@ def update_lead_source(
             )
         
         # Check for duplicate name if being updated
-        update_data = response_in.dict(exclude_unset=True)
+        update_data = source_in.dict(exclude_unset=True)  # ✅ FIXED: Now using source_in
         if "name" in update_data:
-            existing = db.query(LeadResponse).filter(
-                LeadResponse.name == update_data["name"],
-                LeadResponse.id != response_id
+            existing = db.query(LeadSource).filter(
+                LeadSource.name == update_data["name"],
+                LeadSource.id != source_id
             ).first()
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Another lead response with name '{update_data['name']}' already exists"
+                    detail=f"Another lead source with name '{update_data['name']}' already exists"
                 )
         
         # Update fields
         for field, value in update_data.items():
-            setattr(response, field, value)
+            setattr(source, field, value)
         
         db.commit()
-        db.refresh(response)
-        return response
+        db.refresh(source)
+        return source
         
     except HTTPException:
         raise
@@ -210,7 +211,7 @@ def update_lead_source(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lead response name must be unique"
+            detail="Lead source name must be unique"
         )
     except (OperationalError, DisconnectionError):
         db.rollback()
@@ -222,9 +223,8 @@ def update_lead_source(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating lead response: {str(e)}"
+            detail=f"Error updating lead source: {str(e)}"
         )
-
 
 @router.delete("/responses/{response_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_lead_response(
@@ -953,5 +953,66 @@ def get_lead_response(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching lead response: {str(e)}"
         )
+
+
+
+@router.put("/responses/{response_id}", response_model=LeadResponseOut)
+def update_lead_response(
+    response_id: int,
+    response_in: LeadResponseUpdate,  # ✅ FIXED: Properly defined parameter
+    db: Session = Depends(get_db),
+):
+    """Update a lead response"""
+    try:
+        response = db.query(LeadResponse).filter_by(id=response_id).first()
+        if not response:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead response not found"
+            )
+        
+        # Check for duplicate name if being updated
+        update_data = response_in.dict(exclude_unset=True)  # ✅ FIXED: Now using response_in
+        if "name" in update_data:
+            existing = db.query(LeadResponse).filter(
+                LeadResponse.name == update_data["name"],
+                LeadResponse.id != response_id
+            ).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Another lead response with name '{update_data['name']}' already exists"
+                )
+        
+        # Update fields
+        for field, value in update_data.items():
+            setattr(response, field, value)
+        
+        db.commit()
+        db.refresh(response)
+        return response
+        
+    except HTTPException:
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Lead response name must be unique"
+        )
+    except (OperationalError, DisconnectionError):
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection lost. Please try again."
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead response: {str(e)}"
+        )
+   
+
 
 

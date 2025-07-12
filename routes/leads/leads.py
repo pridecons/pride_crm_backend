@@ -3,7 +3,7 @@
 import os
 import uuid
 import json
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict, Union
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
@@ -17,6 +17,7 @@ from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
     UserDetails, LeadStory, Payment
 )
+
 
 router = APIRouter(
     prefix="/leads",
@@ -114,7 +115,7 @@ class LeadOut(BaseModel):
     
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
-    comment: Optional[dict] = None
+    comment: Optional[Dict[str, Any]] = None
     branch_id: Optional[int] = None
     
     created_by: Optional[str] = None
@@ -133,36 +134,35 @@ class LeadOut(BaseModel):
     
     @validator('segment', pre=True, always=True)
     def parse_segment(cls, v):
+        """Parse segment field safely"""
         if v is None:
             return None
-        if isinstance(v, str):
-            try:
-                parsed = json.loads(v)
-                return parsed if isinstance(parsed, list) else [parsed]
-            except json.JSONDecodeError:
-                return [v] if v.strip() else None
-        if isinstance(v, list):
-            return v
-        return None
+        
+        parsed = safe_json_parse(v, [])
+        
+        # Ensure it's always a list
+        if isinstance(parsed, list):
+            return parsed
+        elif parsed is not None:
+            return [parsed]
+        else:
+            return None
     
     @validator('comment', pre=True, always=True)
     def parse_comment(cls, v):
+        """Parse comment field safely"""
         if v is None:
             return None
-        if isinstance(v, str):
-            try:
-                parsed = json.loads(v)
-                return parsed if isinstance(parsed, dict) else {"note": str(parsed)}
-            except json.JSONDecodeError:
-                return {"note": str(v)} if v.strip() else None
-        if isinstance(v, dict):
-            return v
-        return None
-    
-    @validator('email', pre=True, always=True)
-    def validate_email_field(cls, v):
-        # Just return the email as string, don't validate format here
-        return v if v else None
+            
+        parsed = safe_json_parse(v, {})
+        
+        # Ensure it's always a dict
+        if isinstance(parsed, dict):
+            return parsed
+        elif parsed is not None:
+            return {"note": str(parsed)}
+        else:
+            return None
     
     class Config:
         from_attributes = True
@@ -204,35 +204,78 @@ def save_uploaded_file(file: UploadFile, lead_id: int, file_type: str) -> str:
     return f"/{UPLOAD_DIR}/{filename}"
 
 
+
+def safe_json_parse(value: Any, default: Any = None) -> Any:
+    """Safely parse JSON string or return the value as-is"""
+    if value is None:
+        return default
+    
+    if isinstance(value, str):
+        if not value.strip():
+            return default
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            # If it's not valid JSON, return as string or default
+            return value if value.strip() else default
+    
+    return value
+
+def safe_json_dumps(value: Any) -> Optional[str]:
+    """Safely convert value to JSON string"""
+    if value is None:
+        return None
+    
+    if isinstance(value, str):
+        # If it's already a string, try to parse and re-dump for validation
+        try:
+            parsed = json.loads(value)
+            return json.dumps(parsed)
+        except json.JSONDecodeError:
+            # If not valid JSON, treat as regular string
+            return json.dumps(value)
+    
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError):
+        return json.dumps(str(value))
+
 def safe_convert_lead_to_dict(lead) -> dict:
-    """Safely convert Lead model to dictionary, handling all field types properly"""
+    """Safely convert Lead model to dictionary with proper JSON handling"""
     try:
         lead_dict = {}
         
-        # Get all attributes from the lead object
+        # Get all column values
         for column in lead.__table__.columns:
             value = getattr(lead, column.name, None)
             
-            # Handle special JSON fields
-            if column.name in ['segment', 'comment'] and value is not None:
-                if isinstance(value, str):
-                    try:
-                        parsed_value = json.loads(value)
-                        # Validate the parsed value
-                        if column.name == 'segment':
-                            value = parsed_value if isinstance(parsed_value, list) else [parsed_value]
-                        elif column.name == 'comment':
-                            value = parsed_value if isinstance(parsed_value, dict) else {"note": str(parsed_value)}
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, handle appropriately
-                        if column.name == 'segment':
-                            value = [value] if value.strip() else None
-                        elif column.name == 'comment':
-                            value = {"note": value} if value.strip() else None
-            
-            lead_dict[column.name] = value
+            # Handle JSON fields specially
+            if column.name == 'segment':
+                if value is not None:
+                    parsed = safe_json_parse(value, [])
+                    # Ensure it's always a list
+                    if not isinstance(parsed, list):
+                        parsed = [parsed] if parsed else []
+                    lead_dict[column.name] = parsed
+                else:
+                    lead_dict[column.name] = None
+                    
+            elif column.name == 'comment':
+                if value is not None:
+                    parsed = safe_json_parse(value, {})
+                    # Ensure it's always a dict
+                    if not isinstance(parsed, dict):
+                        parsed = {"note": str(parsed)} if parsed else {}
+                    lead_dict[column.name] = parsed
+                else:
+                    lead_dict[column.name] = None
+                    
+            else:
+                # Regular fields
+                lead_dict[column.name] = value
         
         return lead_dict
+        
     except Exception as e:
         print(f"Error converting lead to dict: {str(e)}")
         # Return minimal safe data
@@ -241,7 +284,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "full_name": getattr(lead, 'full_name', None),
             "email": getattr(lead, 'email', None),
             "mobile": getattr(lead, 'mobile', None),
-            "created_at": getattr(lead, 'created_at', datetime.now()),
+            "created_at": getattr(lead, 'created_at', None),
             "lead_status": getattr(lead, 'lead_status', None),
             "kyc": getattr(lead, 'kyc', False),
             "segment": None,
@@ -251,26 +294,42 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "branch_id": getattr(lead, 'branch_id', None),
             "created_by": getattr(lead, 'created_by', None),
             "created_by_name": getattr(lead, 'created_by_name', None),
-            "father_name": getattr(lead, 'father_name', None),
-            "alternate_mobile": getattr(lead, 'alternate_mobile', None),
-            "aadhaar": getattr(lead, 'aadhaar', None),
-            "pan": getattr(lead, 'pan', None),
-            "gstin": getattr(lead, 'gstin', None),
-            "state": getattr(lead, 'state', None),
-            "city": getattr(lead, 'city', None),
-            "district": getattr(lead, 'district', None),
-            "address": getattr(lead, 'address', None),
-            "dob": getattr(lead, 'dob', None),
-            "occupation": getattr(lead, 'occupation', None),
-            "experience": getattr(lead, 'experience', None),
-            "investment": getattr(lead, 'investment', None),
-            "aadhar_front_pic": getattr(lead, 'aadhar_front_pic', None),
-            "aadhar_back_pic": getattr(lead, 'aadhar_back_pic', None),
-            "pan_pic": getattr(lead, 'pan_pic', None),
-            "kyc_id": getattr(lead, 'kyc_id', None),
-            "is_old_lead": getattr(lead, 'is_old_lead', False),
-            "call_back_date": getattr(lead, 'call_back_date', None),
         }
+
+def prepare_lead_data_for_db(lead_data: dict) -> dict:
+    """Prepare lead data for database insertion with proper JSON handling"""
+    prepared_data = lead_data.copy()
+    
+    # Handle segment field
+    if 'segment' in prepared_data and prepared_data['segment'] is not None:
+        if isinstance(prepared_data['segment'], list):
+            prepared_data['segment'] = safe_json_dumps(prepared_data['segment'])
+        elif isinstance(prepared_data['segment'], str):
+            # Try to parse as list, if fails, make it a single-item list
+            try:
+                parsed = json.loads(prepared_data['segment'])
+                if not isinstance(parsed, list):
+                    parsed = [parsed]
+                prepared_data['segment'] = safe_json_dumps(parsed)
+            except json.JSONDecodeError:
+                prepared_data['segment'] = safe_json_dumps([prepared_data['segment']])
+    
+    # Handle comment field
+    if 'comment' in prepared_data and prepared_data['comment'] is not None:
+        if isinstance(prepared_data['comment'], dict):
+            prepared_data['comment'] = safe_json_dumps(prepared_data['comment'])
+        elif isinstance(prepared_data['comment'], str):
+            # Try to parse as dict, if fails, wrap in note
+            try:
+                parsed = json.loads(prepared_data['comment'])
+                if not isinstance(parsed, dict):
+                    parsed = {"note": str(parsed)}
+                prepared_data['comment'] = safe_json_dumps(parsed)
+            except json.JSONDecodeError:
+                prepared_data['comment'] = safe_json_dumps({"note": prepared_data['comment']})
+    
+    return prepared_data
+
 
 
 # API Endpoints
@@ -329,7 +388,7 @@ def create_lead(
                     )
         
         # Create lead
-        lead_data = lead_in.dict(exclude_none=True)
+        lead_data = prepare_lead_data_for_db(lead_in.dict(exclude_none=True))
         
         # Handle segment field - convert to JSON string if it's a list
         if 'segment' in lead_data and isinstance(lead_data['segment'], list):
@@ -345,7 +404,8 @@ def create_lead(
         db.commit()
         db.refresh(lead)
         
-        return LeadOut(**safe_convert_lead_to_dict(lead))
+        lead_dict = safe_convert_lead_to_dict(lead)
+        return LeadOut(**lead_dict)
         
     except HTTPException:
         raise
