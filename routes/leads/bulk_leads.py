@@ -1,16 +1,17 @@
-# routes/bulk_leads.py
+# routes/bulk_leads.py - Complete Fixed Version
 
 import os
 import csv
 import io
 import re
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, validator
 
 from db.connection import get_db
 from db.models import Lead, LeadSource, LeadResponse, BranchDetails, UserDetails
@@ -107,6 +108,52 @@ def process_segment(segment_text: str) -> List[str]:
     return [s for s in segments if s]
 
 
+def process_bulk_lead_data(row, mobile_column, name_column, email_column, 
+                          city_column, address_column, segment_column, 
+                          occupation_column, investment_column, 
+                          lead_source_id, employee, default_response_id):
+    """Process a single row of bulk lead data"""
+    
+    # Extract data from row
+    mobile = get_column_value(row, mobile_column)
+    name = get_column_value(row, name_column)
+    email = get_column_value(row, email_column)
+    city = get_column_value(row, city_column)
+    address = get_column_value(row, address_column)
+    segment_text = get_column_value(row, segment_column)
+    occupation = get_column_value(row, occupation_column)
+    investment = get_column_value(row, investment_column)
+    
+    # Process segment properly - store as JSON array
+    segments = None
+    if segment_text:
+        segments_list = process_segment(segment_text)
+        if segments_list:
+            segments = json.dumps(segments_list)  # Store as JSON string
+    
+    # Create lead data dictionary
+    lead_data = {
+        "full_name": name,
+        "mobile": mobile,
+        "email": email,
+        "city": city,
+        "address": address,
+        "occupation": occupation,
+        "investment": investment,
+        "segment": segments,  # This will be JSON string or None
+        "lead_source_id": lead_source_id,
+        "lead_response_id": default_response_id,
+        "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
+        "created_by_name": employee.employee_code,
+        "branch_id": employee.branch_id,
+    }
+    
+    # Remove None values
+    lead_data = {k: v for k, v in lead_data.items() if v is not None}
+    
+    return lead_data
+
+
 # Main Upload Endpoint
 @router.post("/upload", response_model=BulkUploadResponse)
 async def upload_bulk_leads(
@@ -123,7 +170,7 @@ async def upload_bulk_leads(
     csv_file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """Upload bulk leads from CSV file"""
+    """Upload bulk leads from CSV file with proper JSON handling"""
     
     try:
         # Validate CSV file
@@ -232,10 +279,15 @@ async def upload_bulk_leads(
                         duplicates_skipped += 1
                         continue
                 
-                # Process segment
-                segments = process_segment(segment_text) if segment_text else None
+                # Process segment properly for database storage
+                segments = None
+                if segment_text:
+                    segments_list = process_segment(segment_text)
+                    if segments_list:
+                        # Store as JSON string in database
+                        segments = json.dumps(segments_list)
                 
-                # Create lead with proper created_by fields
+                # Create lead with proper data types
                 lead_data = {
                     "full_name": name,
                     "mobile": mobile,
@@ -244,7 +296,7 @@ async def upload_bulk_leads(
                     "address": address,
                     "occupation": occupation,
                     "investment": investment,
-                    "segment": segments,
+                    "segment": segments,  # JSON string or None
                     "lead_source_id": lead_source_id,
                     "lead_response_id": default_response_id,
                     "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
@@ -257,7 +309,7 @@ async def upload_bulk_leads(
                 
                 lead = Lead(**lead_data)
                 db.add(lead)
-                db.flush()
+                db.flush()  # Get the ID
                 
                 uploaded_leads.append(lead.id)
                 successful_uploads += 1
@@ -457,13 +509,15 @@ async def debug_bulk_upload(
             mobile = get_column_value(row, mobile_column)
             email = get_column_value(row, email_column)
             name = get_column_value(row, name_column)
+            segment_text = get_column_value(row, segment_column)
             
             extracted["validation_results"] = {
                 "mobile_valid": True,  # Accept any mobile format
                 "email_valid": True,   # Accept any email format
                 "name_valid": bool(name),
                 "mobile_digits": ''.join(filter(str.isdigit, mobile)) if mobile else "",
-                "mobile_length": len(''.join(filter(str.isdigit, mobile))) if mobile else 0
+                "mobile_length": len(''.join(filter(str.isdigit, mobile))) if mobile else 0,
+                "segment_processed": process_segment(segment_text) if segment_text else []
             }
             
             debug_info["extracted_data"].append(extracted)
@@ -579,4 +633,379 @@ def get_upload_statistics(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching upload statistics: {str(e)}"
+        )
+
+
+@router.post("/validate-data")
+async def validate_bulk_data(
+    csv_file: UploadFile = File(...),
+    mobile_column: int = Form(...),
+    name_column: int = Form(...),
+    email_column: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Validate bulk data without uploading"""
+    
+    try:
+        # Read and parse CSV
+        content = await csv_file.read()
+        file_content = content.decode('utf-8')
+        rows = parse_csv_content(file_content)
+        
+        if len(rows) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CSV file must have at least one data row"
+            )
+        
+        data_rows = rows[1:]
+        validation_results = []
+        
+        for row_index, row in enumerate(data_rows, start=2):
+            mobile = get_column_value(row, mobile_column)
+            name = get_column_value(row, name_column)
+            email = get_column_value(row, email_column)
+            
+            errors = []
+            warnings = []
+            
+            # Check required fields
+            if not name:
+                errors.append("Name is required")
+            
+            # Check duplicates in database
+            if mobile or email:
+                conditions = []
+                if mobile:
+                    conditions.append(Lead.mobile == mobile)
+                if email:
+                    conditions.append(Lead.email == email)
+                
+                if conditions:
+                    from sqlalchemy import or_
+                    existing = db.query(Lead).filter(or_(*conditions)).first()
+                    if existing:
+                        warnings.append(f"Duplicate found - Lead ID: {existing.id}")
+            
+            # Email format check
+            if email and not validate_email(email):
+                warnings.append("Invalid email format")
+            
+            # Mobile format check
+            if mobile and not validate_mobile(mobile):
+                warnings.append("Invalid mobile format")
+            
+            validation_results.append({
+                "row": row_index,
+                "data": {
+                    "name": name,
+                    "mobile": mobile,
+                    "email": email
+                },
+                "errors": errors,
+                "warnings": warnings,
+                "valid": len(errors) == 0
+            })
+        
+        # Summary
+        total_rows = len(validation_results)
+        valid_rows = sum(1 for r in validation_results if r["valid"])
+        invalid_rows = total_rows - valid_rows
+        rows_with_warnings = sum(1 for r in validation_results if r["warnings"])
+        
+        return {
+            "filename": csv_file.filename,
+            "summary": {
+                "total_rows": total_rows,
+                "valid_rows": valid_rows,
+                "invalid_rows": invalid_rows,
+                "rows_with_warnings": rows_with_warnings
+            },
+            "validation_results": validation_results
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating data: {str(e)}"
+        )
+
+
+@router.post("/upload-with-validation", response_model=BulkUploadResponse)
+async def upload_bulk_leads_with_validation(
+    lead_source_id: int = Form(...),
+    employee_code: str = Form(...),
+    mobile_column: int = Form(...),
+    name_column: int = Form(...),
+    email_column: int = Form(...),
+    city_column: int = Form(...),
+    address_column: int = Form(...),
+    segment_column: int = Form(...),
+    occupation_column: int = Form(...),
+    investment_column: int = Form(...),
+    skip_duplicates: bool = Form(True),
+    skip_invalid_emails: bool = Form(True),
+    skip_invalid_mobiles: bool = Form(True),
+    csv_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Upload bulk leads with advanced validation options"""
+    
+    try:
+        # Validate inputs
+        if not validate_csv_file(csv_file):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please upload a valid CSV file"
+            )
+        
+        lead_source = db.query(LeadSource).filter_by(id=lead_source_id).first()
+        if not lead_source:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lead source with ID {lead_source_id} not found"
+            )
+        
+        employee = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Employee with code {employee_code} not found"
+            )
+        
+        # Read and parse CSV
+        content = await csv_file.read()
+        file_content = content.decode('utf-8')
+        rows = parse_csv_content(file_content)
+        
+        if len(rows) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CSV file must have at least one data row"
+            )
+        
+        data_rows = rows[1:]
+        
+        # Process with validation
+        successful_uploads = 0
+        failed_uploads = 0
+        duplicates_skipped = 0
+        errors = []
+        uploaded_leads = []
+        
+        default_response = db.query(LeadResponse).first()
+        default_response_id = default_response.id if default_response else None
+        
+        for row_index, row in enumerate(data_rows, start=2):
+            try:
+                # Extract data
+                mobile = get_column_value(row, mobile_column)
+                name = get_column_value(row, name_column)
+                email = get_column_value(row, email_column)
+                city = get_column_value(row, city_column)
+                address = get_column_value(row, address_column)
+                segment_text = get_column_value(row, segment_column)
+                occupation = get_column_value(row, occupation_column)
+                investment = get_column_value(row, investment_column)
+                
+                # Validation
+                validation_errors = []
+                
+                if not name:
+                    validation_errors.append("Name is required")
+                
+                if email and skip_invalid_emails and not validate_email(email):
+                    validation_errors.append("Invalid email format")
+                
+                if mobile and skip_invalid_mobiles and not validate_mobile(mobile):
+                    validation_errors.append("Invalid mobile format")
+                
+                # Check duplicates
+                if (mobile or email) and skip_duplicates:
+                    conditions = []
+                    if mobile:
+                        conditions.append(Lead.mobile == mobile)
+                    if email:
+                        conditions.append(Lead.email == email)
+                    
+                    if conditions:
+                        from sqlalchemy import or_
+                        existing = db.query(Lead).filter(or_(*conditions)).first()
+                        if existing:
+                            duplicates_skipped += 1
+                            errors.append({
+                                "row": row_index,
+                                "data": row,
+                                "errors": ["Duplicate lead found"],
+                                "existing_lead_id": existing.id
+                            })
+                            continue
+                
+                if validation_errors:
+                    failed_uploads += 1
+                    errors.append({
+                        "row": row_index,
+                        "data": row,
+                        "errors": validation_errors
+                    })
+                    continue
+                
+                # Process segment
+                segments = None
+                if segment_text:
+                    segments_list = process_segment(segment_text)
+                    if segments_list:
+                        segments = json.dumps(segments_list)
+                
+                # Create lead
+                lead_data = {
+                    "full_name": name,
+                    "mobile": mobile,
+                    "email": email,
+                    "city": city,
+                    "address": address,
+                    "occupation": occupation,
+                    "investment": investment,
+                    "segment": segments,
+                    "lead_source_id": lead_source_id,
+                    "lead_response_id": default_response_id,
+                    "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
+                    "created_by_name": employee.employee_code,
+                    "branch_id": employee.branch_id,
+                }
+                
+                # Remove None values
+                lead_data = {k: v for k, v in lead_data.items() if v is not None}
+                
+                lead = Lead(**lead_data)
+                db.add(lead)
+                db.flush()
+                
+                uploaded_leads.append(lead.id)
+                successful_uploads += 1
+                
+            except Exception as e:
+                failed_uploads += 1
+                errors.append({
+                    "row": row_index,
+                    "data": row,
+                    "errors": [f"Database error: {str(e)}"]
+                })
+                continue
+        
+        # Commit successful uploads
+        if successful_uploads > 0:
+            db.commit()
+        
+        return BulkUploadResponse(
+            total_rows=len(data_rows),
+            successful_uploads=successful_uploads,
+            failed_uploads=failed_uploads,
+            duplicates_skipped=duplicates_skipped,
+            errors=errors,
+            uploaded_leads=uploaded_leads
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing upload: {str(e)}"
+        )
+
+
+@router.get("/recent-uploads")
+def get_recent_uploads(
+    limit: int = 20,
+    employee_code: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get recent bulk uploads"""
+    
+    try:
+        query = db.query(Lead).filter(Lead.created_by_name.isnot(None))
+        
+        if employee_code:
+            query = query.filter(Lead.created_by_name == employee_code)
+        
+        recent_leads = query.order_by(Lead.created_at.desc()).limit(limit).all()
+        
+        return {
+            "recent_uploads": [
+                {
+                    "id": lead.id,
+                    "full_name": lead.full_name,
+                    "mobile": lead.mobile,
+                    "email": lead.email,
+                    "city": lead.city,
+                    "created_by": lead.created_by,
+                    "created_by_name": lead.created_by_name,
+                    "created_at": lead.created_at,
+                    "lead_source_id": lead.lead_source_id,
+                    "kyc": lead.kyc
+                }
+                for lead in recent_leads
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching recent uploads: {str(e)}"
+        )
+
+
+@router.delete("/cleanup-failed")
+def cleanup_failed_uploads(
+    employee_code: str,
+    date_from: date,
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Cleanup failed or incomplete uploads"""
+    
+    try:
+        # Find leads without essential information that were uploaded today
+        query = db.query(Lead).filter(
+            Lead.created_by_name == employee_code,
+            Lead.created_at >= date_from,
+            Lead.full_name.is_(None)  # Leads without names are likely failed uploads
+        )
+        
+        leads_to_cleanup = query.all()
+        
+        if dry_run:
+            return {
+                "dry_run": True,
+                "leads_found": len(leads_to_cleanup),
+                "leads": [
+                    {
+                        "id": lead.id,
+                        "mobile": lead.mobile,
+                        "email": lead.email,
+                        "created_at": lead.created_at
+                    }
+                    for lead in leads_to_cleanup
+                ]
+            }
+        else:
+            # Actually delete the leads
+            deleted_count = query.delete()
+            db.commit()
+            
+            return {
+                "dry_run": False,
+                "deleted_count": deleted_count,
+                "message": f"Successfully deleted {deleted_count} incomplete leads"
+            }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error during cleanup: {str(e)}"
         )

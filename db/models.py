@@ -1,3 +1,5 @@
+# db/models.py - Complete Fixed Version
+
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
     JSON, ARRAY, ForeignKey, func, Enum
@@ -424,7 +426,7 @@ class Lead(Base):
 
     dob               = Column(Date, nullable=True)
     occupation        = Column(String(100), nullable=True)
-    segment           = Column(ARRAY(String), nullable=True)
+    segment           = Column(Text, nullable=True)  # Store as JSON string
     experience        = Column(String(50), nullable=True)
     investment        = Column(String(50), nullable=True)
 
@@ -433,7 +435,7 @@ class Lead(Base):
 
     created_by        = Column(String(100), nullable=True)
     created_by_name   = Column(String(100), nullable=True)
-    comment           = Column(JSON, nullable=True)
+    comment           = Column(Text, nullable=True)  # Store as JSON string
 
     aadhar_front_pic  = Column(String(255), nullable=True)
     aadhar_back_pic   = Column(String(255), nullable=True)
@@ -526,7 +528,3 @@ class Campaign(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     owner       = relationship("UserDetails", back_populates="campaigns")
-
-
-
-
