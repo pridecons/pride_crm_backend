@@ -1,8 +1,10 @@
-# routes/auth/register.py
+# routes/auth/register.py - Fixed version with proper serialization
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 import hashlib
+from typing import List
 
 from db.connection import get_db
 from db.models import UserDetails, BranchDetails, PermissionDetails, UserRoleEnum
@@ -97,7 +99,36 @@ def validate_hierarchy_and_manager(role: UserRoleEnum, manager_id: str = None, b
     return manager_id, branch_id
 
 
-@router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def serialize_user(user: UserDetails) -> dict:
+    """Serialize user object to dictionary with proper enum handling"""
+    return {
+        "employee_code": user.employee_code,
+        "phone_number": user.phone_number,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+        "father_name": user.father_name,
+        "is_active": user.is_active,
+        "experience": user.experience,
+        "date_of_joining": user.date_of_joining,
+        "date_of_birth": user.date_of_birth,
+        "pan": user.pan,
+        "aadhaar": user.aadhaar,
+        "address": user.address,
+        "city": user.city,
+        "state": user.state,
+        "pincode": user.pincode,
+        "comment": user.comment,
+        "branch_id": user.branch_id,
+        "manager_id": user.manager_id,
+        "sales_manager_id": user.sales_manager_id,
+        "tl_id": user.tl_id,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+    }
+
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """Create user with automatic hierarchy validation"""
     
@@ -189,7 +220,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         db.add(permission)
         db.commit()
         
-        return user
+        return serialize_user(user)
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -198,7 +229,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         )
 
 
-@router.post("/superadmin", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("/superadmin", status_code=status.HTTP_201_CREATED)
 def create_superadmin(user_in: UserCreate, db: Session = Depends(get_db)):
     """Create SUPERADMIN - special endpoint for first user"""
     
@@ -266,7 +297,7 @@ def create_superadmin(user_in: UserCreate, db: Session = Depends(get_db)):
         db.add(permission)
         db.commit()
         
-        return user
+        return serialize_user(user)
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -275,7 +306,7 @@ def create_superadmin(user_in: UserCreate, db: Session = Depends(get_db)):
         )
 
 
-@router.get("/", response_model=list[UserOut])
+@router.get("/")
 def get_all_users(
     skip: int = 0,
     limit: int = 100,
@@ -285,26 +316,39 @@ def get_all_users(
     db: Session = Depends(get_db),
 ):
     """Get all users with filtering options"""
-    query = db.query(UserDetails)
-    
-    if active_only:
-        query = query.filter(UserDetails.is_active == True)
-    
-    if branch_id:
-        query = query.filter(UserDetails.branch_id == branch_id)
-    
-    if role:
-        try:
-            role_enum = UserRoleEnum(role)
-            query = query.filter(UserDetails.role == role_enum)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
-            )
-    
-    users = query.offset(skip).limit(limit).all()
-    return users
+    try:
+        query = db.query(UserDetails)
+        
+        if active_only:
+            query = query.filter(UserDetails.is_active == True)
+        
+        if branch_id:
+            query = query.filter(UserDetails.branch_id == branch_id)
+        
+        if role:
+            try:
+                role_enum = UserRoleEnum(role)
+                query = query.filter(UserDetails.role == role_enum)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
+                )
+        
+        users = query.offset(skip).limit(limit).all()
+        
+        # Serialize users manually to handle enum properly
+        serialized_users = [serialize_user(user) for user in users]
+        
+        return serialized_users
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching users: {str(e)}"
+        )
 
 
 @router.get("/hierarchy/{employee_code}")
@@ -324,7 +368,7 @@ def get_user_hierarchy(employee_code: str, db: Session = Depends(get_db)):
         manager_chain.append({
             "employee_code": current_user.manager.employee_code,
             "name": current_user.manager.name,
-            "role": current_user.manager.role.value
+            "role": current_user.manager.role.value if hasattr(current_user.manager.role, 'value') else str(current_user.manager.role)
         })
         current_user = current_user.manager
     
@@ -333,7 +377,7 @@ def get_user_hierarchy(employee_code: str, db: Session = Depends(get_db)):
         {
             "employee_code": sub.employee_code,
             "name": sub.name,
-            "role": sub.role.value
+            "role": sub.role.value if hasattr(sub.role, 'value') else str(sub.role)
         }
         for sub in user.subordinates
     ]
@@ -342,7 +386,7 @@ def get_user_hierarchy(employee_code: str, db: Session = Depends(get_db)):
         "user": {
             "employee_code": user.employee_code,
             "name": user.name,
-            "role": user.role.value
+            "role": user.role.value if hasattr(user.role, 'value') else str(user.role)
         },
         "manager_chain": manager_chain,
         "subordinates": subordinates
@@ -356,14 +400,23 @@ def get_available_roles():
         "roles": [
             {
                 "value": role.value,
-                "hierarchy_level": UserDetails().get_hierarchy_level() if hasattr(UserDetails(), 'get_hierarchy_level') else None
+                "name": role.value.replace("_", " "),
+                "hierarchy_level": {
+                    UserRoleEnum.SUPERADMIN: 1,
+                    UserRoleEnum.BRANCH_MANAGER: 2,
+                    UserRoleEnum.SALES_MANAGER: 3,
+                    UserRoleEnum.HR: 3,
+                    UserRoleEnum.TL: 4,
+                    UserRoleEnum.BA: 5,
+                    UserRoleEnum.SBA: 5
+                }.get(role, 6)
             }
             for role in UserRoleEnum
         ]
     }
 
 
-@router.get("/{employee_code}", response_model=UserOut)
+@router.get("/{employee_code}")
 def get_user(employee_code: str, db: Session = Depends(get_db)):
     """Get a specific user by employee code"""
     user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
@@ -372,10 +425,10 @@ def get_user(employee_code: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    return user
+    return serialize_user(user)
 
 
-@router.put("/{employee_code}", response_model=UserOut)
+@router.put("/{employee_code}")
 def update_user(
     employee_code: str,
     user_in: UserUpdate,
@@ -449,7 +502,7 @@ def update_user(
     try:
         db.commit()
         db.refresh(user)
-        return user
+        return serialize_user(user)
     except Exception as e:
         db.rollback()
         raise HTTPException(

@@ -14,8 +14,8 @@ class UserRoleEnum(str, enum.Enum):
     HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
     TL = "TL"  # Team Leader
-    SBA = "SBA"  # Senior Business Associate
     BA = "BA"  # Business Associate
+    SBA = "SBA"  # Senior Business Associate
 
 
 class OTP(Base):
@@ -57,8 +57,8 @@ class UserDetails(Base):
     # Foreign Keys
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # SUPERADMIN won't have branch
     manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
-    sales_manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
-    tl_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    sales_manager_id  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)  # Direct sales manager
+    tl_id            = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)   # Team Leader
 
     # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -408,17 +408,17 @@ class Lead(Base):
     __tablename__ = "crm_lead"
 
     id                = Column(Integer, primary_key=True, autoincrement=True)
-    full_name         = Column(String(100), nullable=False)
+    full_name         = Column(String(100), nullable=True)
     father_name       = Column(String(100), nullable=True)
-    email             = Column(String(100), nullable=False, index=True)
-    mobile            = Column(String(20), nullable=False, index=True)
+    email             = Column(String(100), nullable=True, index=True)
+    mobile            = Column(String(20), nullable=True, index=True)
     alternate_mobile  = Column(String(20), nullable=True)
     aadhaar           = Column(String(12), nullable=True)
     pan               = Column(String(10), nullable=True)
     gstin             = Column(String(15), nullable=True)
 
-    state             = Column(String(100), nullable=False)
-    city              = Column(String(100), nullable=False)
+    state             = Column(String(100), nullable=True)
+    city              = Column(String(100), nullable=True)
     district          = Column(String(100), nullable=True)
     address           = Column(Text, nullable=True)
 
@@ -428,8 +428,8 @@ class Lead(Base):
     experience        = Column(String(50), nullable=True)
     investment        = Column(String(50), nullable=True)
 
-    lead_response_id  = Column(Integer, ForeignKey("crm_lead_response.id"), nullable=False)
-    lead_source_id    = Column(Integer, ForeignKey("crm_lead_source.id"), nullable=False)
+    lead_response_id  = Column(Integer, ForeignKey("crm_lead_response.id"), nullable=True)
+    lead_source_id    = Column(Integer, ForeignKey("crm_lead_source.id"), nullable=True)
 
     created_by        = Column(String(100), nullable=True)
     created_by_name   = Column(String(100), nullable=True)
@@ -438,10 +438,10 @@ class Lead(Base):
     aadhar_front_pic  = Column(String(255), nullable=True)
     aadhar_back_pic   = Column(String(255), nullable=True)
     pan_pic           = Column(String(255), nullable=True)
-    kyc               = Column(Boolean, default=False)
+    kyc               = Column(Boolean, default=False, nullable=True)
     kyc_id            = Column(Integer, nullable=True)
 
-    is_old_lead       = Column(Boolean, default=False)
+    is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
     lead_status       = Column(String(50), nullable=True)
 
@@ -526,3 +526,7 @@ class Campaign(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     owner       = relationship("UserDetails", back_populates="campaigns")
+
+
+
+

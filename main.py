@@ -14,6 +14,9 @@ from fastapi.staticfiles import StaticFiles
 #routes
 from routes.auth import login, register
 from routes.branch import branch
+from routes.Permission import permissions
+from routes.leads import leads, lead_sources, bulk_leads
+from routes.auth.create_admin import create_admin
 
 
 # Configure Logging
@@ -45,6 +48,7 @@ async def on_startup():
         backend=InMemoryBackend(),     # or RedisBackend(...) if you prefer
         prefix="fastapi-cache"         # optional; used to namespace your keys
     )
+    create_admin()
 
 # Root API Endpoint
 @app.get("/")
@@ -56,6 +60,10 @@ def read_root():
 app.include_router(login.router)
 app.include_router(register.router)
 app.include_router(branch.router)
+app.include_router(permissions.router)
+app.include_router(leads.router)
+app.include_router(lead_sources.router)
+app.include_router(bulk_leads.router)
 
 
 # Database Table Creation
@@ -69,3 +77,8 @@ except Exception as e:
 # Run FastAPI with Uvicorn
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+
+

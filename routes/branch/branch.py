@@ -14,7 +14,11 @@ from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
 from db.models import BranchDetails, UserDetails, UserRoleEnum
-from db.Schema.branch import BranchCreate, BranchUpdate, BranchOut, BranchDetailsOut, ManagerInfo, UserInfo
+from db.Schema.branch import BranchCreate, BranchUpdate, BranchOut, BranchDetailsOut, ManagerInfo, UserInfo, BranchWithManagerResponse
+
+import hashlib
+from datetime import date, datetime
+from db.models import PermissionDetails
 
 router = APIRouter(
     prefix="/branches",
@@ -669,3 +673,265 @@ def delete_branch(
         )
 
      
+
+@router.post("/create-with-manager", response_model=BranchWithManagerResponse, status_code=status.HTTP_201_CREATED)
+async def create_branch_with_manager(
+    # Branch Details
+    branch_name: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
+    branch_address: str = Form(...),
+    authorized_person: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
+    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(...),
+    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12) = Form(...),
+    branch_active: bool = Form(True),
+    agreement_pdf: UploadFile = File(...),
+    
+    # Manager Details
+    manager_name: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
+    manager_email: str = Form(...),  # EmailStr validation will be done in function
+    manager_phone: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(...),
+    manager_father_name: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
+    manager_experience: float = Form(...),
+    manager_dob: date = Form(...),
+    manager_password: constr(min_length=6) = Form(...),
+    
+    # Optional Manager Details
+    manager_pan: Optional[constr(strip_whitespace=True, min_length=10, max_length=10)] = Form(None),
+    manager_aadhaar: Optional[constr(strip_whitespace=True, min_length=12, max_length=12)] = Form(None),
+    manager_address: Optional[str] = Form(None),
+    manager_city: Optional[str] = Form(None),
+    manager_state: Optional[str] = Form(None),
+    manager_pincode: Optional[constr(strip_whitespace=True, min_length=6, max_length=6)] = Form(None),
+    manager_comment: Optional[str] = Form(None),
+    
+    db: Session = Depends(get_db),
+):
+    """Create a new branch along with its branch manager in a single transaction"""
+    
+    def validate_email(email: str):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        return re.match(pattern, email) is not None
+    
+    def validate_phone(phone: str):
+        return phone.isdigit() and len(phone) == 10
+    
+    def validate_pan(pan: str):
+        return len(pan) == 10
+    
+    def validate_aadhaar(aadhaar: str):
+        return len(aadhaar) == 12 and aadhaar.isdigit()
+    
+    def validate_pincode(pincode: str):
+        return len(pincode) == 6 and pincode.isdigit()
+    
+    def generate_employee_code():
+        """Generate unique employee code"""
+        import random
+        import string
+        return 'EMP' + ''.join(random.choices(string.digits, k=6))
+    
+    def hash_password(password: str):
+        """Hash password using SHA-256"""
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    try:
+        # Validation
+        if not validate_email(manager_email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format"
+            )
+        
+        if not validate_phone(manager_phone):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone number must be exactly 10 digits"
+            )
+        
+        if manager_pan and not validate_pan(manager_pan):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PAN must be exactly 10 characters"
+            )
+        
+        if manager_aadhaar and not validate_aadhaar(manager_aadhaar):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Aadhaar must be exactly 12 digits"
+            )
+        
+        if manager_pincode and not validate_pincode(manager_pincode):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pincode must be exactly 6 digits"
+            )
+        
+        # Check branch name uniqueness
+        existing_branch = db.query(BranchDetails).filter_by(name=branch_name).first()
+        if existing_branch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Branch with this name already exists"
+            )
+        
+        # Check manager email uniqueness
+        existing_user_email = db.query(UserDetails).filter_by(email=manager_email).first()
+        if existing_user_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User with this email already exists"
+            )
+        
+        # Check manager phone uniqueness
+        existing_user_phone = db.query(UserDetails).filter_by(phone_number=manager_phone).first()
+        if existing_user_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User with this phone number already exists"
+            )
+        
+        # Save agreement PDF
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        filename = f"{uuid.uuid4().hex}_{agreement_pdf.filename}"
+        agreement_path = os.path.join(SAVE_DIR, filename)
+        
+        with open(agreement_path, "wb") as buf:
+            content = await agreement_pdf.read()
+            buf.write(content)
+        
+        agreement_url = f"/{SAVE_DIR}/{filename}"
+        
+        # Generate unique employee code
+        employee_code = generate_employee_code()
+        while db.query(UserDetails).filter_by(employee_code=employee_code).first():
+            employee_code = generate_employee_code()
+        
+        # Create branch first (without manager_id)
+        branch = BranchDetails(
+            name=branch_name,
+            address=branch_address,
+            authorized_person=authorized_person,
+            pan=branch_pan.upper(),
+            aadhaar=branch_aadhaar,
+            agreement_url=agreement_url,
+            active=branch_active,
+            manager_id=None  # Will be set after manager creation
+        )
+        
+        db.add(branch)
+        db.flush()  # Get branch.id without committing
+        
+        # Create branch manager
+        hashed_password = hash_password(manager_password)
+        
+        manager = UserDetails(
+            employee_code=employee_code,
+            phone_number=manager_phone,
+            email=manager_email,
+            name=manager_name,
+            password=hashed_password,
+            role=UserRoleEnum.BRANCH_MANAGER,
+            father_name=manager_father_name,
+            is_active=True,
+            experience=manager_experience,
+            date_of_joining=date.today(),
+            date_of_birth=manager_dob,
+            pan=manager_pan.upper() if manager_pan else None,
+            aadhaar=manager_aadhaar,
+            address=manager_address,
+            city=manager_city,
+            state=manager_state,
+            pincode=manager_pincode,
+            comment=manager_comment,
+            branch_id=branch.id,
+            manager_id=None,  # Branch managers report to SUPERADMIN
+            sales_manager_id=None,
+            tl_id=None
+        )
+        
+        db.add(manager)
+        db.flush()  # Get manager details without committing
+        
+        # Update branch with manager_id
+        branch.manager_id = manager.employee_code
+        
+        # Create default permissions for branch manager
+        permissions = PermissionDetails(
+            user_id=manager.employee_code,
+            **PermissionDetails.get_default_permissions(UserRoleEnum.BRANCH_MANAGER)
+        )
+        
+        db.add(permissions)
+        db.commit()
+        
+        # Refresh objects to get updated data
+        db.refresh(branch)
+        db.refresh(manager)
+        
+        # Prepare response
+        branch_out = {
+            "id": branch.id,
+            "name": branch.name,
+            "address": branch.address,
+            "authorized_person": branch.authorized_person,
+            "pan": branch.pan,
+            "aadhaar": branch.aadhaar,
+            "agreement_url": branch.agreement_url,
+            "active": branch.active,
+            "manager_id": branch.manager_id,
+            "created_at": branch.created_at,
+            "updated_at": branch.updated_at,
+        }
+        
+        manager_response = {
+            "employee_code": manager.employee_code,
+            "name": manager.name,
+            "email": manager.email,
+            "phone_number": manager.phone_number,
+            "role": manager.role.value,
+            "branch_id": manager.branch_id,
+            "is_active": manager.is_active,
+            "date_of_joining": manager.date_of_joining,
+            "created_at": manager.created_at,
+        }
+        
+        login_credentials = {
+            "employee_code": manager.employee_code,
+            "email": manager.email,
+            "password": manager_password,  # Return original password for initial login
+            "role": manager.role.value
+        }
+        
+        return {
+            "message": f"Branch '{branch.name}' and Branch Manager '{manager.name}' created successfully",
+            "branch": branch_out,
+            "manager": manager_response,
+            "login_credentials": login_credentials
+        }
+        
+    except HTTPException:
+        raise
+    except (OperationalError, DisconnectionError) as e:
+        db.rollback()
+        # Clean up uploaded file
+        if 'agreement_path' in locals() and os.path.exists(agreement_path):
+            try:
+                os.remove(agreement_path)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection lost. Please try again."
+        )
+    except Exception as e:
+        db.rollback()
+        # Clean up uploaded file
+        if 'agreement_path' in locals() and os.path.exists(agreement_path):
+            try:
+                os.remove(agreement_path)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating branch with manager: {str(e)}"
+        )
