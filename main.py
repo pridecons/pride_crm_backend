@@ -132,7 +132,7 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
-    # app.include_router(Cashfree.router, prefix="/api/v1")
+    app.include_router(Cashfree.router, prefix="/api/v1")
     # Authentication routes
     app.include_router(login.router, prefix="/api/v1")
     app.include_router(register.router, prefix="/api/v1")

@@ -1,64 +1,57 @@
-# schemas/payment.py
+# db/Schema/payment.py
+
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict
+from datetime import datetime
+
+def to_camel(string: str) -> str:
+    parts = string.split('_')
+    return parts[0] + ''.join(word.capitalize() for word in parts[1:])
 
 class CustomerDetails(BaseModel):
-    customer_id: str = Field(..., example="CUST123")
-    customer_phone: str = Field(..., example="9000000000")
-    customer_email: Optional[EmailStr] = Field(None, example="user@example.com")
-    customer_name: Optional[str] = Field(None, example="John Doe")
+    customer_id:   str           = Field(...,      alias="customerId")
+    customer_name: Optional[str] = Field(None,      max_length=100, alias="customerName")
+    customer_phone: str          = Field(...,      pattern=r"^\d{10}$", alias="customerPhone")
+
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
+        populate_by_name = True
+
+
+class OrderMeta(BaseModel):
+    return_url: Optional[str] = Field(
+        default="https://pridebuzz.in/payment/return",
+        description="URL to which user is redirected after payment",
+        alias="returnUrl",
+    )
+    notify_url: Optional[str] = Field(
+        default="http://127.0.0.1:8000/payment/webhook",
+        description="Webhook URL for server‐to‐server notifications",
+        alias="notifyUrl",
+    )
+
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
+        populate_by_name = True
 
 class CreateOrderRequest(BaseModel):
-    order_currency: str = Field(..., example="INR")
-    order_amount: float = Field(..., example=100.00)
-    customer_details: CustomerDetails
-    order_note: Optional[str] = Field(None, example="Optional note")
-    order_meta: Optional[Dict[str, Any]] = Field(None, example={"promo_code": "OFF10"})
+    order_amount: float = Field(..., gt=0, alias="orderAmount")
+    order_currency: str = Field(default="INR", alias="orderCurrency")
+    customer_details: CustomerDetails = Field(..., alias="customerDetails")
+    order_meta: Optional[OrderMeta] = Field(None, alias="orderMeta")
 
-class CreatePaymentRequest(BaseModel):
-    order_id: str = Field(..., example="2149460581")
-    payment_method: str = Field(..., example="card")
-    payment_amount: float = Field(..., example=100.00)
-    data: Optional[Dict[str, Any]] = Field(
-        None,
-        example={
-            "url": "https://sandbox.cashfree.com/pg/view/…",
-            "payload": {"name": "card"},
-            "content_type": "application/x-www-form-urlencoded",
-            "method": "post",
-        },
-    )
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
+        populate_by_name = True
 
-class CreatePaymentLinkRequest(BaseModel):
-    link_amount: float = Field(..., example=500.00)
-    link_currency: str = Field(..., example="INR")
-    link_purpose: Optional[str] = Field(None, example="For service X")
-    customer_details: Optional[CustomerDetails] = None
 
-class CreateRefundRequest(BaseModel):
-    payment_id: str = Field(..., example="PAY12345")
-    refund_amount: float = Field(..., example=50.00)
-    cf_merchant_refund_id: Optional[str] = Field(None, example="REF123")
-    refund_note: Optional[str] = Field(None, example="Partial refund")
+class FrontCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+    service: str
+    amount: float
 
-class CreateCustomerRequest(BaseModel):
-    customer_id: str = Field(..., example="CUST123")
-    customer_phone: str = Field(..., example="9000000000")
-    customer_email: Optional[EmailStr] = Field(None, example="user@example.com")
-    customer_name: Optional[str] = Field(None, example="John Doe")
-
-class CreateSubscriptionRequest(BaseModel):
-    plan_id: str = Field(..., example="PLAN_BASIC")
-    customer_id: str = Field(..., example="CUST123")
-    subscription_note: Optional[str] = Field(None, example="Monthly plan")
-
-class CreateMandateRequest(BaseModel):
-    subscription_id: str = Field(..., example="SUB12345")
-    payment_method: str = Field(..., example="upi")
-    data: Optional[Dict[str, Any]] = None
-
-class SettlementReconRequest(BaseModel):
-    filters: Dict[str, List[str]] = Field(
-        ...,
-        example={"settlement_utrs": ["UTR123", "UTR456"]}
-    )

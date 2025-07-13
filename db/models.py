@@ -418,25 +418,6 @@ class LeadStory(Base):
     response         = relationship("LeadResponse")
 
 
-class Payment(Base):
-    __tablename__ = "crm_payment"
-
-    id             = Column(Integer, primary_key=True, autoincrement=True)
-    lead_id        = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
-    user_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
-    timestamp      = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    raised_by      = Column(String(100), nullable=False)
-    payment_amount = Column(Float, nullable=False)
-    mode           = Column(String(50), nullable=False)
-    status         = Column(String(50), nullable=False)
-    invoice        = Column(String(255), nullable=True)
-    description    = Column(Text, nullable=True)
-    transaction_id = Column(String(100), nullable=True)
-    utr            = Column(String(100), nullable=True)
-
-    lead           = relationship("Lead", back_populates="payments")
-    user           = relationship("UserDetails")
-
 
 class Lead(Base):
     __tablename__ = "crm_lead"
@@ -483,12 +464,45 @@ class Lead(Base):
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
     branch            = relationship("BranchDetails", back_populates="leads")
-    payments          = relationship("Payment", back_populates="lead", cascade="all, delete-orphan")
+    payments      = relationship("Payment", back_populates="lead")
     stories           = relationship("LeadStory", back_populates="lead", cascade="all, delete-orphan")
     lead_source       = relationship("LeadSource", back_populates="leads")
     lead_response     = relationship("LeadResponse", back_populates="leads")
     assignment = relationship("LeadAssignment", back_populates="lead", uselist=False)
        
+
+# db/models.py
+
+class Payment(Base):
+    __tablename__ = "crm_payment"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    name             = Column(String(100), nullable=False)
+    email            = Column(String(100), nullable=False)
+    phone_number     = Column(Text, nullable=False)
+    # ← make this a String so it can hold "order_xxx"
+    order_id         = Column(String(100), nullable=True, index=True)
+
+    Service          = Column(String(50), nullable=True)
+    paid_amount      = Column(Float, nullable=False)
+    status           = Column(String(50), nullable=True)
+    mode             = Column(String(50), nullable=False)
+    is_send_invoice  = Column(Boolean, nullable=False, default=False)
+    description      = Column(Text, nullable=True)
+    transaction_id   = Column(String(100), nullable=True)
+    user_id          = Column(Integer, nullable=True)
+    branch_id        = Column(Integer, nullable=True)
+
+    created_at       = Column(
+                         DateTime(timezone=True),
+                         server_default=func.now(),
+                         nullable=False
+                      )
+
+    # foreign key to Lead, many payments per lead
+    lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
+    lead             = relationship("Lead", back_populates="payments")
+
 
 
 class AuditLog(Base):
@@ -593,7 +607,5 @@ class Service(Base):
     def discounted_price(self) -> float:
         """Compute price after discount"""
         return round(self.price * (1 - self.discount_percent / 100), 2)
-
-
 
 
