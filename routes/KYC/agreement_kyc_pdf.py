@@ -212,8 +212,8 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
     
     father_row = f"<tr><td>Father Name</td><td>{kyc_user.father_name}</td></tr>" if kyc_user.father_name else ""
     director_row = f"<tr><td>Director Name / Proprietor</td><td>{kyc_user.director_name}</td></tr>" if kyc_user.director_name else ""
-    gst_row = f"<tr><td>GST NO.</td><td>{kyc_user.gst_no}</td></tr>" if kyc_user.gst_no else ""
-    aadhaar_row = f"<tr><td>Aadhaar No.</td><td>{kyc_user.aadhaar_no}</td></tr>" if kyc_user.aadhaar_no else ""
+    gst_row = f"<tr><td>GST NO.</td><td>{kyc_user.gstin}</td></tr>" if kyc_user.gstin else ""
+    aadhaar_row = f"<tr><td>Aadhaar No.</td><td>{kyc_user.aadhaar}</td></tr>" if kyc_user.aadhaar else ""
     gender_row = f"<tr><td>Gender</td><td>{kyc_user.gender}</td></tr>" if kyc_user.gender else ""
     marital_row = f"<tr><td>Marital Status</td><td>{kyc_user.marital_status}</td></tr>" if kyc_user.marital_status else ""
     occupation_row = f"<tr><td>Occupation</td><td>{kyc_user.occupation}</td></tr>" if kyc_user.occupation else ""
@@ -334,7 +334,7 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
                 {gst_row}
                 <tr><td>DOB</td><td >{kyc_user.dob}</td></tr>
                 <tr><td>Nationality</td><td  >{kyc_user.nationality}</td></tr>
-                <tr><td>PAN No.</td><td >{kyc_user.pan_no}</td></tr>
+                <tr><td>PAN No.</td><td >{kyc_user.pan}</td></tr>
                 {aadhaar_row}
                 {gender_row}
                 {marital_row}
@@ -354,7 +354,7 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
             <tr class="light-gray"><td>Address</td><td>{kyc_user.address}</td></tr>
             <tr><td>City</td><td>{kyc_user.city}</td></tr>
             <tr><td>State</td><td>{kyc_user.state}</td></tr>
-            <tr><td>Pin Code</td><td>{kyc_user.pin_code}</td></tr>
+            <tr><td>Pin Code</td><td>{kyc_user.pincode}</td></tr>
         </table>
 
           <h2 style="text-align:center; page-break-before: always; break-before: page;" >B. RESEARCH SERVICE AGREEMENT</h2>

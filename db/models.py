@@ -423,7 +423,10 @@ class Lead(Base):
 
     id                = Column(Integer, primary_key=True, autoincrement=True)
     full_name         = Column(String(100), nullable=True)
+    director_name     = Column(String(100), nullable=True)
     father_name       = Column(String(100), nullable=True)
+    gender            = Column(String(6), nullable=True)
+    marital_status    = Column(String(12), nullable=True)
     email             = Column(String(100), nullable=True, index=True)
     mobile            = Column(String(20), nullable=True, index=True)
     alternate_mobile  = Column(String(20), nullable=True)
@@ -435,6 +438,8 @@ class Lead(Base):
     city              = Column(String(100), nullable=True)
     district          = Column(String(100), nullable=True)
     address           = Column(Text, nullable=True)
+    pincode           = Column(String(6), nullable=True)
+    country           = Column(String(12), nullable=True)
 
     dob               = Column(Date, nullable=True)
     occupation        = Column(String(100), nullable=True)
