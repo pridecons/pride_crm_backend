@@ -570,6 +570,8 @@ def delete_branch(
 
      
 
+# routes/branch/branch.py - Fixed create_branch_with_manager
+
 @router.post("/create-with-manager", response_model=BranchWithManagerResponse, status_code=status.HTTP_201_CREATED)
 async def create_branch_with_manager(
     # Branch Details
@@ -601,7 +603,7 @@ async def create_branch_with_manager(
     
     db: Session = Depends(get_db),
 ):
-    """Create a new branch along with its branch manager in a single transaction"""
+    """Create a new branch along with its branch manager in a single transaction - FIXED VERSION"""
     
     def validate_email(email: str):
         import re
@@ -620,15 +622,29 @@ async def create_branch_with_manager(
     def validate_pincode(pincode: str):
         return len(pincode) == 6 and pincode.isdigit()
     
-    def generate_employee_code():
+    def generate_employee_code(db: Session):
         """Generate unique employee code"""
-        import random
-        import string
-        return 'EMP' + ''.join(random.choices(string.digits, k=6))
+        count = db.query(UserDetails).count() or 0
+        emp_code = f"EMP{count+1:03d}"
+        
+        # Check if employee code already exists
+        while db.query(UserDetails).filter_by(employee_code=emp_code).first():
+            count += 1
+            emp_code = f"EMP{count+1:03d}"
+        
+        return emp_code
     
     def hash_password(password: str):
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        """Hash password using bcrypt or fallback"""
+        try:
+            import bcrypt
+            salt = bcrypt.gensalt()
+            hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+            return hashed.decode('utf-8')
+        except Exception:
+            # Fallback to SHA-256
+            import hashlib
+            return hashlib.sha256(password.encode()).hexdigest()
     
     try:
         # Validation
@@ -698,9 +714,7 @@ async def create_branch_with_manager(
         agreement_url = f"/{SAVE_DIR}/{filename}"
         
         # Generate unique employee code
-        employee_code = generate_employee_code()
-        while db.query(UserDetails).filter_by(employee_code=employee_code).first():
-            employee_code = generate_employee_code()
+        employee_code = generate_employee_code(db)
         
         # Create branch first (without manager_id)
         branch = BranchDetails(
@@ -717,7 +731,7 @@ async def create_branch_with_manager(
         db.add(branch)
         db.flush()  # Get branch.id without committing
         
-        # Create branch manager
+        # Create branch manager - FIXED: Removed manager_id field
         hashed_password = hash_password(manager_password)
         
         manager = UserDetails(
@@ -740,9 +754,9 @@ async def create_branch_with_manager(
             pincode=manager_pincode,
             comment=manager_comment,
             branch_id=branch.id,
-            manager_id=None,  # Branch managers report to SUPERADMIN
-            sales_manager_id=None,
-            tl_id=None
+            # REMOVED: manager_id=None,  # This field doesn't exist anymore
+            sales_manager_id=None,  # Branch manager doesn't have sales manager
+            tl_id=None  # Branch manager doesn't have TL
         )
         
         db.add(manager)
@@ -831,3 +845,5 @@ async def create_branch_with_manager(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating branch with manager: {str(e)}"
         )
+
+
