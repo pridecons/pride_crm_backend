@@ -459,6 +459,7 @@ class Lead(Base):
     is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
     lead_status       = Column(String(50), nullable=True)
+    profile       = Column(String(50), nullable=True)
 
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
