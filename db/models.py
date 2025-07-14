@@ -611,3 +611,9 @@ class Service(Base):
     def discounted_price(self) -> float:
         """Compute price after discount"""
         return round(self.price * (1 - self.discount_percent / 100), 2)
+    
+
+
+
+
+    
