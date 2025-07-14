@@ -33,7 +33,7 @@ class LeadStoryRead(BaseModel):
     timestamp: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # Create a new story for a lead

@@ -333,7 +333,7 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
                 {director_row}
                 {gst_row}
                 <tr><td>DOB</td><td >{kyc_user.dob}</td></tr>
-                <tr><td>Nationality</td><td  >{kyc_user.nationality}</td></tr>
+                <tr><td>Nationality</td><td  >{kyc_user.country}</td></tr>
                 <tr><td>PAN No.</td><td >{kyc_user.pan}</td></tr>
                 {aadhaar_row}
                 {gender_row}

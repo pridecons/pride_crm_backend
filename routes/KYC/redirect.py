@@ -18,7 +18,7 @@ def set_cors_allow_all(response: Response):
     response.headers["Access-Control-Allow-Headers"] = "*"
 
 @router.post("/redirect/{platform}/{mobile}")
-async def redirect_route(response: Response,platform: str, mobile: str, db: Session = Depends(get_db)):
+async def redirect_route(response: Response,platform: str, mobile: str):
     set_cors_allow_all(response)
     if platform == "pridecons":
         redirect_url = f"https://pridecons.com/web/download_agreement/{mobile}"
@@ -27,7 +27,6 @@ async def redirect_route(response: Response,platform: str, mobile: str, db: Sess
     else:
         redirect_url = f"https://pridebuzz.in/kyc/agreement/{mobile}"
 
-    db.commit()
     return RedirectResponse(
         url=redirect_url,
         status_code=302
@@ -54,6 +53,8 @@ async def response_url_endpoint(request: Request,response: Response,mobile: str,
     kyc_user = db.query(Lead).filter(Lead.mobile == mobile).first()
 
     await send_agreement(kyc_user.email,kyc_user.full_name,pdf_response.content)
+
+    kyc_user.kyc = True
 
     db.commit()
 
