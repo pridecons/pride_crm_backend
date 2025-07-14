@@ -1,4 +1,4 @@
-# routes/auth/register.py - Fixed version with proper serialization
+# routes/auth/register.py - Fixed version with proper hierarchy
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -38,65 +38,160 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
 
-def validate_hierarchy_and_manager(role: UserRoleEnum, manager_id: str = None, branch_id: int = None, db: Session = None):
-    """Validate user hierarchy and manager assignment based on flowchart"""
+def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None, 
+                                   sales_manager_id: str = None, tl_id: str = None, db: Session = None):
+    """Validate hierarchy requirements based on role"""
     
-    # SUPERADMIN doesn't need manager or branch
+    # SUPERADMIN doesn't need anything
     if role == UserRoleEnum.SUPERADMIN:
-        return None, None
+        return None, None, None
     
-    # BRANCH MANAGER needs SUPERADMIN as manager
+    # BRANCH MANAGER needs only branch_id
     if role == UserRoleEnum.BRANCH_MANAGER:
         if not branch_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch Manager must be assigned to a branch"
+                detail="Branch Manager requires branch_id"
             )
-        
-        # Find SUPERADMIN as manager
-        superadmin = db.query(UserDetails).filter_by(role=UserRoleEnum.SUPERADMIN).first()
-        if not superadmin:
+        # Validate branch exists
+        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
+        if not branch:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No SUPERADMIN found. Create SUPERADMIN first."
+                detail="Branch does not exist"
             )
-        return superadmin.employee_code, branch_id
+        return branch_id, None, None
     
-    # For other roles, validate manager exists and has correct role
-    if not manager_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Manager is required for role {role.value}"
-        )
+    # HR and SALES_MANAGER need only branch_id
+    if role == UserRoleEnum.HR or role == UserRoleEnum.SALES_MANAGER:
+        if not branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{role.value} requires branch_id"
+            )
+        # Validate branch exists
+        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
+        if not branch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Branch does not exist"
+            )
+        return branch_id, None, None
     
-    manager = db.query(UserDetails).filter_by(employee_code=manager_id).first()
-    if not manager:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Manager with employee_code '{manager_id}' does not exist"
-        )
+    # TL needs branch_id and sales_manager_id
+    if role == UserRoleEnum.TL:
+        if not branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TL requires branch_id"
+            )
+        if not sales_manager_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TL requires sales_manager_id"
+            )
+        
+        # Validate branch exists
+        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
+        if not branch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Branch does not exist"
+            )
+        
+        # Validate sales manager exists and has correct role
+        sales_manager = db.query(UserDetails).filter_by(employee_code=sales_manager_id).first()
+        if not sales_manager:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sales Manager not found"
+            )
+        if sales_manager.role != UserRoleEnum.SALES_MANAGER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="sales_manager_id must be a SALES_MANAGER"
+            )
+        if sales_manager.branch_id != branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sales Manager must be in the same branch"
+            )
+        
+        return branch_id, sales_manager_id, None
     
-    # Validate manager role based on hierarchy
-    required_manager_role = {
-        UserRoleEnum.SALES_MANAGER: UserRoleEnum.BRANCH_MANAGER,
-        UserRoleEnum.HR: UserRoleEnum.BRANCH_MANAGER,
-        UserRoleEnum.TL: UserRoleEnum.SALES_MANAGER,
-        UserRoleEnum.BA: UserRoleEnum.TL,
-        UserRoleEnum.SBA: UserRoleEnum.TL
-    }
+    # SBA and BA need branch_id, sales_manager_id, and tl_id
+    if role == UserRoleEnum.SBA or role == UserRoleEnum.BA:
+        if not branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{role.value} requires branch_id"
+            )
+        if not sales_manager_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{role.value} requires sales_manager_id"
+            )
+        if not tl_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{role.value} requires tl_id"
+            )
+        
+        # Validate branch exists
+        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
+        if not branch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Branch does not exist"
+            )
+        
+        # Validate sales manager
+        sales_manager = db.query(UserDetails).filter_by(employee_code=sales_manager_id).first()
+        if not sales_manager:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sales Manager not found"
+            )
+        if sales_manager.role != UserRoleEnum.SALES_MANAGER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="sales_manager_id must be a SALES_MANAGER"
+            )
+        if sales_manager.branch_id != branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sales Manager must be in the same branch"
+            )
+        
+        # Validate TL
+        tl = db.query(UserDetails).filter_by(employee_code=tl_id).first()
+        if not tl:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TL not found"
+            )
+        if tl.role != UserRoleEnum.TL:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="tl_id must be a TL"
+            )
+        if tl.branch_id != branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TL must be in the same branch"
+            )
+        if tl.sales_manager_id != sales_manager_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TL must report to the same Sales Manager"
+            )
+        
+        return branch_id, sales_manager_id, tl_id
     
-    expected_role = required_manager_role.get(role)
-    if expected_role and manager.role != expected_role:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{role.value} must report to {expected_role.value}, but manager is {manager.role.value}"
-        )
-    
-    # Inherit branch from manager if not specified
-    if not branch_id:
-        branch_id = manager.branch_id
-    
-    return manager_id, branch_id
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Unknown role: {role.value}"
+    )
 
 
 def serialize_user(user: UserDetails) -> dict:
@@ -120,7 +215,6 @@ def serialize_user(user: UserDetails) -> dict:
         "pincode": user.pincode,
         "comment": user.comment,
         "branch_id": user.branch_id,
-        "manager_id": user.manager_id,
         "sales_manager_id": user.sales_manager_id,
         "tl_id": user.tl_id,
         "created_at": user.created_at,
@@ -130,7 +224,7 @@ def serialize_user(user: UserDetails) -> dict:
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
-    """Create user with automatic hierarchy validation"""
+    """Create user with hierarchy validation"""
     
     # Ensure unique constraints
     if db.query(UserDetails).filter_by(phone_number=user_in.phone_number).first():
@@ -144,7 +238,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
             detail="Email already registered"
         )
 
-    # Validate role and hierarchy
+    # Validate role
     try:
         role_enum = UserRoleEnum(user_in.role)
     except ValueError:
@@ -153,22 +247,14 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
             detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
         )
     
-    # Validate hierarchy and get correct manager/branch
-    manager_id, branch_id = validate_hierarchy_and_manager(
+    # Validate hierarchy requirements
+    branch_id, sales_manager_id, tl_id = validate_hierarchy_requirements(
         role_enum, 
-        user_in.manager_id, 
-        user_in.branch_id, 
+        user_in.branch_id,
+        user_in.sales_manager_id,
+        user_in.tl_id,
         db
     )
-    
-    # Validate branch exists if specified
-    if branch_id:
-        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
-            )
 
     # Auto-generate employee_code
     count = db.query(UserDetails).count() or 0
@@ -203,7 +289,8 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         pincode=user_in.pincode,
         comment=user_in.comment,
         branch_id=branch_id,
-        manager_id=manager_id,
+        sales_manager_id=sales_manager_id,
+        tl_id=tl_id,
     )
     
     try:
@@ -280,7 +367,8 @@ def create_superadmin(user_in: UserCreate, db: Session = Depends(get_db)):
         pincode=user_in.pincode,
         comment=user_in.comment,
         branch_id=None,  # SUPERADMIN doesn't belong to any branch
-        manager_id=None,  # SUPERADMIN has no manager
+        sales_manager_id=None,
+        tl_id=None,
     )
     
     try:
@@ -306,6 +394,7 @@ def create_superadmin(user_in: UserCreate, db: Session = Depends(get_db)):
         )
 
 
+# Keep all other endpoints the same (get_all_users, get_user, etc.)
 @router.get("/")
 def get_all_users(
     skip: int = 0,
@@ -351,48 +440,6 @@ def get_all_users(
         )
 
 
-@router.get("/hierarchy/{employee_code}")
-def get_user_hierarchy(employee_code: str, db: Session = Depends(get_db)):
-    """Get user's complete hierarchy (manager and subordinates)"""
-    user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    # Get manager chain
-    manager_chain = []
-    current_user = user
-    while current_user.manager:
-        manager_chain.append({
-            "employee_code": current_user.manager.employee_code,
-            "name": current_user.manager.name,
-            "role": current_user.manager.role.value if hasattr(current_user.manager.role, 'value') else str(current_user.manager.role)
-        })
-        current_user = current_user.manager
-    
-    # Get direct subordinates
-    subordinates = [
-        {
-            "employee_code": sub.employee_code,
-            "name": sub.name,
-            "role": sub.role.value if hasattr(sub.role, 'value') else str(sub.role)
-        }
-        for sub in user.subordinates
-    ]
-    
-    return {
-        "user": {
-            "employee_code": user.employee_code,
-            "name": user.name,
-            "role": user.role.value if hasattr(user.role, 'value') else str(user.role)
-        },
-        "manager_chain": manager_chain,
-        "subordinates": subordinates
-    }
-
-
 @router.get("/roles")
 def get_available_roles():
     """Get all available user roles"""
@@ -407,9 +454,9 @@ def get_available_roles():
                     UserRoleEnum.SALES_MANAGER: 3,
                     UserRoleEnum.HR: 3,
                     UserRoleEnum.TL: 4,
-                    UserRoleEnum.BA: 5,
-                    UserRoleEnum.SBA: 5
-                }.get(role, 6)
+                    UserRoleEnum.SBA: 5,
+                    UserRoleEnum.BA: 6
+                }.get(role, 7)
             }
             for role in UserRoleEnum
         ]
@@ -449,29 +496,22 @@ def update_user(
     if "role" in data:
         try:
             new_role = UserRoleEnum(data["role"])
-            # Validate manager based on new role
-            manager_id, branch_id = validate_hierarchy_and_manager(
+            # Validate hierarchy requirements for new role
+            branch_id, sales_manager_id, tl_id = validate_hierarchy_requirements(
                 new_role, 
-                data.get("manager_id", user.manager_id), 
-                data.get("branch_id", user.branch_id), 
+                data.get("branch_id", user.branch_id),
+                data.get("sales_manager_id", user.sales_manager_id),
+                data.get("tl_id", user.tl_id),
                 db
             )
-            data["manager_id"] = manager_id
-            data["branch_id"] = branch_id
             data["role"] = new_role
+            data["branch_id"] = branch_id
+            data["sales_manager_id"] = sales_manager_id
+            data["tl_id"] = tl_id
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
-            )
-    
-    # Validate branch if being updated
-    if "branch_id" in data and data["branch_id"]:
-        branch = db.query(BranchDetails).filter_by(id=data["branch_id"]).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
             )
     
     # Check uniqueness for phone and email if being updated
@@ -541,7 +581,7 @@ def delete_user(
     employee_code: str,
     db: Session = Depends(get_db),
 ):
-    """Delete user (with cascade to subordinates)"""
+    """Delete user"""
     user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
     if not user:
         raise HTTPException(
@@ -570,3 +610,5 @@ def delete_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting user: {str(e)}"
         )
+    
+    

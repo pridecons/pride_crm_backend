@@ -1,4 +1,4 @@
-# db/models.py - Complete Fixed Version
+# db/models.py - Complete Fixed Version without manager_id
 
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
@@ -16,8 +16,8 @@ class UserRoleEnum(str, enum.Enum):
     HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
     TL = "TL"  # Team Leader
-    BA = "BA"  # Business Associate
     SBA = "SBA"  # Senior Business Associate
+    BA = "BA"  # Business Associate
 
 
 class OTP(Base):
@@ -56,11 +56,10 @@ class UserDetails(Base):
 
     comment           = Column(Text, nullable=True)
 
-    # Foreign Keys
-    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # SUPERADMIN won't have branch
-    manager_id        = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
-    sales_manager_id  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)  # Direct sales manager
-    tl_id            = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)   # Team Leader
+    # Foreign Keys - Removed manager_id, kept sales_manager_id and tl_id
+    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
+    sales_manager_id  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    tl_id            = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
 
     # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -77,19 +76,20 @@ class UserDetails(Base):
                          back_populates="users",
                          foreign_keys=[branch_id]
                        )
-    
-    # Self-referential relationship for manager hierarchy
-    manager           = relationship(
+
+    # Self-referential relationships for hierarchy
+    sales_manager     = relationship(
                          "UserDetails",
                          remote_side=[employee_code],
-                         back_populates="subordinates",
-                         foreign_keys=[manager_id]
+                         foreign_keys=[sales_manager_id],
+                         post_update=True
                        )
-    subordinates      = relationship(
+    
+    tl                = relationship(
                          "UserDetails",
-                         back_populates="manager",
-                         foreign_keys=[manager_id],
-                         cascade="all, delete-orphan"
+                         remote_side=[employee_code],
+                         foreign_keys=[tl_id],
+                         post_update=True
                        )
 
     # Branch management relationship (only for BRANCH MANAGER)
@@ -147,10 +147,10 @@ class UserDetails(Base):
             UserRoleEnum.SALES_MANAGER: 3,
             UserRoleEnum.HR: 3,
             UserRoleEnum.TL: 4,
-            UserRoleEnum.BA: 5,
-            UserRoleEnum.SBA: 5
+            UserRoleEnum.SBA: 5,
+            UserRoleEnum.BA: 6
         }
-        return hierarchy.get(self.role, 6)
+        return hierarchy.get(self.role, 7)
 
     def can_manage(self, other_user):
         """Check if this user can manage another user"""
@@ -327,7 +327,7 @@ class PermissionDetails(Base):
                 'approval': False, 'internal_mailing': True, 'chatting': True,
                 'targets': True, 'reports': True, 'fetch_lead': True
             },
-            UserRoleEnum.BA: {
+            UserRoleEnum.SBA: {
                 'add_user': False, 'edit_user': False, 'delete_user': False,
                 'add_lead': True, 'edit_lead': True, 'delete_lead': False,
                 'view_users': False, 'view_lead': True, 'view_branch': False,
@@ -336,7 +336,7 @@ class PermissionDetails(Base):
                 'approval': False, 'internal_mailing': False, 'chatting': True,
                 'targets': False, 'reports': False, 'fetch_lead': True
             },
-            UserRoleEnum.SBA: {
+            UserRoleEnum.BA: {
                 'add_user': False, 'edit_user': False, 'delete_user': False,
                 'add_lead': True, 'edit_lead': True, 'delete_lead': False,
                 'view_users': False, 'view_lead': True, 'view_branch': False,
@@ -359,19 +359,19 @@ class LeadAssignment(Base):
     lead         = relationship("Lead", back_populates="assignment")
     user         = relationship("UserDetails")
 
-# db/models.py - FIXED LeadFetchConfig Model
 
 class LeadFetchConfig(Base):
     __tablename__ = "crm_lead_fetch_config"
     id                = Column(Integer, primary_key=True, autoincrement=True)
     role              = Column(Enum(UserRoleEnum), nullable=True)
-    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)  # ✅ FIXED: Integer instead of String
+    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
     per_request_limit = Column(Integer, nullable=False)
     daily_call_limit  = Column(Integer, nullable=False)
     assignment_ttl_hours = Column(Integer, nullable=False, default=24*7)
 
     # Add relationship
     branch = relationship("BranchDetails", foreign_keys=[branch_id])
+
 
 class LeadFetchHistory(Base):
     __tablename__ = "crm_lead_fetch_history"
@@ -418,7 +418,6 @@ class LeadStory(Base):
     response         = relationship("LeadResponse")
 
 
-
 class Lead(Base):
     __tablename__ = "crm_lead"
 
@@ -459,20 +458,18 @@ class Lead(Base):
     is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
     lead_status       = Column(String(50), nullable=True)
-    profile       = Column(String(50), nullable=True)
+    profile           = Column(String(50), nullable=True)
 
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
     branch            = relationship("BranchDetails", back_populates="leads")
-    payments      = relationship("Payment", back_populates="lead")
+    payments          = relationship("Payment", back_populates="lead")
     stories           = relationship("LeadStory", back_populates="lead", cascade="all, delete-orphan")
     lead_source       = relationship("LeadSource", back_populates="leads")
     lead_response     = relationship("LeadResponse", back_populates="leads")
-    assignment = relationship("LeadAssignment", back_populates="lead", uselist=False)
-       
+    assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
 
-# db/models.py
 
 class Payment(Base):
     __tablename__ = "crm_payment"
@@ -481,7 +478,6 @@ class Payment(Base):
     name             = Column(String(100), nullable=False)
     email            = Column(String(100), nullable=False)
     phone_number     = Column(Text, nullable=False)
-    # ← make this a String so it can hold "order_xxx"
     order_id         = Column(String(100), nullable=True, index=True)
 
     Service          = Column(String(50), nullable=True)
@@ -499,11 +495,16 @@ class Payment(Base):
                          server_default=func.now(),
                          nullable=False
                       )
+    updated_at       = Column(
+                         DateTime(timezone=True),
+                         server_default=func.now(),
+                         onupdate=func.now(),
+                         nullable=False
+                       )
 
     # foreign key to Lead, many payments per lead
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
     lead             = relationship("Lead", back_populates="payments")
-
 
 
 class AuditLog(Base):
@@ -578,10 +579,12 @@ class Campaign(Base):
 
     owner       = relationship("UserDetails", back_populates="campaigns")
 
+
 class BillingCycleEnum(str, enum.Enum):
     MONTHLY = "MONTHLY"
     YEARLY  = "YEARLY"
     CALL = "CALL"
+
 
 class Service(Base):
     __tablename__ = "crm_services"
@@ -608,5 +611,3 @@ class Service(Base):
     def discounted_price(self) -> float:
         """Compute price after discount"""
         return round(self.price * (1 - self.discount_percent / 100), 2)
-
-

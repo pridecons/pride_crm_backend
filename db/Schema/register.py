@@ -1,6 +1,6 @@
-# db/Schema/register.py - Updated with better serialization
+# db/Schema/register.py - Fixed Pydantic V2 warnings
 
-from pydantic import BaseModel, EmailStr, constr, validator
+from pydantic import BaseModel, EmailStr, constr, validator, ConfigDict
 from typing import Optional
 from datetime import date, datetime
 from enum import Enum
@@ -11,8 +11,8 @@ class UserRoleEnum(str, Enum):
     HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
     TL = "TL"
-    BA = "BA"
     SBA = "SBA"
+    BA = "BA"
 
 class UserBase(BaseModel):
     phone_number: constr(strip_whitespace=True, min_length=10, max_length=10)
@@ -59,7 +59,8 @@ class UserCreate(UserBase):
     password: constr(min_length=6)
     role: str
     branch_id: Optional[int] = None
-    manager_id: Optional[str] = None
+    sales_manager_id: Optional[str] = None
+    tl_id: Optional[str] = None
 
     @validator('role')
     def validate_role(cls, v):
@@ -88,7 +89,8 @@ class UserUpdate(BaseModel):
     password: Optional[constr(min_length=6)] = None
     role: Optional[str] = None
     branch_id: Optional[int] = None
-    manager_id: Optional[str] = None
+    sales_manager_id: Optional[str] = None
+    tl_id: Optional[str] = None
 
     @validator('phone_number')
     def validate_phone(cls, v):
@@ -126,6 +128,8 @@ class UserUpdate(BaseModel):
 
 # Simple response model without complex relationships
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     employee_code: str
     phone_number: str
     email: str
@@ -144,18 +148,10 @@ class UserOut(BaseModel):
     pincode: Optional[str] = None
     comment: Optional[str] = None
     branch_id: Optional[int] = None
-    manager_id: Optional[str] = None
     sales_manager_id: Optional[str] = None
     tl_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
-        # Custom serializer for enum fields
-        json_encoders = {
-            UserRoleEnum: lambda v: v.value if hasattr(v, 'value') else str(v)
-        }
 
 # Response models for specific operations
 class UserCreateResponse(BaseModel):
