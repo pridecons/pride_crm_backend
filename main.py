@@ -18,10 +18,11 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config,lead_responses
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config,lead_responses, stories
 from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
+from routes.Pan_verification import PanVerification
 
 # Configure logging
 logging.basicConfig(
@@ -150,7 +151,9 @@ try:
     app.include_router(bulk_leads.router, prefix="/api/v1")
     app.include_router(fetch_config.router, prefix="/api/v1")
     app.include_router(leads_fetch.router, prefix="/api/v1")
+    app.include_router(stories.router, prefix="/api/v1")
     app.include_router(services.router, prefix="/api/v1")
+    app.include_router(PanVerification.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     
 except Exception as e:

@@ -742,5 +742,311 @@ def delete_lead(
 
 
 
+# Add this PATCH endpoint to your leads.py file
 
+@router.patch("/{lead_id}", response_model=LeadOut)
+def patch_lead(
+    lead_id: int,
+    lead_updates: LeadUpdate,
+    db: Session = Depends(get_db),
+):
+    """
+    Patch/Update specific fields of a lead - only send fields you want to update
+    """
+    try:
+        # Find the lead
+        lead = db.query(Lead).filter_by(id=lead_id).first()
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # Get only the fields that were provided (exclude unset fields)
+        update_data = lead_updates.dict(exclude_unset=True)
+        
+        if not update_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No fields provided for update"
+            )
+        
+        # Validate references if being updated
+        if "lead_source_id" in update_data and update_data["lead_source_id"]:
+            lead_source = db.query(LeadSource).filter_by(id=update_data["lead_source_id"]).first()
+            if not lead_source:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Lead source with ID {update_data['lead_source_id']} not found"
+                )
+        
+        if "lead_response_id" in update_data and update_data["lead_response_id"]:
+            lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
+            if not lead_response:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Lead response with ID {update_data['lead_response_id']} not found"
+                )
+        
+        # Check for duplicate email or mobile if being updated
+        if "email" in update_data and update_data["email"]:
+            existing_lead = db.query(Lead).filter(
+                Lead.email == update_data["email"],
+                Lead.id != lead_id
+            ).first()
+            if existing_lead:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Another lead with this email already exists"
+                )
+        
+        if "mobile" in update_data and update_data["mobile"]:
+            existing_lead = db.query(Lead).filter(
+                Lead.mobile == update_data["mobile"],
+                Lead.id != lead_id
+            ).first()
+            if existing_lead:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Another lead with this mobile already exists"
+                )
+        
+        # Prepare update data for database (handle JSON fields)
+        prepared_data = prepare_lead_data_for_db(update_data)
+        
+        # Apply only the provided updates
+        for field, value in prepared_data.items():
+            if hasattr(lead, field):
+                setattr(lead, field, value)
+        
+        # Commit changes
+        db.commit()
+        db.refresh(lead)
+        
+        # Convert to response format
+        lead_dict = safe_convert_lead_to_dict(lead)
+        return LeadOut(**lead_dict)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead: {str(e)}"
+        )
+
+
+@router.patch("/{lead_id}/status")
+def update_lead_status(
+    lead_id: int,
+    lead_status: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Update only lead status and callback date
+    """
+    try:
+        lead = db.query(Lead).filter_by(id=lead_id).first()
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # Update status and callback date
+        lead.lead_status = lead_status
+        
+        db.commit()
+        db.refresh(lead)
+        
+        return {
+            "message": "Lead status updated successfully",
+            "lead_id": lead_id,
+            "lead_status": lead_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead status: {str(e)}"
+        )
+
+
+
+@router.patch("/{lead_id}/contact")
+def update_lead_contact(
+    lead_id: int,
+    email: Optional[str] = Form(None),
+    mobile: Optional[str] = Form(None),
+    alternate_mobile: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Update only contact information (email, mobile, alternate mobile)
+    """
+    try:
+        lead = db.query(Lead).filter_by(id=lead_id).first()
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # Check for duplicates if updating email or mobile
+        if email and email != lead.email:
+            existing_lead = db.query(Lead).filter(
+                Lead.email == email,
+                Lead.id != lead_id
+            ).first()
+            if existing_lead:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Another lead with this email already exists"
+                )
+            lead.email = email
+        
+        if mobile and mobile != lead.mobile:
+            existing_lead = db.query(Lead).filter(
+                Lead.mobile == mobile,
+                Lead.id != lead_id
+            ).first()
+            if existing_lead:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Another lead with this mobile already exists"
+                )
+            lead.mobile = mobile
+        
+        if alternate_mobile is not None:
+            lead.alternate_mobile = alternate_mobile
+        
+        db.commit()
+        db.refresh(lead)
+        
+        return {
+            "message": "Lead contact information updated successfully",
+            "lead_id": lead_id,
+            "email": lead.email,
+            "mobile": lead.mobile,
+            "alternate_mobile": lead.alternate_mobile
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead contact: {str(e)}"
+        )
+
+
+@router.patch("/{lead_id}/documents")
+def update_lead_documents(
+    lead_id: int,
+    aadhaar: Optional[str] = Form(None),
+    pan: Optional[str] = Form(None),
+    gstin: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Update only document information (Aadhaar, PAN, GSTIN)
+    """
+    try:
+        lead = db.query(Lead).filter_by(id=lead_id).first()
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # Update document fields if provided
+        if aadhaar is not None:
+            lead.aadhaar = aadhaar
+        
+        if pan is not None:
+            lead.pan = pan
+        
+        if gstin is not None:
+            lead.gstin = gstin
+        
+        db.commit()
+        db.refresh(lead)
+        
+        return {
+            "message": "Lead documents updated successfully",
+            "lead_id": lead_id,
+            "aadhaar": lead.aadhaar,
+            "pan": lead.pan,
+            "gstin": lead.gstin
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead documents: {str(e)}"
+        )
+
+
+@router.patch("/{lead_id}/address")
+def update_lead_address(
+    lead_id: int,
+    state: Optional[str] = Form(None),
+    city: Optional[str] = Form(None),
+    district: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Update only address information
+    """
+    try:
+        lead = db.query(Lead).filter_by(id=lead_id).first()
+        if not lead:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lead not found"
+            )
+        
+        # Update address fields if provided
+        if state is not None:
+            lead.state = state
+        
+        if city is not None:
+            lead.city = city
+        
+        if district is not None:
+            lead.district = district
+        
+        if address is not None:
+            lead.address = address
+        
+        db.commit()
+        db.refresh(lead)
+        
+        return {
+            "message": "Lead address updated successfully",
+            "lead_id": lead_id,
+            "state": lead.state,
+            "city": lead.city,
+            "district": lead.district,
+            "address": lead.address
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating lead address: {str(e)}"
+        )
+    
     

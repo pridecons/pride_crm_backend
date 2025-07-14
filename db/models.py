@@ -453,7 +453,7 @@ class Lead(Base):
     aadhar_back_pic   = Column(String(255), nullable=True)
     pan_pic           = Column(String(255), nullable=True)
     kyc               = Column(Boolean, default=False, nullable=True)
-    kyc_id            = Column(Integer, nullable=True)
+    kyc_id            = Column(String(100), nullable=True)
 
     is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
@@ -613,7 +613,18 @@ class Service(Base):
         return round(self.price * (1 - self.discount_percent / 100), 2)
     
 
+class PanVerification(Base):
+    __tablename__ = "crm_pan_verifications"
 
-
-
+    PANnumber = Column(String(10), primary_key=True, index=True)
+    response  = Column(Text, nullable=True)
+    APICount = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+                    DateTime(timezone=True),
+                    server_default=func.now(),
+                    onupdate=func.now(),
+                    nullable=False
+                )
+    
     
