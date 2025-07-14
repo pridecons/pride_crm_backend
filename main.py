@@ -23,6 +23,7 @@ from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
 from routes.Pan_verification import PanVerification
+from routes.KYC import kyc_verification, redirect
 
 # Configure logging
 logging.basicConfig(
@@ -154,6 +155,8 @@ try:
     app.include_router(stories.router, prefix="/api/v1")
     app.include_router(services.router, prefix="/api/v1")
     app.include_router(PanVerification.router, prefix="/api/v1")
+    app.include_router(kyc_verification.router, prefix="/api/v1")
+    app.include_router(redirect.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     
 except Exception as e:
