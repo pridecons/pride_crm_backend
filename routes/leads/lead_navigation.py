@@ -1,6 +1,6 @@
 # routes/leads/lead_navigation.py
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -49,17 +49,17 @@ async def get_current_lead(
     Get current lead for user - returns first is_call=false lead
     If no is_call=false leads, return first lead
     """
-    # Get user's active assignments (within TTL)
-    now = datetime.utcnow()
+    # Get user's active assignments (within TTL) - use timezone-aware datetime
+    now = datetime.now(timezone.utc)  # Fixed timezone issue
     expiry_cutoff = now - timedelta(hours=24)  # 24 hour TTL
     
-    # Get all user's assignments with leads
+    # Get all user's assignments with leads - order by fetched_at instead of created_at
     assignments_query = db.query(LeadAssignment).filter(
         and_(
             LeadAssignment.user_id == current_user.employee_code,
             LeadAssignment.fetched_at >= expiry_cutoff
         )
-    ).order_by(LeadAssignment.created_at)
+    ).order_by(LeadAssignment.fetched_at)  # Changed from created_at to fetched_at
     
     assignments = assignments_query.all()
     
@@ -114,8 +114,8 @@ async def get_next_lead(
     """
     Get next lead in sequence
     """
-    # Get user's active assignments
-    now = datetime.utcnow()
+    # Get user's active assignments - use timezone-aware datetime
+    now = datetime.now(timezone.utc)  # Fixed timezone issue
     expiry_cutoff = now - timedelta(hours=24)
     
     assignments = db.query(LeadAssignment).filter(
@@ -123,7 +123,7 @@ async def get_next_lead(
             LeadAssignment.user_id == current_user.employee_code,
             LeadAssignment.fetched_at >= expiry_cutoff
         )
-    ).order_by(LeadAssignment.created_at).all()
+    ).order_by(LeadAssignment.fetched_at).all()  # Changed from created_at to fetched_at
     
     if not assignments:
         raise HTTPException(status_code=404, detail="No leads assigned")
@@ -177,8 +177,8 @@ async def get_previous_lead(
     """
     Get previous lead in sequence (including is_call=true leads)
     """
-    # Get user's active assignments
-    now = datetime.utcnow()
+    # Get user's active assignments - use timezone-aware datetime
+    now = datetime.now(timezone.utc)  # Fixed timezone issue
     expiry_cutoff = now - timedelta(hours=24)
     
     assignments = db.query(LeadAssignment).filter(
@@ -186,7 +186,7 @@ async def get_previous_lead(
             LeadAssignment.user_id == current_user.employee_code,
             LeadAssignment.fetched_at >= expiry_cutoff
         )
-    ).order_by(LeadAssignment.created_at).all()
+    ).order_by(LeadAssignment.fetched_at).all()  # Changed from created_at to fetched_at
     
     if not assignments:
         raise HTTPException(status_code=404, detail="No leads assigned")
@@ -251,7 +251,7 @@ async def mark_lead_called(
         raise HTTPException(status_code=404, detail="Assignment not found")
     
     assignment.is_call = True
-    assignment.called_at = datetime.utcnow()
+    # Note: called_at field doesn't exist in the model, removed this line
     db.commit()
     
     return {"message": "Lead marked as called", "assignment_id": assignment_id}
@@ -265,8 +265,8 @@ async def get_navigation_position(
     """
     Get navigation position info only
     """
-    # Get user's active assignments
-    now = datetime.utcnow()
+    # Get user's active assignments - use timezone-aware datetime
+    now = datetime.now(timezone.utc)  # Fixed timezone issue
     expiry_cutoff = now - timedelta(hours=24)
     
     assignments = db.query(LeadAssignment).filter(
@@ -274,7 +274,7 @@ async def get_navigation_position(
             LeadAssignment.user_id == current_user.employee_code,
             LeadAssignment.fetched_at >= expiry_cutoff
         )
-    ).order_by(LeadAssignment.created_at).all()
+    ).order_by(LeadAssignment.fetched_at).all()  # Changed from created_at to fetched_at
     
     if not assignments:
         raise HTTPException(status_code=404, detail="No leads assigned")
@@ -303,7 +303,8 @@ async def get_uncalled_leads_count(
     """
     Get count of uncalled leads (is_call = false)
     """
-    now = datetime.utcnow()
+    # Use timezone-aware datetime
+    now = datetime.now(timezone.utc)  # Fixed timezone issue
     expiry_cutoff = now - timedelta(hours=24)
     
     uncalled_count = db.query(LeadAssignment).filter(
@@ -326,3 +327,4 @@ async def get_uncalled_leads_count(
         "total_count": total_count,
         "called_count": total_count - uncalled_count
     }
+

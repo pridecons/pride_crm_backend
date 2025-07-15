@@ -1,6 +1,6 @@
-# routes/leads/assignments.py - Separate file for assignment endpoints
+# routes/leads/assignments.py - Fixed version with proper route ordering
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,8 +13,9 @@ from db.models import Lead, LeadAssignment, UserDetails
 from routes.auth.auth_dependency import require_permission
 from routes.leads.leads_fetch import load_fetch_config
 
+# Create a separate router with a specific prefix to avoid conflicts
 router = APIRouter(
-    prefix="/leads",
+    prefix="/leads/assignments",  # Changed to more specific prefix
     tags=["lead assignments"],
 )
 
@@ -37,7 +38,7 @@ class MyAssignmentsResponse(BaseModel):
     last_fetch_limit: int
 
 
-@router.get("/my-assignments", response_model=MyAssignmentsResponse)
+@router.get("/my", response_model=MyAssignmentsResponse)  # Changed from "/my-assignments" to "/my"
 def get_my_assignments(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(require_permission("fetch_lead")),
@@ -46,8 +47,8 @@ def get_my_assignments(
     try:
         config, _ = load_fetch_config(db, current_user)
         
-        # Get non-expired assignments
-        now = datetime.utcnow()
+        # Get non-expired assignments - use timezone-aware datetime
+        now = datetime.now(timezone.utc)  # Changed from datetime.utcnow()
         expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
         
         assignments = db.query(LeadAssignment).join(Lead).filter(
@@ -92,7 +93,7 @@ def get_my_assignments(
         )
 
 
-@router.delete("/assignment/{assignment_id}")
+@router.delete("/{assignment_id}")  # Changed from "/assignment/{assignment_id}" to "/{assignment_id}"
 def complete_assignment(
     assignment_id: int,
     db: Session = Depends(get_db),
@@ -132,7 +133,7 @@ def complete_assignment(
         )
 
 
-@router.post("/complete-multiple-assignments")
+@router.post("/complete-multiple")  # Changed from "/complete-multiple-assignments"
 def complete_multiple_assignments(
     assignment_ids: List[int],
     db: Session = Depends(get_db),
@@ -179,5 +180,3 @@ def complete_multiple_assignments(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error completing assignments: {str(e)}"
         )
-    
-    
