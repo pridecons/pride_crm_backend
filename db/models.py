@@ -367,6 +367,7 @@ class LeadFetchConfig(Base):
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
     per_request_limit = Column(Integer, nullable=False)
     daily_call_limit  = Column(Integer, nullable=False)
+    last_fetch_limit  = Column(Integer, nullable=False)
     assignment_ttl_hours = Column(Integer, nullable=False, default=24*7)
 
     # Add relationship

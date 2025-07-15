@@ -22,3 +22,14 @@ PAN_TASK_ID_1=os.getenv("PAN_TASK_ID_1")
 PAN_TASK_ID_2=os.getenv("PAN_TASK_ID_2")
 
 
+SMTP_SERVER=os.getenv("smtp_server")
+SMTP_PORT=os.getenv("smtp_port")
+SMTP_USER=os.getenv("smtp_user")
+SMTP_PASSWORD=os.getenv("smtp_pass")
+
+COM_SMTP_SERVER=os.getenv("com_smtp_server")
+COM_SMTP_PORT=os.getenv("com_smtp_port")
+COM_SMTP_USER=os.getenv("com_smtp_user")
+COM_SMTP_PASSWORD=os.getenv("com_smtp_pass")
+
+

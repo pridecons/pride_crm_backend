@@ -7,6 +7,7 @@ from db.models import Lead
 from db.connection import get_db
 from routes.KYC.agreement_kyc_pdf import generate_kyc_pdf
 import pytz
+from routes.mail_service.send_mail import send_mail
 
 router = APIRouter(tags=["Agreement KYC"])
 
@@ -84,11 +85,78 @@ async def update_kyc_details(
             db.commit()
             db.refresh(kyc_user)
         
+        # Extract signing URL and send email - FIXED
+        try:
+            # Fix the data extraction syntax error
+            signing_url = signer_details.get("requests", [{}])[0].get("signing_url")
+            
+            if signing_url:
+                # Create proper email content with HTML formatting
+                email_content = f"""
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #2c3e50;">KYC Document Signing</h2>
+    
+    <p>Dear {kyc_user.full_name},</p>
+    
+    <p>Your KYC document is ready for digital signature. Please click the link below to review and sign your agreement:</p>
+    
+    <div style="text-align: center; margin: 30px 0;">
+        <a href="{signing_url}" 
+           style="background-color: #3498db; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            Click Here to Sign KYC Document
+        </a>
+    </div>
+    
+    <p><strong>Important Instructions:</strong></p>
+    <ul style="color: #555;">
+        <li>Click the above link to access your KYC document</li>
+        <li>Review all the details carefully</li>
+        <li>Use your Aadhaar-linked mobile number for OTP verification</li>
+        <li>Complete the digital signature process</li>
+        <li>This link will expire in 7 days</li>
+    </ul>
+    
+    <p><strong>Document Details:</strong></p>
+    <ul style="color: #555;">
+        <li>Mobile: {mobile}</li>
+        <li>Email: {kyc_user.email}</li>
+        <li>KYC ID: {kyc_user.kyc_id}</li>
+        <li>Generated Date: {now_in_india.strftime('%d-%m-%Y %H:%M:%S')}</li>
+    </ul>
+    
+    <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #17a2b8; margin: 20px 0;">
+        <p style="margin: 0; color: #555;">
+            <strong>Note:</strong> If you face any issues with the signing process, please contact our support team at compliance@pridecons.com or call +91-9981919424
+        </p>
+    </div>
+    
+    <p>If the button above doesn't work, copy and paste this link in your browser:</p>
+    <p style="word-break: break-all; color: #007bff;">{signing_url}</p>
+</div>
+                """
+                
+                # Send email with proper HTML content
+                await send_mail(
+                    email=kyc_user.email,
+                    name=kyc_user.full_name,
+                    subject="KYC Document Ready for Digital Signature - Pride Trading Consultancy",
+                    content=email_content,
+                    is_html=True
+                )
+            else:
+                print("Warning: No signing URL found in signer details")
+                
+        except Exception as email_error:
+            print(f"Email sending failed: {email_error}")
+            # Don't fail the whole process if email fails
+            
         return {
             "message": "KYC process initiated successfully",
             "mobile": mobile,
             "user_name": kyc_user.full_name,
             "kyc_id": kyc_user.kyc_id,
+            "email_sent": kyc_user.email,
+            "signing_url": signing_url if 'signing_url' in locals() else None,
             "signer_details": signer_details
         }
         
@@ -119,7 +187,8 @@ async def get_kyc_status(
             "mobile": mobile,
             "kyc_completed": kyc_user.kyc or False,
             "kyc_id": kyc_user.kyc_id,
-            "user_name": kyc_user.full_name
+            "user_name": kyc_user.full_name,
+            "email": kyc_user.email
         }
         
     except HTTPException:
@@ -130,4 +199,7 @@ async def get_kyc_status(
             detail=f"Failed to get KYC status: {str(e)}"
         )
     
+
+
+
     

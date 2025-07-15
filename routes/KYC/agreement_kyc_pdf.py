@@ -209,6 +209,8 @@ def create_watermark_overlay(page_width: float, page_height: float, text: str):
 
 async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
     kyc_user = db.query(Lead).filter(Lead.mobile == mobile).first()
+    if not kyc_user:
+            raise HTTPException(status_code=404, detail="User not found")
     
     father_row = f"<tr><td>Father Name</td><td>{kyc_user.father_name}</td></tr>" if kyc_user.father_name else ""
     director_row = f"<tr><td>Director Name / Proprietor</td><td>{kyc_user.director_name}</td></tr>" if kyc_user.director_name else ""
@@ -1028,7 +1030,7 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
 
         output_pdf.add_page(page)
     
-    output_path = "routes/kyc_service/final_merged.pdf"
+    output_path = "routes/KYC/final_merged.pdf"
     with open(output_path, "wb") as f:
         output_pdf.write(f)
 
