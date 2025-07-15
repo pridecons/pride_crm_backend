@@ -1,7 +1,8 @@
-# routes/auth/register.py - Fixed bcrypt version error
+# routes/auth/register.py - Complete User CRUD API
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime
 import hashlib
 from typing import List
 import bcrypt
@@ -224,6 +225,7 @@ def serialize_user(user: UserDetails) -> dict:
     }
 
 
+# CREATE USER
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """Create user with hierarchy validation"""
@@ -318,7 +320,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         )
 
 
-# Rest of the endpoints remain the same...
+# GET ALL USERS
 @router.get("/")
 def get_all_users(
     skip: int = 0,
@@ -326,6 +328,7 @@ def get_all_users(
     active_only: bool = False,
     branch_id: int = None,
     role: str = None,
+    search: str = None,
     db: Session = Depends(get_db),
 ):
     """Get all users with filtering options"""
@@ -348,12 +351,29 @@ def get_all_users(
                     detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
                 )
         
+        if search:
+            query = query.filter(
+                UserDetails.name.ilike(f"%{search}%") |
+                UserDetails.email.ilike(f"%{search}%") |
+                UserDetails.phone_number.ilike(f"%{search}%") |
+                UserDetails.employee_code.ilike(f"%{search}%")
+            )
+        
+        total_count = query.count()
         users = query.offset(skip).limit(limit).all()
         
         # Serialize users manually to handle enum properly
         serialized_users = [serialize_user(user) for user in users]
         
-        return serialized_users
+        return {
+            "data": serialized_users,
+            "pagination": {
+                "total": total_count,
+                "skip": skip,
+                "limit": limit,
+                "pages": (total_count + limit - 1) // limit
+            }
+        }
         
     except HTTPException:
         raise
@@ -362,6 +382,302 @@ def get_all_users(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching users: {str(e)}"
         )
-    
 
-    
+
+# GET USER BY ID
+@router.get("/{employee_code}")
+def get_user_by_id(employee_code: str, db: Session = Depends(get_db)):
+    """Get user by employee code"""
+    try:
+        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return serialize_user(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching user: {str(e)}"
+        )
+
+
+# UPDATE USER
+@router.put("/{employee_code}")
+def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depends(get_db)):
+    """Update user details with hierarchy validation"""
+    try:
+        # Find user
+        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check unique constraints (excluding current user)
+        if user_update.phone_number and user_update.phone_number != user.phone_number:
+            existing_phone = db.query(UserDetails).filter(
+                UserDetails.phone_number == user_update.phone_number,
+                UserDetails.employee_code != employee_code
+            ).first()
+            if existing_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Phone number already exists"
+                )
+        
+        if user_update.email and user_update.email != user.email:
+            existing_email = db.query(UserDetails).filter(
+                UserDetails.email == user_update.email,
+                UserDetails.employee_code != employee_code
+            ).first()
+            if existing_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already exists"
+                )
+        
+        # Validate role change if provided
+        if user_update.role:
+            try:
+                new_role_enum = UserRoleEnum(user_update.role)
+                
+                # Validate hierarchy requirements for new role
+                branch_id, sales_manager_id, tl_id = validate_hierarchy_requirements(
+                    new_role_enum,
+                    user_update.branch_id or user.branch_id,
+                    user_update.sales_manager_id or user.sales_manager_id,
+                    user_update.tl_id or user.tl_id,
+                    db
+                )
+                
+                # Update hierarchy fields
+                user.role = new_role_enum
+                user.branch_id = branch_id
+                user.sales_manager_id = sales_manager_id
+                user.tl_id = tl_id
+                
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
+                )
+        
+        # Update other fields
+        update_fields = {
+            'phone_number', 'email', 'name', 'father_name', 'is_active',
+            'experience', 'date_of_joining', 'date_of_birth', 'pan', 'aadhaar',
+            'address', 'city', 'state', 'pincode', 'comment'
+        }
+        
+        for field in update_fields:
+            if hasattr(user_update, field):
+                value = getattr(user_update, field)
+                if value is not None:
+                    setattr(user, field, value)
+        
+        # Update password if provided
+        if user_update.password:
+            user.password = hash_password(user_update.password)
+        
+        # Update timestamp
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(user)
+        
+        return serialize_user(user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating user: {str(e)}"
+        )
+
+
+# DELETE USER (Soft Delete)
+@router.delete("/{employee_code}")
+def delete_user(employee_code: str, db: Session = Depends(get_db)):
+    """Soft delete user (set is_active to False)"""
+    try:
+        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Soft delete - set is_active to False
+        user.is_active = False
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "message": f"User {employee_code} has been deactivated successfully",
+            "employee_code": employee_code,
+            "deleted_at": user.updated_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting user: {str(e)}"
+        )
+
+
+# TOGGLE USER STATUS
+@router.patch("/{employee_code}/status")
+def toggle_user_status(employee_code: str, status_data: dict, db: Session = Depends(get_db)):
+    """Toggle user active status"""
+    try:
+        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        is_active = status_data.get('is_active')
+        if is_active is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="is_active field is required"
+            )
+        
+        user.is_active = bool(is_active)
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        status_text = "activated" if is_active else "deactivated"
+        return {
+            "message": f"User {employee_code} has been {status_text} successfully",
+            "employee_code": employee_code,
+            "is_active": user.is_active,
+            "updated_at": user.updated_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating user status: {str(e)}"
+        )
+
+
+# RESET PASSWORD
+@router.post("/{employee_code}/reset-password")
+def reset_user_password(employee_code: str, password_data: dict, db: Session = Depends(get_db)):
+    """Reset user password"""
+    try:
+        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        new_password = password_data.get('new_password')
+        if not new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="new_password field is required"
+            )
+        
+        if len(new_password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 6 characters long"
+            )
+        
+        user.password = hash_password(new_password)
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "message": f"Password for user {employee_code} has been reset successfully",
+            "employee_code": employee_code,
+            "updated_at": user.updated_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error resetting password: {str(e)}"
+        )
+
+# USER SEARCH
+@router.post("/search")
+def search_users(search_params: dict, db: Session = Depends(get_db)):
+    """Advanced user search with multiple filters"""
+    try:
+        query = db.query(UserDetails)
+        
+        # Apply filters
+        if search_params.get('search_term'):
+            term = search_params['search_term']
+            query = query.filter(
+                UserDetails.name.ilike(f"%{term}%") |
+                UserDetails.email.ilike(f"%{term}%") |
+                UserDetails.phone_number.ilike(f"%{term}%") |
+                UserDetails.employee_code.ilike(f"%{term}%")
+            )
+        
+        if search_params.get('roles'):
+            roles = [UserRoleEnum(role) for role in search_params['roles']]
+            query = query.filter(UserDetails.role.in_(roles))
+        
+        if search_params.get('branch_ids'):
+            query = query.filter(UserDetails.branch_id.in_(search_params['branch_ids']))
+        
+        if search_params.get('is_active') is not None:
+            query = query.filter(UserDetails.is_active == search_params['is_active'])
+        
+        if search_params.get('date_from'):
+            query = query.filter(UserDetails.created_at >= search_params['date_from'])
+        
+        if search_params.get('date_to'):
+            query = query.filter(UserDetails.created_at <= search_params['date_to'])
+        
+        # Pagination
+        skip = search_params.get('skip', 0)
+        limit = search_params.get('limit', 50)
+        
+        total_count = query.count()
+        users = query.offset(skip).limit(limit).all()
+        
+        return {
+            "data": [serialize_user(user) for user in users],
+            "pagination": {
+                "total": total_count,
+                "skip": skip,
+                "limit": limit,
+                "pages": (total_count + limit - 1) // limit
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error searching users: {str(e)}"
+        )
+
+

@@ -1,5 +1,3 @@
-# main.py - FIXED VERSION
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +16,7 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, stories, assignments
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, stories, assignments, lead_navigation
 from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
@@ -154,6 +152,7 @@ try:
     app.include_router(fetch_config.router, prefix="/api/v1")
     app.include_router(leads_fetch.router, prefix="/api/v1")
     app.include_router(assignments.router, prefix="/api/v1")
+    app.include_router(lead_navigation.router, prefix="/api/v1")
     app.include_router(stories.router, prefix="/api/v1")
     app.include_router(services.router, prefix="/api/v1")
     app.include_router(ProfileRole.router, prefix="/api/v1")
