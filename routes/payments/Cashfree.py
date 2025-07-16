@@ -1,7 +1,6 @@
 # routes/payment/payments.py
-
 import json
-from datetime import datetime
+from datetime import datetime,date
 from fastapi import APIRouter, HTTPException, status, Body, Depends, Request, Query
 from httpx import AsyncClient
 from sqlalchemy.orm import Session
@@ -10,14 +9,14 @@ from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY, CASHFREE_PRODUCTION
 from db.connection import get_db
 from db.models import Payment, Lead
 from db.Schema.payment import CreateOrderRequest, FrontCreate
+from routes.mail_service.payment_link_mail import payment_link_mail
+from sqlalchemy import func
 
 router = APIRouter(prefix="/payment", tags=["payment"])
 
 def _base_url() -> str:
     return (
         "https://api.cashfree.com/pg"
-        if CASHFREE_PRODUCTION
-        else "https://sandbox.cashfree.com/pg"
     )
 
 def _headers() -> dict[str, str]:
@@ -150,8 +149,9 @@ async def front_create(
             "customer_phone": data.phone,
         },
         order_meta={
-            "return_url": "https://yourdomain.com/payment/return",
-            "notify_url": "https://yourdomain.com/payment/webhook",
+            # "return_url": "https://yourdomain.com/payment/return",
+            # "notify_url": "https://yourdomain.com/payment/webhook",
+            "payment_methods": data.payment_methods
         },
     )
 
@@ -176,6 +176,10 @@ async def front_create(
     db.add(payment)
     db.commit()
 
+    link = cf_resp["payment_link"]
+
+    await payment_link_mail(data.email, data.name, link)
+
     # 5) return your IDs *and* the raw Cashfree response
     return {
         "orderId":            cf_order_id,
@@ -183,15 +187,6 @@ async def front_create(
         "cashfreeResponse":   cf_resp,
     }
 
-
-from datetime import date
-from sqlalchemy import func
-from fastapi import Query
-
-
-from datetime import date
-from sqlalchemy import func
-from fastapi import Query, HTTPException
 
 @router.get(
     "/history/{phone}",
@@ -246,4 +241,174 @@ async def get_payment_history(
 
     return results
 
+
+
+
+# from db.Schema.payment import CreateOrderRequest, FrontCreate
+# from pydantic import BaseModel
+# from typing import Optional, Dict
+# from datetime import datetime
+
+# class GenerateQRCodeRequest(BaseModel):
+#     amount: float
+#     currency: str = "INR"
+#     customer_name: Optional[str] = None
+#     customer_email: Optional[str] = None
+#     customer_phone: Optional[str] = None
+#     purpose: str
+#     expiry_time: Optional[datetime] = None
+#     send_email: bool = False
+#     send_sms: bool = False
+    
+# class CreatePaymentLinkRequest(BaseModel):
+#     amount: float
+#     currency: str = "INR"
+#     customer_name: Optional[str] = None
+#     customer_email: Optional[str] = None
+#     customer_phone: Optional[str] = None
+#     purpose: Optional[str]
+#     expiry_time: Optional[datetime] = None
+#     send_email: bool = False
+#     send_sms: bool = False
+#     auto_reminders: bool = False
+#     partial_payments: bool = False
+#     minimum_partial_amount: Optional[float] = None
+#     notes: Optional[Dict[str, str]] = None
+
+
+# # Fixed generate_qr_code function
+# @router.post(
+#     "/qr-code",
+#     response_model=dict,
+#     summary="Generate a dynamic QR code"
+# )
+# async def generate_qr_code(
+#     req: GenerateQRCodeRequest
+# ):
+#     """
+#     Creates a Payment Link under the hood and returns its QR‐code PNG (base64).
+#     """
+#     payload: dict = {
+#         "customer_details": {
+#             "customer_name":  req.customer_name,
+#             "customer_email": req.customer_email,
+#             "customer_phone": req.customer_phone,
+#         },
+#         "link_amount":       req.amount,
+#         "link_currency":     req.currency,
+#         "link_purpose":      req.purpose,
+#         "link_expiry_time":  req.expiry_time.isoformat() if req.expiry_time else None,
+#         "link_notify": {
+#             "send_email": False,
+#             "send_sms": False,
+#         },
+#         "link_meta": {
+#             "upi_intent": False
+#         }
+#     }
+#     # strip out None values
+#     body = {k: v for k, v in payload.items() if v is not None}
+#     resp = await _call_cashfree("POST", "/links", json_data=body)
+#     return {"qrcode_base64": resp["link_qrcode"], "link_url": resp["link_url"]}
+
+# # 2) CREATE PAYMENT LINK
+# @router.post(
+#     "/payment-link",
+#     response_model=dict,
+#     summary="Create a payment link with custom options"
+# )
+# async def create_payment_link(
+#     req: CreatePaymentLinkRequest
+# ):
+#     """
+#     Create a Payment Link supporting reminders, partial payments, notes, etc.
+#     """
+#     payload = {
+#         "customer_details": {
+#             "customer_name":  req.customer_name,
+#             "customer_email": req.customer_email,
+#             "customer_phone": req.customer_phone,
+#         },
+#         "link_amount":               req.amount,
+#         "link_currency":             req.currency,
+#         "link_purpose":              req.purpose,
+#         "link_expiry_time":          req.expiry_time.isoformat() if req.expiry_time else None,
+#         "link_notify": {
+#             "send_email": req.send_email,
+#             "send_sms":   req.send_sms,
+#         },
+#         "link_auto_reminders":       req.auto_reminders,
+#         "link_partial_payments":     req.partial_payments,
+#         "link_minimum_partial_amount": req.minimum_partial_amount,
+#         "link_notes":                req.notes,
+#     }
+#     body = {k: v for k, v in payload.items() if v is not None}
+#     resp = await _call_cashfree("POST", "/links", json_data=body)
+#     return resp  # :contentReference[oaicite:1]{index=1}
+
+
+
+# # 3) UPI INTENT (deep‐link + QR)
+# from pydantic import BaseModel
+# from typing import Optional
+
+
+# from datetime import timezone, timedelta
+
+# class UPIIntentRequest(BaseModel):
+#     upi_id: str = "7869615290@ybl"
+#     amount: float = 5
+#     currency: str = "INR"
+#     purpose: str = "testing"               # ← make this mandatory
+#     customer_name: Optional[str] = "Dheeraj Malviya" 
+#     expiry_time: Optional[datetime] = None
+#     customer_phone: str = "7869615290"
+
+# @router.post(
+#     "/upi-intent",
+#     response_model=dict,
+#     summary="Create a UPI-only payment link & QR code"
+# )
+# async def create_upi_intent(
+#     req: UPIIntentRequest
+# ):
+#     """
+#     Builds a Payment Link with `upi_intent=true`, so scanning opens the UPI app.
+#     """
+#     # 1) Build your payload:
+#     payload: dict = {
+#         "customer_details": {
+#             "customer_name":  req.customer_name,
+#             "customer_phone": req.customer_phone,  # ← Use actual phone number, not UPI ID
+#         },
+#         "link_amount":      req.amount,
+#         "link_currency":    req.currency,
+#         "link_purpose":     req.purpose,           # ← now always present
+#         "link_expiry_time": (
+#             # ensure timezone-aware ISO string + no sub-seconds
+#             req.expiry_time
+#             and (
+#                 req.expiry_time
+#                 if req.expiry_time.tzinfo
+#                 else req.expiry_time.replace(tzinfo=timezone(timedelta(hours=5, minutes=30)))
+#             ).isoformat(timespec="seconds")
+#         ),
+#         "link_notify": {
+#             "send_email": False,
+#             "send_sms": False,
+#         },
+#         "link_meta": {
+#             "upi_intent": True,
+#             "preferred_upi_id": req.upi_id  # ← Store UPI ID in metadata if needed
+#         }
+#     }
+#     # 2) Strip out any None values:
+#     body = {k: v for k, v in payload.items() if v is not None}
+#     # 3) Call Cashfree:
+#     resp = await _call_cashfree("POST", "/links", json_data=body)
+#     # 4) Return both the UPI-QR and the deep-link URL:
+#     return {
+#         "upi_qrcode": resp["link_qrcode"],
+#         "upi_deeplink": resp["link_url"]
+#     }
 

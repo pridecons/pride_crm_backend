@@ -1,0 +1,190 @@
+from fastapi.responses import JSONResponse
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import smtplib
+import ssl
+from config import COM_SMTP_SERVER, COM_SMTP_PORT, COM_SMTP_USER, COM_SMTP_PASSWORD
+
+async def payment_link_mail(email: str, name: str, link: str):
+    """
+    Send a payment link email with enhanced HTML design and disclaimer.
+    """
+    smtp_server = COM_SMTP_SERVER
+    smtp_port   = COM_SMTP_PORT
+    smtp_user   = COM_SMTP_USER
+    smtp_pass   = COM_SMTP_PASSWORD
+
+    subject = "Complete Your Payment - Pride Trading Consultancy"
+    
+    # Plain‐text fallback
+    text_content = f"""
+Dear {name},
+
+Thank you for choosing Pride Trading Consultancy!
+
+Please complete your payment by visiting the following link:
+{link}
+
+If you have any questions or need assistance, please don't hesitate to contact us.
+
+IMPORTANT DISCLAIMER:
+Investments in securities are subject to market risk. Please read all scheme related documents carefully before investing.
+
+Best Regards,
+Pride Trading Consultancy Pvt. Ltd.
+Email: compliance@pridecons.com
+Phone: +91-9981919424
+Website: www.pridecons.com
+    """
+
+    # Enhanced HTML with modern design
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{subject}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: 'Inter', Arial, sans-serif;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+
+        <!-- Main Content -->
+        <div style="padding: 40px 30px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h2 style="color: #1f2937; margin: 0 0 10px 0; font-size: 24px; font-weight: 600;">
+                    Dear {name}!
+                </h2>
+                <p style="color: #6b7280; margin: 0; font-size: 16px; line-height: 1.6;">
+                    Thank you for choosing our services. Please complete your payment to proceed.
+                </p>
+            </div>
+
+            <!-- Payment Button -->
+            <div style="text-align: center; margin: 40px 0;">
+                <a href="{link}" 
+                   style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                          color: white; 
+                          padding: 16px 32px; 
+                          text-decoration: none; 
+                          border-radius: 8px; 
+                          display: inline-block; 
+                          font-weight: 600; 
+                          font-size: 16px;
+                          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                          transition: all 0.3s ease;">
+                    💳 Complete Payment Now
+                </a>
+            </div>
+
+            <!-- Support Section -->
+            <div style="text-align: center; margin: 30px 0;">
+                <p style="color: #6b7280; margin: 0 0 15px 0; font-size: 14px;">
+                    Need help? We're here to assist you!
+                </p>
+                <div style="display: inline-flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+                    <a href="mailto:compliance@pridecons.com" 
+                       style="color: #6366f1; text-decoration: none; font-weight: 500; font-size: 14px; margin-right: 4px">
+                        📧 Email Support
+                    </a>
+                    <a href="tel:+919981919424" 
+                       style="color: #6366f1; text-decoration: none; font-weight: 500; font-size: 14px;">
+                        📞 Call Us
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Disclaimer -->
+        <div style="background-color: #fef3c7; border-top: 3px solid #f59e0b; padding: 20px 30px;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <span style="font-size: 20px; margin-top: 2px;">⚠️</span>
+                <div>
+                    <h4 style="color: #92400e; margin: 0 0 8px 0; font-size: 16px; font-weight: 600;">
+                        Important Disclaimer
+                    </h4>
+                    <p style="color: #78350f; margin: 0; font-size: 14px; line-height: 1.5;">
+                        <strong>Investments in securities are subject to market risk.</strong> 
+                        Please read all scheme related documents carefully before investing. 
+                        Past performance is not indicative of future results.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="background-color: #1f2937; padding: 30px; text-align: center;">
+            <h3 style="color: white; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">
+                Pride Trading Consultancy Pvt. Ltd.
+            </h3>
+            <div style="margin-bottom: 20px;">
+                <p style="color: #d1d5db; margin: 0; font-size: 14px; line-height: 1.6;">
+                    📧 <a href="mailto:compliance@pridecons.com" style="color: #93c5fd; text-decoration: none;">compliance@pridecons.com</a><br>
+                    📞 <a href="tel:+919981919424" style="color: #93c5fd; text-decoration: none;">+91-9981919424</a><br>
+                    🌐 <a href="https://www.pridecons.com" style="color: #93c5fd; text-decoration: none;">www.pridecons.com</a>
+                </p>
+            </div>
+            <div style="border-top: 1px solid #374151; padding-top: 20px;">
+                <p style="color: #9ca3af; margin: 0; font-size: 12px;">
+                    © 2025 Pride Trading Consultancy Pvt. Ltd. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Responsive Styles -->
+    <style>
+        @media only screen and (max-width: 600px) {{
+            .container {{ padding: 20px !important; }}
+            .button {{ padding: 14px 28px !important; font-size: 15px !important; }}
+            .header {{ padding: 30px 20px !important; }}
+            .content {{ padding: 30px 20px !important; }}
+        }}
+    </style>
+</body>
+</html>
+    """
+
+    # Build the email
+    msg = MIMEMultipart("alternative")
+    msg["From"]    = "Pride Trading Consultancy <compliance@pridecons.com>"
+    msg["To"]      = email
+    msg["Subject"] = subject
+    msg["Reply-To"] = "compliance@pridecons.com"
+
+    # Attach both parts
+    msg.attach(MIMEText(text_content, "plain"))
+    msg.attach(MIMEText(html_content, "html"))
+
+    # Send via SMTP SSL
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        return {
+            "status": "success",
+            "message": "Payment link email sent successfully!",
+            "email": email,
+            "recipient": name,
+            "subject": subject,
+            "email_type": "Enhanced HTML with responsive design"
+        }
+
+    except Exception as e:
+        print(f"Email sending error: {e}")
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": "Failed to send payment link email",
+                "error": str(e),
+                "email": email,
+                "recipient": name,
+                "timestamp": "2025-07-16"
+            },
+            status_code=500
+        )

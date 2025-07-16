@@ -29,11 +29,13 @@ class OrderMeta(BaseModel):
         description="URL to which user is redirected after payment",
         alias="returnUrl",
     )
-    notify_url: Optional[str] = Field(
-        default="http://127.0.0.1:8000/payment/webhook",
-        description="Webhook URL for server‐to‐server notifications",
-        alias="notifyUrl",
-    )
+    # notify_url: Optional[str] = Field(
+    #     default="http://127.0.0.1:8000/payment/webhook",
+    #     description="Webhook URL for server‐to‐server notifications",
+    #     alias="notifyUrl",
+    # )
+
+    payment_methods: Optional[str]= None
 
 class CreateOrderRequest(BaseModel):
     model_config = ConfigDict(
@@ -52,3 +54,4 @@ class FrontCreate(BaseModel):
     phone: str
     service: str
     amount: float
+    payment_methods: Optional[str]= None
