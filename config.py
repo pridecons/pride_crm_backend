@@ -33,3 +33,7 @@ COM_SMTP_USER=os.getenv("com_smtp_user")
 COM_SMTP_PASSWORD=os.getenv("com_smtp_pass")
 
 
+WHATSAPP_ACCESS_TOKEN=os.getenv("WHATSAPP_ACCESS_TOKEN")
+PHONE_NUMBER_ID=os.getenv("PHONE_NUMBER_ID")
+
+

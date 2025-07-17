@@ -11,6 +11,7 @@ from db.models import Payment, Lead
 from db.Schema.payment import CreateOrderRequest, FrontCreate
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
+from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 
 router = APIRouter(prefix="/payment", tags=["payment"])
 
@@ -178,6 +179,9 @@ async def front_create(
 
     link = cf_resp["payment_link"]
 
+    cash_link = link.replace("https://api.cashfree.com/", "")
+
+    await cashfree_payment_link(data.phone, data.name, data.amount, cash_link)
     await payment_link_mail(data.email, data.name, link)
 
     # 5) return your IDs *and* the raw Cashfree response

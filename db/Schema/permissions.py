@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 # Pydantic Schemas
@@ -54,9 +54,21 @@ class PermissionUpdate(BaseModel):
     fetch_lead: Optional[bool] = None
 
 
+class UserSchema(BaseModel):
+    name: str
+    role: str
+    email: str
+    phone_number: str
+
+    class Config:
+        # if you’re on Pydantic v1:
+        orm_mode = True
+
+
 class PermissionOut(PermissionBase):
     id: int
     user_id: str
+    user: Optional[UserSchema] = None
     
     class Config:
         from_attributes = True
