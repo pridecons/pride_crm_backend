@@ -159,6 +159,7 @@ def process_bulk_lead_data(row, mobile_column, name_column, email_column,
 async def upload_bulk_leads(
     lead_source_id: int = Form(...),
     employee_code: str = Form(...),
+    branch_id: str = Form(...),
     mobile_column: int = Form(...),
     name_column: int = Form(...),
     email_column: int = Form(...),
@@ -301,7 +302,7 @@ async def upload_bulk_leads(
                     "lead_response_id": default_response_id,
                     "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
                     "created_by_name": employee.employee_code,
-                    "branch_id": employee.branch_id,
+                    "branch_id": branch_id,
                 }
                 
                 # Remove None values
