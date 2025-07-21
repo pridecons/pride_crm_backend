@@ -62,7 +62,7 @@ class UserSchema(BaseModel):
 
     class Config:
         # if you’re on Pydantic v1:
-        orm_mode = True
+        from_attributes = True
 
 
 class PermissionOut(PermissionBase):
