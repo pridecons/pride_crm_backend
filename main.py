@@ -23,6 +23,7 @@ from routes.payments import Cashfree
 from routes.Pan_verification import PanVerification
 from routes.KYC import kyc_verification, redirect
 from routes.profile_role import ProfileRole
+from routes.attendance import attendance
 
 # Configure logging
 logging.basicConfig(
@@ -133,6 +134,7 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
+    app.include_router(attendance.router, prefix="/api/v1")
     app.include_router(Cashfree.router, prefix="/api/v1")
     # Authentication routes
     app.include_router(login.router, prefix="/api/v1")
