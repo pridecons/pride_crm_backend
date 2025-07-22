@@ -217,7 +217,7 @@ def get_dropdown_data(db: Session = Depends(get_db)):
                 for s in sources
             ],
             "responses": [
-                {"id": r.id, "name": r.name, "lead_limit": r.lead_limit}
+                {"id": r.id, "name": r.name}
                 for r in responses
             ]
         }

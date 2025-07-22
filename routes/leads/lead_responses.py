@@ -16,7 +16,6 @@ router = APIRouter(
 # Pydantic Schemas for Lead Response
 class LeadResponseBase(BaseModel):
     name: constr(strip_whitespace=True, min_length=1, max_length=100)
-    lead_limit: Optional[int] = 0
 
 
 class LeadResponseCreate(LeadResponseBase):
@@ -25,7 +24,6 @@ class LeadResponseCreate(LeadResponseBase):
 
 class LeadResponseUpdate(BaseModel):
     name: Optional[constr(strip_whitespace=True, min_length=1, max_length=100)] = None
-    lead_limit: Optional[int] = None
 
 
 class LeadResponseOut(LeadResponseBase):

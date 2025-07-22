@@ -399,7 +399,6 @@ class LeadResponse(Base):
 
     id         = Column(Integer, primary_key=True, autoincrement=True)
     name       = Column(String(100), nullable=False, unique=True, index=True)
-    lead_limit = Column(Integer, default=0)
 
     leads      = relationship("Lead", back_populates="lead_response")
 

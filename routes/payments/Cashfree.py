@@ -13,6 +13,11 @@ from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 router = APIRouter(prefix="/payment", tags=["payment"])
 
 def _base_url() -> str:
@@ -28,6 +33,14 @@ def _headers() -> dict[str, str]:
         "x-api-version": "2022-01-01",
     }
 
+def _headers_new() -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "x-client-id": CASHFREE_APP_ID,
+        "x-client-secret": CASHFREE_SECRET_KEY,
+        "x-api-version": "2025-01-01",
+    }
+
 async def _call_cashfree(method: str, path: str, json_data: dict | None = None):
     url = _base_url() + path
     headers = _headers()
@@ -41,27 +54,18 @@ async def _call_cashfree(method: str, path: str, json_data: dict | None = None):
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     return resp.json()
 
-@router.post(
-    "/orders",
-    response_model=dict,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a new order",
-)
-async def create_order(
-    payload: CreateOrderRequest = Body(...),
-    db: Session = Depends(get_db),
-):
-    """Create a new payment order with Cashfree."""
-    # dump with aliases (camelCase) and skip None
-    order_data = payload.model_dump(by_alias=False, exclude_none=True)
-    try:
-        response = await _call_cashfree("POST", "/orders", json_data=order_data)
-        # TODO: persist to DB if desired
-        return response
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"Error creating order: {e}")
+async def _call_cashfree_new(method: str, path: str, json_data: dict | None = None):
+    url = _base_url() + path
+    headers = _headers_new()
+    async with AsyncClient(timeout=30.0) as client:
+        resp = await client.request(method, url, headers=headers, json=json_data)
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Resource not found: {path}")
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Invalid Cashfree credentials")
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
 
 @router.get(
     "/orders/{order_id}",
@@ -245,174 +249,95 @@ async def get_payment_history(
 
     return results
 
+@router.post(
+    "/generate-qr-code/{order_id}",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Cashfree order + seed Payment record",
+)
+async def front_create_qr_code(
+    order_id: str
+):
+
+    # 3) call Cashfree
+    cf_resp = await _call_cashfree_new("GET", f"/orders/{order_id}")
+    payment_session_id = cf_resp["payment_session_id"]
+
+    qrBody = {
+        "payment_session_id": payment_session_id,
+        "payment_method": {
+            "upi": {
+            "channel": "qrcode"
+            }
+        }
+    }
+
+    qr_resp = await _call_cashfree_new("POST", f"/orders/sessions", json_data=qrBody)
+    qrcode=qr_resp["data"]["payload"]["qrcode"]
+    payment_amount=qr_resp["payment_amount"]
+    print("qr_resp : ",qr_resp)
+    print("qrcode : ",qrcode)
+
+    return{
+        "payment_session_id": payment_session_id,
+        "order_id": order_id,
+        "qrcode": qrcode,
+        "payment_amount":payment_amount
+    }
 
 
+@router.post(
+    "/generate-upi-request/{order_id}",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Cashfree order + seed Payment record",
+)
+async def front_create_upi_req(
+    order_id: str,
+    upi_id: str = Query(..., description="The UPI ID to collect payment from"),
+):
+    # 1) Fetch order details from Cashfree
+    try:
+        cf_resp = await _call_cashfree_new("GET", f"/orders/{order_id}")
+    except Exception as exc:
+        logger.exception("💥 Cashfree GET /orders/%s failed", order_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to retrieve order details from payment gateway"
+        )
 
-# from db.Schema.payment import CreateOrderRequest, FrontCreate
-# from pydantic import BaseModel
-# from typing import Optional, Dict
-# from datetime import datetime
+    payment_session_id = cf_resp.get("payment_session_id")
+    if not payment_session_id:
+        logger.error("❌ Missing payment_session_id in Cashfree response: %s", cf_resp)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Malformed response from payment gateway"
+        )
 
-# class GenerateQRCodeRequest(BaseModel):
-#     amount: float
-#     currency: str = "INR"
-#     customer_name: Optional[str] = None
-#     customer_email: Optional[str] = None
-#     customer_phone: Optional[str] = None
-#     purpose: str
-#     expiry_time: Optional[datetime] = None
-#     send_email: bool = False
-#     send_sms: bool = False
-    
-# class CreatePaymentLinkRequest(BaseModel):
-#     amount: float
-#     currency: str = "INR"
-#     customer_name: Optional[str] = None
-#     customer_email: Optional[str] = None
-#     customer_phone: Optional[str] = None
-#     purpose: Optional[str]
-#     expiry_time: Optional[datetime] = None
-#     send_email: bool = False
-#     send_sms: bool = False
-#     auto_reminders: bool = False
-#     partial_payments: bool = False
-#     minimum_partial_amount: Optional[float] = None
-#     notes: Optional[Dict[str, str]] = None
+    # 2) Build the QR payload
+    qr_body = {
+        "payment_session_id": payment_session_id,
+        "payment_method": {
+            "upi": {
+                "channel": "collect",
+                "upi_id": upi_id
+            }
+        }
+    }
 
+    # 3) Create the UPI collect session
+    try:
+        qr_resp = await _call_cashfree_new("POST", "/orders/sessions", json_data=qr_body)
+    except Exception as exc:
+        logger.exception("💥 Cashfree POST /orders/sessions failed for order %s", order_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to generate UPI payment request"
+        )
 
-# # Fixed generate_qr_code function
-# @router.post(
-#     "/qr-code",
-#     response_model=dict,
-#     summary="Generate a dynamic QR code"
-# )
-# async def generate_qr_code(
-#     req: GenerateQRCodeRequest
-# ):
-#     """
-#     Creates a Payment Link under the hood and returns its QR‐code PNG (base64).
-#     """
-#     payload: dict = {
-#         "customer_details": {
-#             "customer_name":  req.customer_name,
-#             "customer_email": req.customer_email,
-#             "customer_phone": req.customer_phone,
-#         },
-#         "link_amount":       req.amount,
-#         "link_currency":     req.currency,
-#         "link_purpose":      req.purpose,
-#         "link_expiry_time":  req.expiry_time.isoformat() if req.expiry_time else None,
-#         "link_notify": {
-#             "send_email": False,
-#             "send_sms": False,
-#         },
-#         "link_meta": {
-#             "upi_intent": False
-#         }
-#     }
-#     # strip out None values
-#     body = {k: v for k, v in payload.items() if v is not None}
-#     resp = await _call_cashfree("POST", "/links", json_data=body)
-#     return {"qrcode_base64": resp["link_qrcode"], "link_url": resp["link_url"]}
+    # 4) Return a clear, consistent payload
+    return {
+        "status": "success",
+        "message": "UPI collect request generated successfully",
+        "data": qr_resp
+    }
 
-# # 2) CREATE PAYMENT LINK
-# @router.post(
-#     "/payment-link",
-#     response_model=dict,
-#     summary="Create a payment link with custom options"
-# )
-# async def create_payment_link(
-#     req: CreatePaymentLinkRequest
-# ):
-#     """
-#     Create a Payment Link supporting reminders, partial payments, notes, etc.
-#     """
-#     payload = {
-#         "customer_details": {
-#             "customer_name":  req.customer_name,
-#             "customer_email": req.customer_email,
-#             "customer_phone": req.customer_phone,
-#         },
-#         "link_amount":               req.amount,
-#         "link_currency":             req.currency,
-#         "link_purpose":              req.purpose,
-#         "link_expiry_time":          req.expiry_time.isoformat() if req.expiry_time else None,
-#         "link_notify": {
-#             "send_email": req.send_email,
-#             "send_sms":   req.send_sms,
-#         },
-#         "link_auto_reminders":       req.auto_reminders,
-#         "link_partial_payments":     req.partial_payments,
-#         "link_minimum_partial_amount": req.minimum_partial_amount,
-#         "link_notes":                req.notes,
-#     }
-#     body = {k: v for k, v in payload.items() if v is not None}
-#     resp = await _call_cashfree("POST", "/links", json_data=body)
-#     return resp  # :contentReference[oaicite:1]{index=1}
-
-
-
-# # 3) UPI INTENT (deep‐link + QR)
-# from pydantic import BaseModel
-# from typing import Optional
-
-
-# from datetime import timezone, timedelta
-
-# class UPIIntentRequest(BaseModel):
-#     upi_id: str = "7869615290@ybl"
-#     amount: float = 5
-#     currency: str = "INR"
-#     purpose: str = "testing"               # ← make this mandatory
-#     customer_name: Optional[str] = "Dheeraj Malviya" 
-#     expiry_time: Optional[datetime] = None
-#     customer_phone: str = "7869615290"
-
-# @router.post(
-#     "/upi-intent",
-#     response_model=dict,
-#     summary="Create a UPI-only payment link & QR code"
-# )
-# async def create_upi_intent(
-#     req: UPIIntentRequest
-# ):
-#     """
-#     Builds a Payment Link with `upi_intent=true`, so scanning opens the UPI app.
-#     """
-#     # 1) Build your payload:
-#     payload: dict = {
-#         "customer_details": {
-#             "customer_name":  req.customer_name,
-#             "customer_phone": req.customer_phone,  # ← Use actual phone number, not UPI ID
-#         },
-#         "link_amount":      req.amount,
-#         "link_currency":    req.currency,
-#         "link_purpose":     req.purpose,           # ← now always present
-#         "link_expiry_time": (
-#             # ensure timezone-aware ISO string + no sub-seconds
-#             req.expiry_time
-#             and (
-#                 req.expiry_time
-#                 if req.expiry_time.tzinfo
-#                 else req.expiry_time.replace(tzinfo=timezone(timedelta(hours=5, minutes=30)))
-#             ).isoformat(timespec="seconds")
-#         ),
-#         "link_notify": {
-#             "send_email": False,
-#             "send_sms": False,
-#         },
-#         "link_meta": {
-#             "upi_intent": True,
-#             "preferred_upi_id": req.upi_id  # ← Store UPI ID in metadata if needed
-#         }
-#     }
-#     # 2) Strip out any None values:
-#     body = {k: v for k, v in payload.items() if v is not None}
-#     # 3) Call Cashfree:
-#     resp = await _call_cashfree("POST", "/links", json_data=body)
-#     # 4) Return both the UPI-QR and the deep-link URL:
-#     return {
-#         "upi_qrcode": resp["link_qrcode"],
-#         "upi_deeplink": resp["link_url"]
-#     }
 
