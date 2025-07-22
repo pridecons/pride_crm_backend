@@ -517,7 +517,7 @@ def delete_branch(
     force: bool = False,  # Force delete even if users exist
     db: Session = Depends(get_db),
 ):
-    """Delete branch"""
+    """Delete branch (force clears all users' branch_id and manager_id first)."""
     try:
         branch = db.query(BranchDetails).filter_by(id=branch_id).first()
         if not branch:
@@ -527,20 +527,22 @@ def delete_branch(
             )
 
         # Check if branch has users
-        branch_users = db.query(UserDetails).filter_by(branch_id=branch_id).first()
-        if branch_users and not force:
+        has_users = db.query(UserDetails).filter_by(branch_id=branch_id).first()
+        if has_users and not force:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot delete branch with active users. Use force=true to delete anyway."
             )
 
-        # Update manager's branch_id to None if exists
-        if branch.manager_id:
-            manager = db.query(UserDetails).filter_by(employee_code=branch.manager_id).first()
-            if manager:
-                manager.branch_id = None
+        # 1️⃣ Clear branch_id on all users (including manager)
+        db.query(UserDetails) \
+          .filter(UserDetails.branch_id == branch_id) \
+          .update({"branch_id": None}, synchronize_session="fetch")
 
-        # Delete associated agreement file
+        # 2️⃣ Clear manager link on branch itself
+        branch.manager_id = None
+
+        # 3️⃣ Delete agreement file if present
         if branch.agreement_url:
             file_path = branch.agreement_url.lstrip('/')
             if os.path.exists(file_path):
@@ -549,13 +551,18 @@ def delete_branch(
                 except OSError:
                     pass
 
+        # Flush those changes so SQLAlchemy won't try to delete users too
+        db.flush()
+
+        # 4️⃣ Now delete the branch
         db.delete(branch)
         db.commit()
+
         return None
-        
+
     except HTTPException:
         raise
-    except (OperationalError, DisconnectionError) as e:
+    except (OperationalError, DisconnectionError):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -567,8 +574,7 @@ def delete_branch(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting branch: {str(e)}"
         )
-
-     
+  
 
 # routes/branch/branch.py - Fixed create_branch_with_manager
 
