@@ -62,8 +62,6 @@ class LeadBase(BaseModel):
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
     
-    # Metadata
-    comment: Optional[dict] = None
     branch_id: Optional[int] = None
 
 
@@ -109,7 +107,6 @@ class LeadUpdate(BaseModel):
     # Lead Management
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
-    comment: Optional[dict] = None
     
     # Status Management
     lead_status: Optional[str] = None
@@ -157,7 +154,6 @@ class LeadOut(BaseModel):
     # Lead Management
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
-    comment: Optional[Dict[str, Any]] = None
     branch_id: Optional[int] = None
     
     # Metadata
@@ -196,24 +192,6 @@ class LeadOut(BaseModel):
             return v
         
         return [str(v)] if v is not None else None
-    
-    @validator('comment', pre=True, always=True)
-    def parse_comment(cls, v):
-        """Parse comment field safely"""
-        if v is None:
-            return None
-            
-        if isinstance(v, str):
-            try:
-                parsed = json.loads(v)
-                return parsed if isinstance(parsed, dict) else {"note": str(parsed)}
-            except json.JSONDecodeError:
-                return {"note": v} if v.strip() else None
-        
-        if isinstance(v, dict):
-            return v
-        
-        return {"note": str(v)} if v is not None else None
     
     class Config:
         from_attributes = True
@@ -255,21 +233,7 @@ def prepare_lead_data_for_db(lead_data: dict) -> dict:
                 prepared_data['segment'] = json.dumps([prepared_data['segment']])
         else:
             prepared_data['segment'] = json.dumps([str(prepared_data['segment'])])
-    
-    # Handle comment field - always convert to JSON string
-    if 'comment' in prepared_data and prepared_data['comment'] is not None:
-        if isinstance(prepared_data['comment'], dict):
-            prepared_data['comment'] = json.dumps(prepared_data['comment'])
-        elif isinstance(prepared_data['comment'], str):
-            try:
-                parsed = json.loads(prepared_data['comment'])
-                if not isinstance(parsed, dict):
-                    parsed = {"note": str(parsed)}
-                prepared_data['comment'] = json.dumps(parsed)
-            except json.JSONDecodeError:
-                prepared_data['comment'] = json.dumps({"note": prepared_data['comment']})
-        else:
-            prepared_data['comment'] = json.dumps({"note": str(prepared_data['comment'])})
+
     
     return prepared_data
 
@@ -291,15 +255,6 @@ def safe_convert_lead_to_dict(lead) -> dict:
                 else:
                     lead_dict[column.name] = None
                     
-            elif column.name == 'comment':
-                if value is not None:
-                    try:
-                        parsed = json.loads(value)
-                        lead_dict[column.name] = parsed if isinstance(parsed, dict) else {"note": str(parsed)}
-                    except (json.JSONDecodeError, TypeError):
-                        lead_dict[column.name] = {"note": value} if value else {}
-                else:
-                    lead_dict[column.name] = None
             else:
                 lead_dict[column.name] = value
         
@@ -336,7 +291,6 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "lead_status": getattr(lead, 'lead_status', None),
             "kyc": getattr(lead, 'kyc', False),
             "segment": None,
-            "comment": None,
             "lead_response_id": getattr(lead, 'lead_response_id', None),
             "lead_source_id": getattr(lead, 'lead_source_id', None),
             "branch_id": getattr(lead, 'branch_id', None),

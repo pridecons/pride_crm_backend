@@ -55,3 +55,18 @@ class FrontCreate(BaseModel):
     service: str
     amount: float
     payment_methods: Optional[str]= None
+
+
+class FrontUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+    service: str
+    amount: float
+    payment_methods: Optional[str]= None
+    call : int = None
+    service_id: int = None
+    description: str = None
+    user_id: Optional[str]   = None
+    branch_id: Optional[str] = None
+

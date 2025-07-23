@@ -1,14 +1,13 @@
-# routes/payment/payments.py
 import json
 from datetime import datetime,date
 from fastapi import APIRouter, HTTPException, status, Body, Depends, Request, Query
 from httpx import AsyncClient
 from sqlalchemy.orm import Session
 
-from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY, CASHFREE_PRODUCTION
+from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
 from db.connection import get_db
 from db.models import Payment, Lead, Service
-from db.Schema.payment import CreateOrderRequest, FrontCreate
+from db.Schema.payment import CreateOrderRequest, FrontUserCreate
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
@@ -80,67 +79,6 @@ async def get_order(order_id: str):
         raise
     except Exception as e:
         raise HTTPException(500, f"Error fetching order: {e}")
-
-
-@router.post(
-    "/create",
-    status_code=status.HTTP_201_CREATED,
-    summary="Create Cashfree order + seed Payment record",
-)
-async def front_create(
-    data: FrontCreate = Body(...),
-    db: Session = Depends(get_db),
-):
-    # 1) build the Cashfree payload
-    cf_payload = CreateOrderRequest(
-        order_amount   = data.amount,
-        order_currency = "INR",
-        customer_details={
-            "customer_id":    data.phone,
-            "customer_name":  data.name,
-            "customer_phone": data.phone,
-        },
-        order_meta={
-            # "return_url": "https://yourdomain.com/payment/return",
-            # "notify_url": "https://yourdomain.com/payment/webhook",
-            "payment_methods": data.payment_methods
-        },
-    )
-
-    # 2) dump in snake_case so Cashfree accepts it
-    cf_body = cf_payload.model_dump(by_alias=False, exclude_none=True)
-
-    # 3) call Cashfree
-    cf_resp = await _call_cashfree("POST", "/orders", json_data=cf_body)
-    cf_order_id = cf_resp["order_id"]
-
-    # 4) seed a PENDING Payment record
-    payment = Payment(
-        name         = data.name,
-        email        = data.email,
-        phone_number = data.phone,
-        Service      = data.service,
-        order_id     = cf_order_id,
-        paid_amount  = data.amount,
-        status       = "PENDING",
-        mode         = "CASHFREE",
-    )
-    db.add(payment)
-    db.commit()
-
-    link = cf_resp["payment_link"]
-
-    cash_link = link.replace("https://api.cashfree.com/", "")
-
-    await cashfree_payment_link(data.phone, data.name, data.amount, cash_link)
-    await payment_link_mail(data.email, data.name, link)
-
-    # 5) return your IDs *and* the raw Cashfree response
-    return {
-        "orderId":            cf_order_id,
-        "paymentId":          payment.id,
-        "cashfreeResponse":   cf_resp,
-    }
 
 
 @router.get(
@@ -288,23 +226,6 @@ async def front_create_upi_req(
     }
 
 
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from typing import Optional, Dict
-from datetime import datetime
-
-class FrontUserCreate(BaseModel):
-    name: str
-    email: EmailStr
-    phone: str
-    service: str
-    amount: float
-    payment_methods: Optional[str]= None
-    call : int = None
-    service_id: int = None
-    description: str = None
-    user_id: Optional[str]   = None
-    branch_id: Optional[str] = None
-
 
 @router.post(
     "/create-order",
@@ -390,31 +311,53 @@ LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
     summary="Cashfree S2S notification"
 )
 async def payment_webhook(request: Request, db: Session = Depends(get_db)):
-    # 1) Read raw body
-    body_bytes = await request.body()
+    # 1) Read & log raw body
+    body = await request.body()
+    raw  = body.decode("utf-8", errors="ignore")
+    logger.info("💸 Webhook raw payload: %s", raw)
+    with open(LOG_FILE, "a") as f:
+        f.write(f"{datetime.utcnow().isoformat()} RAW: {raw}\n")
 
-    # 2) Log the raw payload
-    logger.info("💸 Webhook raw payload: %s", body_bytes.decode("utf-8", errors="ignore"))
-
-    # 3) Parse JSON
-    if not body_bytes:
-        logger.warning("Webhook called with empty body")
-        raise HTTPException(status_code=400, detail="Empty body")
-
+    # 2) Parse JSON
     try:
-        data = json.loads(body_bytes)
-    except json.JSONDecodeError as e:
-        logger.error("Failed to decode webhook JSON: %s", e)
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error("❌ Webhook invalid JSON")
+        raise HTTPException(400, "Invalid JSON")
 
-    # 4) Log the parsed JSON
-    logger.info("✅ Webhook JSON parsed: %s", data)
+    # 3) Extract order_id & status
+    data      = payload.get("data", {})
+    order     = data.get("order", {})
+    payment_d = data.get("payment", {})
 
-    # … your DB logic here …
-    # e.g. upsert Payment, etc.
+    order_id  = order.get("order_id")
+    status_cf = payment_d.get("payment_status")
 
-    # 5) Prepare and log response
+    if not order_id or not status_cf:
+        raise HTTPException(400, "Missing order_id or payment_status")
+
+    # 4) Fetch existing payment
+    payment = db.query(Payment).filter_by(order_id=order_id).first()
+    if not payment:
+        # you can choose to ignore or 404 here
+        logger.warning("⚠️ Webhook for unknown order_id: %s", order_id)
+        return {"message": "ignored"}
+
+    # 5) Map CASHFREE status to your field
+    payment.status = "PAID" if status_cf == "SUCCESS" else status_cf
+
+    # 6) Commit
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error("❌ Webhook DB error: %s", e)
+        db.rollback()
+
+    # 7) Respond
     resp = {"message": "ok"}
-    logger.info("↩️ Webhook response: %s", resp)
+    logger.info("↩️ Webhook updated status: %s → %s", order_id, payment.status)
+    with open(LOG_FILE, "a") as f:
+        f.write(f"{datetime.utcnow().isoformat()} RESP: {resp}\n\n")
 
     return resp
+
