@@ -720,6 +720,56 @@ def delete_lead(
         )
 
 
+@router.post(
+    "/{lead_id}/upload-documents",
+    response_model=LeadOut,
+    status_code=status.HTTP_200_OK,
+    summary="Upload Aadhar & PAN for a lead",
+)
+def upload_lead_documents(
+    lead_id: int,
+    aadhar_front: UploadFile = File(None),
+    aadhar_back: UploadFile = File(None),
+    pan_pic: UploadFile    = File(None, alias="pan"),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload one or more of:
+    - aadhar_front: front image of Aadhar card
+    - aadhar_back: back image of Aadhar card
+    - pan_pic:       image of PAN card
+
+    Any missing file will be skipped.
+    """
+    # 1️⃣ Fetch lead
+    lead = db.query(Lead).filter_by(id=lead_id).first()
+    if not lead:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Lead {lead_id} not found"
+        )
+
+    # 2️⃣ Save each uploaded file and update the model
+    if aadhar_front:
+        path = save_uploaded_file(aadhar_front, lead_id, "aadhar_front")
+        lead.aadhar_front_pic = path
+
+    if aadhar_back:
+        path = save_uploaded_file(aadhar_back, lead_id, "aadhar_back")
+        lead.aadhar_back_pic = path
+
+    if pan_pic:
+        path = save_uploaded_file(pan_pic, lead_id, "pan")
+        lead.pan_pic = path
+
+    # 3️⃣ Persist changes
+    db.commit()
+    db.refresh(lead)
+
+    # 4️⃣ Return updated lead
+    lead_dict = safe_convert_lead_to_dict(lead)
+    return LeadOut(**lead_dict)
+
 # Specialized update endpoints for specific fields
 
 
