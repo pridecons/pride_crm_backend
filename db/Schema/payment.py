@@ -29,11 +29,11 @@ class OrderMeta(BaseModel):
         description="URL to which user is redirected after payment",
         alias="returnUrl",
     )
-    # notify_url: Optional[str] = Field(
-    #     default="http://127.0.0.1:8000/payment/webhook",
-    #     description="Webhook URL for server‐to‐server notifications",
-    #     alias="notifyUrl",
-    # )
+    notify_url: Optional[str] = Field(
+        default="https://crm.24x7techelp.com/api/v1/payment/webhook",
+        description="Webhook URL for server‐to‐server notifications",
+        alias="notifyUrl",
+    )
 
     payment_methods: Optional[str]= None
 
@@ -46,7 +46,7 @@ class CreateOrderRequest(BaseModel):
     order_amount: float = Field(..., gt=0, alias="orderAmount")
     order_currency: str = Field(default="INR", alias="orderCurrency")
     customer_details: CustomerDetails = Field(..., alias="customerDetails")
-    order_meta: Optional[OrderMeta] = Field(None, alias="orderMeta")
+    order_meta: Optional[OrderMeta] = Field("https://crm.24x7techelp.com/api/v1/payment/webhook", alias="orderMeta")
 
 class FrontCreate(BaseModel):
     name: str
