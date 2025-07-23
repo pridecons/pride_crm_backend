@@ -409,14 +409,23 @@ class LeadStory(Base):
     id               = Column(Integer, primary_key=True, autoincrement=True)
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
     user_id          = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
-    timestamp        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    title            = Column(String(200), nullable=True)
     msg              = Column(Text, nullable=False)
-    lead_response_id = Column(Integer, ForeignKey("crm_lead_response.id"), nullable=True)
+    timestamp        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     lead             = relationship("Lead", back_populates="stories")
     user             = relationship("UserDetails")
-    response         = relationship("LeadResponse")
+
+class LeadComment(Base):
+    __tablename__ = "crm_comment"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
+    user_id          = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
+    timestamp        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    comment              = Column(Text, nullable=False)
+
+    lead             = relationship("Lead", back_populates="comments")
+    user             = relationship("UserDetails")
 
 
 class Lead(Base):

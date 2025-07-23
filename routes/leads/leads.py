@@ -1,21 +1,22 @@
-# routes/leads/leads.py - COMPLETE FIXED VERSION ACCORDING TO LEAD MODEL
 import os
 import uuid
 import json
 from typing import Optional, List, Any, Dict, Union
 from datetime import datetime, date
-
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 from pydantic import BaseModel, constr, validator
 from fastapi.responses import JSONResponse
-
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, LeadStory, Payment
+    UserDetails, LeadStory, Payment, LeadComment
 )
+from utils.AddLeadStory import AddLeadStory
+from db.connection import get_db
+from routes.auth.auth_dependency import get_current_user
+
 
 router = APIRouter(
     prefix="/leads",
@@ -196,6 +197,22 @@ class LeadOut(BaseModel):
     class Config:
         from_attributes = True
 
+class ChangeResponse(BaseModel):
+    lead_response_id: int
+
+class CommentCreate(BaseModel):
+    user_id: str
+    comment: str
+
+class CommentOut(BaseModel):
+    id: int
+    lead_id: int
+    user_id: str
+    timestamp: datetime
+    comment: str
+
+    class Config:
+        from_attributes = True
 
 # Utility Functions
 def save_uploaded_file(file: UploadFile, lead_id: int, file_type: str) -> str:
@@ -311,6 +328,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
 def create_lead(
     lead_in: LeadCreate,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Create a new lead"""
     try:
@@ -367,6 +385,8 @@ def create_lead(
         
         # Convert to response format
         lead_dict = safe_convert_lead_to_dict(lead)
+        msg = f"Lead created by {current_user.name} ({current_user.employee_code})"
+        AddLeadStory(lead.id, current_user.employee_code, msg)
         return LeadOut(**lead_dict)
         
     except HTTPException:
@@ -452,6 +472,7 @@ def get_all_leads(
 def get_lead(
     lead_id: int,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Get a specific lead by ID"""
     try:
@@ -461,6 +482,8 @@ def get_lead(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Lead not found"
             )
+        msg = f"Lead viewed by {current_user.name}"
+        AddLeadStory(lead.id, current_user.employee_code, msg)
         
         lead_dict = safe_convert_lead_to_dict(lead)
         return LeadOut(**lead_dict)
@@ -479,10 +502,12 @@ def update_lead(
     lead_id: int,
     lead_in: LeadUpdate,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Update a lead"""
     try:
         lead = db.query(Lead).filter_by(id=lead_id).first()
+        before = {f: getattr(lead, f) for f in lead_in.dict(exclude_unset=True).keys()}
         if not lead:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -541,6 +566,14 @@ def update_lead(
         
         db.commit()
         db.refresh(lead)
+
+        diffs = []
+        for k, old in before.items():
+            new = getattr(lead, k)
+            if old != new:
+                diffs.append(f"{k} → '{old}' ➔ '{new}'")
+        msg = "Lead updated by " + current_user.name + ": " + "; ".join(diffs)
+        AddLeadStory(lead.id, current_user.employee_code, msg)
         
         lead_dict = safe_convert_lead_to_dict(lead)
         return LeadOut(**lead_dict)
@@ -560,6 +593,7 @@ def patch_lead(
     lead_id: int,
     lead_updates: LeadUpdate,
     db: Session = Depends(get_db),
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """Patch/Update specific fields of a lead"""
     try:
@@ -622,6 +656,7 @@ def patch_lead(
         # Prepare update data for database
         prepared_data = prepare_lead_data_for_db(update_data)
         
+        old_vals = {field: getattr(lead, field) for field in prepared_data}
         # Apply updates
         for field, value in prepared_data.items():
             if hasattr(lead, field):
@@ -629,9 +664,25 @@ def patch_lead(
 
         if is_old:
            lead.is_old_lead  = True
+
+        if "lead_response_id" in prepared_data:
+           lead.is_old_lead = True
         
         db.commit()
         db.refresh(lead)
+
+        changes = []
+        for field, old in old_vals.items():
+            new = getattr(lead, field)
+            if old != new:
+                changes.append(f"{field}: '{old}'→'{new}'")
+
+        if changes:
+            msg = (
+                f"{current_user.name} ({current_user.employee_code}) "
+                f"updated lead: " + "; ".join(changes)
+            )
+            AddLeadStory(lead.id, current_user.employee_code, msg)
         
         lead_dict = safe_convert_lead_to_dict(lead)
         return LeadOut(**lead_dict)
@@ -694,6 +745,7 @@ def upload_lead_documents(
     aadhar_back: UploadFile = File(None),
     pan_pic: UploadFile    = File(None),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """
     Upload one or more of:
@@ -705,6 +757,7 @@ def upload_lead_documents(
     """
     # 1️⃣ Fetch lead
     lead = db.query(Lead).filter_by(id=lead_id).first()
+    changes = []
     if not lead:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -715,14 +768,21 @@ def upload_lead_documents(
     if aadhar_front:
         path = save_uploaded_file(aadhar_front, lead_id, "aadhar_front")
         lead.aadhar_front_pic = path
+        changes.append("Aadhar front uploaded")
 
     if aadhar_back:
         path = save_uploaded_file(aadhar_back, lead_id, "aadhar_back")
         lead.aadhar_back_pic = path
+        changes.append("Aadhar back uploaded")
 
     if pan_pic:
         path = save_uploaded_file(pan_pic, lead_id, "pan_pic")
         lead.pan_pic = path
+        changes.append("Pan Card uploaded")
+
+    if changes:
+        msg = f"{current_user.name} uploaded: " + ", ".join(changes)
+        AddLeadStory(lead.id, current_user.employee_code, msg)
 
     # 3️⃣ Persist changes
     db.commit()
@@ -810,59 +870,120 @@ def search_leads(
         )
 
 
-@router.get("/mobile/{mobile}")
-def get_lead_by_mobile(
-    mobile: str,
+@router.patch(
+    "/{lead_id}/response",
+    response_model=LeadOut,
+    summary="Change the LeadResponse on a lead"
+)
+def change_lead_response(
+    lead_id: int,
+    payload: ChangeResponse,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    """Get lead by mobile number"""
-    try:
-        lead = db.query(Lead).filter(
-            (Lead.mobile == mobile) | (Lead.alternate_mobile == mobile)
-        ).first()
-        
-        if not lead:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lead not found with this mobile number"
-            )
-        
-        lead_dict = safe_convert_lead_to_dict(lead)
-        return LeadOut(**lead_dict)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
+    # 1) fetch lead
+    lead = db.query(Lead).filter_by(id=lead_id).first()
+    old = lead.lead_response_id
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # 2) validate new response
+    resp = db.query(LeadResponse).filter_by(id=payload.lead_response_id).first()
+    if not resp:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching lead by mobile: {str(e)}"
+            status_code=400,
+            detail=f"LeadResponse with ID {payload.lead_response_id} not found"
         )
 
+    # 3) apply and mark as old
+    lead.lead_response_id = payload.lead_response_id
+    lead.is_old_lead = True
 
-@router.get("/email/{email}")
-def get_lead_by_email(
-    email: str,
+    db.commit()
+    db.refresh(lead)
+    msg = (
+      f"Response changed by {current_user.name}: "
+      f"{old or 'None'} ➔ {payload.lead_response_id}"
+    )
+    AddLeadStory(lead.id, current_user.employee_code, msg)
+    return LeadOut(**safe_convert_lead_to_dict(lead))
+
+
+# ─── 2) Add a comment to a lead ────────────────────────────────────────────────
+
+@router.post(
+    "/{lead_id}/comments",
+    response_model=CommentOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new comment/story on a lead"
+)
+def create_lead_comment(
+    lead_id: int,
+    comment_in: CommentCreate,
     db: Session = Depends(get_db),
 ):
-    """Get lead by email"""
-    try:
-        lead = db.query(Lead).filter(Lead.email == email).first()
-        
-        if not lead:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lead not found with this email"
-            )
-        
-        lead_dict = safe_convert_lead_to_dict(lead)
-        return LeadOut(**lead_dict)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching lead by email: {str(e)}"
-        )
+    # 1) ensure lead exists
+    lead = db.query(Lead).filter_by(id=lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # 2) ensure user exists
+    user = db.query(UserDetails).filter_by(employee_code=comment_in.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 3) create comment
+    comment = LeadComment(
+        lead_id=lead_id,
+        user_id=comment_in.user_id,
+        comment=comment_in.comment
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+
+    return CommentOut.from_orm(comment)
+
+
+# ─── 3) Get all comments for a lead ───────────────────────────────────────────
+
+@router.get(
+    "/{lead_id}/comments",
+    response_model=List[CommentOut],
+    summary="Fetch all comments for a lead"
+)
+def list_lead_comments(
+    lead_id: int,
+    db: Session = Depends(get_db),
+):
+    # 1) ensure lead exists
+    if not db.query(Lead).filter_by(id=lead_id).first():
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # 2) fetch and return
+    comments = (
+        db.query(LeadComment)
+          .filter_by(lead_id=lead_id)
+          .order_by(LeadComment.timestamp)
+          .all()
+    )
+    return [CommentOut.from_orm(c) for c in comments]  
     
-    
+
+@router.post("/{lead_id}/stories")
+def post_story(
+    lead_id: int,
+    user_id: str,
+    msg: str,
+    db: Session = Depends(get_db),
+):
+    # (optional) validate lead + user exist
+    if not db.query(Lead).filter_by(id=lead_id).first():
+        raise HTTPException(404, "Lead not found")
+    if not db.query(UserDetails).filter_by(employee_code=user_id).first():
+        raise HTTPException(404, "User not found")
+
+    # this uses the standalone helper, which opens its own session
+    story = AddLeadStory(lead_id, user_id, msg)
+    return {"id": story.id, "timestamp": story.timestamp, "msg": story.msg}
+
