@@ -370,14 +370,15 @@ def create_lead(
                 )
         
         # Validate lead response if provided
+        is_old = False
         if lead_in.lead_response_id:
-            lead_response = db.query(LeadResponse).filter_by(id=lead_in.lead_response_id).first()
-            lead_in.is_old_lead = True
-            if not lead_response:
+            lr = db.query(LeadResponse).filter_by(id=lead_in.lead_response_id).first()
+            if not lr:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Lead response with ID {lead_in.lead_response_id} not found"
                 )
+            is_old = True
         
         # Check for duplicate email or mobile if provided
         if lead_in.email or lead_in.mobile:
@@ -400,6 +401,8 @@ def create_lead(
         
         # Prepare data for database
         lead_data = prepare_lead_data_for_db(lead_in.dict(exclude_none=True))
+        if is_old:
+           lead_data["is_old_lead"] = True
         
         # Create lead
         lead = Lead(**lead_data)
@@ -543,10 +546,10 @@ def update_lead(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Lead source with ID {update_data['lead_source_id']} not found"
                 )
-        
+        is_old = False
         if "lead_response_id" in update_data:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
-            update_data.is_old_lead = True
+            is_old = True
             if not lead_response:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -579,6 +582,8 @@ def update_lead(
         # Apply updates
         for field, value in update_data.items():
             setattr(lead, field, value)
+        if is_old:
+           lead["is_old_lead"] = True
         
         db.commit()
         db.refresh(lead)
@@ -627,10 +632,10 @@ def patch_lead(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Lead source with ID {update_data['lead_source_id']} not found"
                 )
-        
+        is_old = False
         if "lead_response_id" in update_data and update_data["lead_response_id"]:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
-            update_data.is_old_lead = True
+            is_old = True
             if not lead_response:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -667,6 +672,9 @@ def patch_lead(
         for field, value in prepared_data.items():
             if hasattr(lead, field):
                 setattr(lead, field, value)
+
+        if is_old:
+           lead["is_old_lead"] = True
         
         db.commit()
         db.refresh(lead)
