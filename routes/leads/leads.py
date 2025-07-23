@@ -583,7 +583,7 @@ def update_lead(
         for field, value in update_data.items():
             setattr(lead, field, value)
         if is_old:
-           lead["is_old_lead"] = True
+           lead.is_old_lead = True
         
         db.commit()
         db.refresh(lead)
@@ -674,7 +674,7 @@ def patch_lead(
                 setattr(lead, field, value)
 
         if is_old:
-           lead["is_old_lead"] = True
+           lead.is_old_lead  = True
         
         db.commit()
         db.refresh(lead)

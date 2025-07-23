@@ -14,6 +14,7 @@ class ServiceBase(BaseModel):
         BillingCycleEnum.MONTHLY, description="Charge interval"
     )
     CALL: Optional[int] = Field(None, examples=[0])
+    service_type: Optional[str] = Field(None, examples=["add service type"])
 
 class ServiceCreate(ServiceBase):
     pass
@@ -25,6 +26,7 @@ class ServiceUpdate(BaseModel):
     discount_percent: Optional[condecimal(ge=0, le=100)] = None
     billing_cycle: Optional[BillingCycleEnum] = None
     CALL: Optional[int] = None
+    service_type: Optional[str] = None
 
 class ServiceOut(ServiceBase):
     model_config = ConfigDict(from_attributes=True)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY, CASHFREE_PRODUCTION
 from db.connection import get_db
-from db.models import Payment, Lead
+from db.models import Payment, Lead, Service
 from db.Schema.payment import CreateOrderRequest, FrontCreate
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
@@ -340,4 +340,97 @@ async def front_create_upi_req(
         "data": qr_resp
     }
 
+
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from typing import Optional, Dict
+from datetime import datetime
+
+class FrontUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+    service: str
+    amount: float
+    payment_methods: Optional[str]= None
+    call : int = None
+    service_id: int = None
+    description: str = None
+    user_id: str = None
+    branch_id: str = None
+
+
+@router.post(
+    "/create-order",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Cashfree order + seed Payment record",
+)
+async def front_create(
+    data: FrontUserCreate = Body(...),
+    db: Session = Depends(get_db),
+):
+    # 1) build & call Cashfree
+    cf_payload = CreateOrderRequest(
+        order_amount   = data.amount,
+        order_currency = "INR",
+        customer_details={
+            "customer_id":    data.phone,
+            "customer_name":  data.name,
+            "customer_phone": data.phone,
+        },
+        order_meta={
+            "notify_url":       "https://crm.24x7techelp.com/api/v1/payment/webhook",
+            "payment_methods":  data.payment_methods
+        },
+    )
+    cf_body = cf_payload.model_dump(by_alias=False, exclude_none=True)
+    cf_resp = await _call_cashfree("POST", "/orders", json_data=cf_body)
+    cf_order_id = cf_resp["order_id"]
+    link        = cf_resp["payment_link"]
+
+    # 2) Fetch & serialize your Service
+    plan_obj = db.get(Service, data.service_id)
+    if not plan_obj:
+        raise HTTPException(404, "Service not found")
+
+    plan_json = {
+        "id":               plan_obj.id,
+        "name":             plan_obj.name,
+        "description":      plan_obj.description,
+        "service_type":     plan_obj.service_type,
+        "price":            plan_obj.price,
+        "discount_percent": plan_obj.discount_percent,
+        "billing_cycle":    plan_obj.billing_cycle.value,
+        "discounted_price": plan_obj.discounted_price,
+    }
+
+    # 3) Seed the Payment record, embedding that JSON in a list
+    payment = Payment(
+        name           = data.name,
+        email          = data.email,
+        phone_number   = data.phone,
+        Service        = data.service,         # if you still need this field
+        order_id       = cf_order_id,
+        paid_amount    = data.amount,
+        status         = "PENDING",
+        mode           = "CASHFREE",
+        plan           = [plan_json],          # <<< store your JSON here
+        call           = data.call,
+        description    = data.description,
+        user_id        = data.user_id,
+        branch_id      = data.branch_id,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+
+    # 4) Send out your link & return
+    await cashfree_payment_link(data.phone, data.name, data.amount, link)
+    await payment_link_mail(data.email, data.name, link)
+
+    return {
+        "orderId":          cf_order_id,
+        "paymentId":        payment.id,
+        "plan":             payment.plan,      # you’ll now see the JSON array
+        "cashfreeResponse": cf_resp,
+    }
 

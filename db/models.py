@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship
 from db.connection import Base
 import uuid
 import enum
-
+from sqlalchemy.dialects.postgresql import JSONB
 
 class UserRoleEnum(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
@@ -488,6 +488,12 @@ class Payment(Base):
 
     Service          = Column(String(50), nullable=True)
     paid_amount      = Column(Float, nullable=False)
+    call             = Column(Integer, nullable=True)
+    plan             = Column(
+                            JSONB, 
+                            nullable=True, 
+                            server_default="[]",       # default to empty list in DB
+                        )
     status           = Column(String(50), nullable=True)
     mode             = Column(String(50), nullable=False)
     is_send_invoice  = Column(Boolean, nullable=False, default=False)
@@ -511,6 +517,41 @@ class Payment(Base):
     # foreign key to Lead, many payments per lead
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
     lead             = relationship("Lead", back_populates="payments")
+
+
+class BillingCycleEnum(str, enum.Enum):
+    MONTHLY = "MONTHLY"
+    YEARLY  = "YEARLY"
+    CALL = "CALL"
+
+
+class Service(Base):
+    __tablename__ = "crm_services"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    name             = Column(String(100), nullable=False, unique=True, index=True)
+    description      = Column(Text, nullable=True)
+    service_type      = Column(String(100), nullable=True)
+
+    # Base price before discount
+    price            = Column(Float, nullable=False)
+
+    CALL            = Column(Integer, nullable=True)
+
+    # Discount percentage (0–100)
+    discount_percent = Column(Float, nullable=True, default=0.0)
+
+    billing_cycle    = Column(
+                          SAEnum(BillingCycleEnum),
+                          nullable=False,
+                          default=BillingCycleEnum.MONTHLY
+                       )
+
+    @property
+    def discounted_price(self) -> float:
+        """Compute price after discount"""
+        return round(self.price * (1 - self.discount_percent / 100), 2)
+    
 
 
 class AuditLog(Base):
@@ -584,40 +625,6 @@ class Campaign(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     owner       = relationship("UserDetails", back_populates="campaigns")
-
-
-class BillingCycleEnum(str, enum.Enum):
-    MONTHLY = "MONTHLY"
-    YEARLY  = "YEARLY"
-    CALL = "CALL"
-
-
-class Service(Base):
-    __tablename__ = "crm_services"
-
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    name             = Column(String(100), nullable=False, unique=True, index=True)
-    description      = Column(Text, nullable=True)
-
-    # Base price before discount
-    price            = Column(Float, nullable=False)
-
-    CALL            = Column(Integer, nullable=True)
-
-    # Discount percentage (0–100)
-    discount_percent = Column(Float, nullable=True, default=0.0)
-
-    billing_cycle    = Column(
-                          SAEnum(BillingCycleEnum),
-                          nullable=False,
-                          default=BillingCycleEnum.MONTHLY
-                       )
-
-    @property
-    def discounted_price(self) -> float:
-        """Compute price after discount"""
-        return round(self.price * (1 - self.discount_percent / 100), 2)
-    
 
 class PanVerification(Base):
     __tablename__ = "crm_pan_verifications"
