@@ -372,7 +372,7 @@ def create_lead(
         # Validate lead response if provided
         if lead_in.lead_response_id:
             lead_response = db.query(LeadResponse).filter_by(id=lead_in.lead_response_id).first()
-            lead_in['is_old_lead'] = True
+            lead_in.is_old_lead = True
             if not lead_response:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -546,7 +546,7 @@ def update_lead(
         
         if "lead_response_id" in update_data:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
-            update_data['is_old_lead'] = True
+            update_data.is_old_lead = True
             if not lead_response:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -630,7 +630,7 @@ def patch_lead(
         
         if "lead_response_id" in update_data and update_data["lead_response_id"]:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
-            update_data['is_old_lead'] = True
+            update_data.is_old_lead = True
             if not lead_response:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
