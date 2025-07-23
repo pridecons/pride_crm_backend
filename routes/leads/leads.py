@@ -770,9 +770,6 @@ def upload_lead_documents(
     lead_dict = safe_convert_lead_to_dict(lead)
     return LeadOut(**lead_dict)
 
-# Specialized update endpoints for specific fields
-
-
 # Search endpoints
 
 @router.get("/search/")

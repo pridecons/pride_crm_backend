@@ -633,4 +633,23 @@ class PanVerification(Base):
                     nullable=False
                 )
     
+
+class NARRATION(Base):
+    __tablename__ = "crm_narration"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    entry_price = Column(Float, nullable=True)
+    stop_loss   = Column(Float, nullable=True)
+    targets    = Column(Float, default=0, nullable=True)
+    rational   = Column(String(100),nullable=True )
+    stock_name       = Column(String(100),nullable=True )
+    recommendation_type = Column(String(100),nullable=True )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+                    DateTime(timezone=True),
+                    server_default=func.now(),
+                    onupdate=func.now(),
+                    nullable=False
+                )
+    
     
