@@ -499,8 +499,8 @@ class Payment(Base):
     is_send_invoice  = Column(Boolean, nullable=False, default=False)
     description      = Column(Text, nullable=True)
     transaction_id   = Column(String(100), nullable=True)
-    user_id          = Column(Integer, nullable=True)
-    branch_id        = Column(Integer, nullable=True)
+    user_id          = Column(String(50), nullable=True)
+    branch_id        = Column(String(50), nullable=True)
 
     created_at       = Column(
                          DateTime(timezone=True),

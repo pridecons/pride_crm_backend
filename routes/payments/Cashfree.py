@@ -355,8 +355,8 @@ class FrontUserCreate(BaseModel):
     call : int = None
     service_id: int = None
     description: str = None
-    user_id: str = None
-    branch_id: str = None
+    user_id: Optional[str]   = None
+    branch_id: Optional[str] = None
 
 
 @router.post(
