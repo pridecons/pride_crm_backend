@@ -15,7 +15,7 @@ async def cashfree_payment_link(number, name, payment_amount, payment_url):
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
-        "to": number,  # Customer's WhatsApp number
+        "to": f"91{number}",  # Customer's WhatsApp number
         "type": "template",
         "template": {
             "name": "cashfree_payment_req",  # Your approved template name
