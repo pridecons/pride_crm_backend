@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, LeadStory, Payment, LeadComment
+    UserDetails, Payment, LeadComment, LeadStory
 )
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
@@ -986,4 +986,16 @@ def post_story(
     # this uses the standalone helper, which opens its own session
     story = AddLeadStory(lead_id, user_id, msg)
     return {"id": story.id, "timestamp": story.timestamp, "msg": story.msg}
+
+@router.get("/{lead_id}/stories")
+def get_story(
+    lead_id: int,
+    db: Session = Depends(get_db),
+):
+    if not db.query(Lead).filter_by(id=lead_id).first():
+        raise HTTPException(404, "Lead not found")
+    
+    story = db.query(LeadStory).filter_by(lead_id=lead_id).order_by(LeadStory.timestamp).all()
+
+    return story
 
