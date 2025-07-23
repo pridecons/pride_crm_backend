@@ -738,7 +738,7 @@ def upload_lead_documents(
     lead_id: int,
     aadhar_front: UploadFile = File(None),
     aadhar_back: UploadFile = File(None),
-    pan_pic: UploadFile    = File(None, alias="pan"),
+    pan_pic: UploadFile    = File(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -767,7 +767,7 @@ def upload_lead_documents(
         lead.aadhar_back_pic = path
 
     if pan_pic:
-        path = save_uploaded_file(pan_pic, lead_id, "pan")
+        path = save_uploaded_file(pan_pic, lead_id, "pan_pic")
         lead.pan_pic = path
 
     # 3️⃣ Persist changes
