@@ -90,38 +90,44 @@ async def get_order(order_id: str):
 async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     data = await request.json()
 
-    order_id       = data["orderId"]
-    tx_status      = data["txStatus"]      # SUCCESS / FAILED
-    tx_ref         = data.get("referenceId")
-    paid_amount    = float(data.get("orderAmount", 0))
-    customer       = data.get("customerDetails", {})
-    tags           = data.get("orderTags", {})
+    # ─────────── Persist the incoming payload ───────────
+    # This will append one JSON object per line in `payment_webhook.log`
+    with open("payment_webhook.log", "a") as log:
+        log.write(json.dumps({
+            "received_at": datetime.utcnow().isoformat(),
+            "payload":      data,
+        }) + "\n")
+    # ─────────────────────────────────────────────────────
 
-    # 1) find your seeded Payment
+    order_id    = data["orderId"]
+    tx_status   = data["txStatus"]
+    tx_ref      = data.get("referenceId")
+    paid_amount = float(data.get("orderAmount", 0))
+    customer    = data.get("customerDetails", {})
+    tags        = data.get("orderTags", {})
+
+    # your existing logic…
     payment = (
         db.query(Payment)
           .filter(Payment.order_id == order_id)
           .first()
     )
     if not payment:
-        # if you didn't seed it, create a fresh one
         payment = Payment(
-            order_id=order_id,
-            name=customer.get("customerName"),
-            email=customer.get("customerEmail"),
-            phone_number=customer.get("customerPhone"),
-            Service=tags.get("service"),
-            paid_amount=paid_amount,
+            order_id      = order_id,
+            name          = customer.get("customerName"),
+            email         = customer.get("customerEmail"),
+            phone_number  = customer.get("customerPhone"),
+            Service       = tags.get("service"),
+            paid_amount   = paid_amount,
         )
         db.add(payment)
 
-    # 2) update status + txn id + actual amount
     payment.status         = tx_status
     payment.transaction_id = tx_ref
     payment.paid_amount    = paid_amount
     payment.updated_at     = datetime.utcnow()
 
-    # 3) automatically link to any existing Lead by phone
     lead = (
         db.query(Lead)
           .filter(Lead.mobile == payment.phone_number)
@@ -131,6 +137,15 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
         payment.lead_id = lead.id
 
     db.commit()
+
+    # ─────────── Persist the response ───────────
+    with open("payment_webhook.log", "a") as log:
+        log.write(json.dumps({
+            "responded_at": datetime.utcnow().isoformat(),
+            "response":     {"message": "ok"},
+        }) + "\n")
+    # ─────────────────────────────────────────────
+
     return {"message": "ok"}
 
 
