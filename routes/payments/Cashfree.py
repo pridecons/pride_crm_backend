@@ -12,7 +12,7 @@ from db.Schema.payment import CreateOrderRequest, FrontCreate
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
-
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,44 +82,53 @@ async def get_order(order_id: str):
         raise HTTPException(500, f"Error fetching order: {e}")
 
 
-@router.post(
-    "/webhook",
-    status_code=status.HTTP_200_OK,
-    summary="Cashfree server‐to‐server notification"
-)
+LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
+
+@router.post("/webhook", status_code=status.HTTP_200_OK, summary="Cashfree S2S notification")
 async def payment_webhook(request: Request, db: Session = Depends(get_db)):
-    data = await request.json()
+    # 1) Read the raw bytes and log them
+    body_bytes = await request.body()
+    ts = datetime.utcnow().isoformat()
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as log:
+            log.write(f"{ts} ▶ RAW: {body_bytes.decode('utf-8','ignore')}\n")
+    except Exception as e:
+        # If logging fails, print to console but don’t crash the endpoint
+        print("Webhook log write failed:", e)
 
-    # ─────────── Persist the incoming payload ───────────
-    # This will append one JSON object per line in `payment_webhook.log`
-    with open("payment_webhook.log", "a") as log:
-        log.write(json.dumps({
-            "received_at": datetime.utcnow().isoformat(),
-            "payload":      data,
-        }) + "\n")
-    # ─────────────────────────────────────────────────────
+    # 2) Try to parse JSON, but handle empty or invalid
+    if not body_bytes:
+        # no content at all
+        raise HTTPException(status_code=400, detail="Empty body")
+    try:
+        data = json.loads(body_bytes)
+    except json.JSONDecodeError:
+        # log the parse failure
+        with open(LOG_FILE, "a", encoding="utf-8") as log:
+            log.write(f"{ts} ⚠️ INVALID JSON\n\n")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    order_id    = data["orderId"]
-    tx_status   = data["txStatus"]
+    # 3) Log the parsed payload
+    with open(LOG_FILE, "a", encoding="utf-8") as log:
+        log.write(f"{ts} ▶ JSON: {json.dumps(data)}\n")
+
+    # 4) Your existing DB logic
+    order_id    = data.get("orderId")
+    tx_status   = data.get("txStatus")
     tx_ref      = data.get("referenceId")
     paid_amount = float(data.get("orderAmount", 0))
     customer    = data.get("customerDetails", {})
     tags        = data.get("orderTags", {})
 
-    # your existing logic…
-    payment = (
-        db.query(Payment)
-          .filter(Payment.order_id == order_id)
-          .first()
-    )
+    payment = db.query(Payment).filter_by(order_id=order_id).first()
     if not payment:
         payment = Payment(
-            order_id      = order_id,
-            name          = customer.get("customerName"),
-            email         = customer.get("customerEmail"),
-            phone_number  = customer.get("customerPhone"),
-            Service       = tags.get("service"),
-            paid_amount   = paid_amount,
+            order_id     = order_id,
+            name         = customer.get("customerName"),
+            email        = customer.get("customerEmail"),
+            phone_number = customer.get("customerPhone"),
+            Service      = tags.get("service"),
+            paid_amount  = paid_amount,
         )
         db.add(payment)
 
@@ -128,27 +137,18 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     payment.paid_amount    = paid_amount
     payment.updated_at     = datetime.utcnow()
 
-    lead = (
-        db.query(Lead)
-          .filter(Lead.mobile == payment.phone_number)
-          .first()
-    )
+    lead = db.query(Lead).filter(Lead.mobile == payment.phone_number).first()
     if lead:
         payment.lead_id = lead.id
 
     db.commit()
 
-    # ─────────── Persist the response ───────────
-    with open("payment_webhook.log", "a") as log:
-        log.write(json.dumps({
-            "responded_at": datetime.utcnow().isoformat(),
-            "response":     {"message": "ok"},
-        }) + "\n")
-    # ─────────────────────────────────────────────
+    # 5) Log your response
+    resp = {"message": "ok"}
+    with open(LOG_FILE, "a", encoding="utf-8") as log:
+        log.write(f"{ts} ◀ RESP: {json.dumps(resp)}\n\n")
 
-    return {"message": "ok"}
-
-
+    return resp
 
 @router.post(
     "/create",
@@ -393,7 +393,7 @@ async def front_create(
             "customer_phone": data.phone,
         },
         order_meta={
-            "notify_url":       "https://crm.24x7techelp.com/api/v1/payment/webhook",
+            "notify_url": "https://crm.24x7techelp.com/api/v1/payment/webhook",
             "payment_methods":  data.payment_methods
         },
     )
