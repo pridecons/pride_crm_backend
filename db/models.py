@@ -499,6 +499,7 @@ class Payment(Base):
     Service          = Column(String(50), nullable=True)
     paid_amount      = Column(Float, nullable=False)
     call             = Column(Integer, nullable=True)
+    duration_day     = Column(Integer, nullable=True)
     plan             = Column(
                             JSONB, 
                             nullable=True, 

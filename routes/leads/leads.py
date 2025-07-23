@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile,
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 from pydantic import BaseModel, constr, validator
-from fastapi.responses import JSONResponse
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 

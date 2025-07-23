@@ -65,6 +65,7 @@ class FrontUserCreate(BaseModel):
     amount: float
     payment_methods: Optional[str]= None
     call : int = None
+    duration_day : int = None
     service_id: int = None
     description: str = None
     user_id: Optional[str]   = None
