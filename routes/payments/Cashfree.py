@@ -13,6 +13,7 @@ from sqlalchemy import func
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 import os
 import logging
+from routes.auth.auth_dependency import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ async def front_create_upi_req(
 async def front_create(
     data: FrontUserCreate = Body(...),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     # 1) build & call Cashfree
     cf_payload = CreateOrderRequest(
@@ -284,8 +286,8 @@ async def front_create(
         plan           = [plan_json],          # <<< store your JSON here
         call           = data.call,
         description    = data.description,
-        user_id        = data.user_id,
-        branch_id      = data.branch_id,
+        user_id        = current_user.employee_code,
+        branch_id      = current_user.branch_id,
     )
     db.add(payment)
     db.commit()
