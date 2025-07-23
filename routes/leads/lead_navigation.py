@@ -2,19 +2,22 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, asc
+from sqlalchemy import and_, or_
 
 from db.connection import get_db
 from db.models import Lead, LeadAssignment, UserDetails
 from routes.auth.auth_dependency import get_current_user
+from utils.AddLeadStory import AddLeadStory
 
 router = APIRouter(
     prefix="/leads",
     tags=["lead navigation"],
 )
+
 
 class LeadNavigationResponse(BaseModel):
     id: int
@@ -29,10 +32,11 @@ class LeadNavigationResponse(BaseModel):
     lead_response_id: Optional[int] = None
     is_call: bool
     assignment_id: int
-    position: int  # Current position in sequence
-    total_count: int  # Total assigned leads
+    position: int        # Current position in sequence
+    total_count: int     # Total assigned leads
     has_next: bool
     has_previous: bool
+
 
 class LeadPositionResponse(BaseModel):
     position: int
@@ -40,14 +44,15 @@ class LeadPositionResponse(BaseModel):
     has_next: bool
     has_previous: bool
 
+
 @router.get("/navigation/current")
 async def get_current_lead(
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user)
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """
-    Get current lead for user - returns first is_call=false lead,
-    otherwise the first lead. Also returns navigation info.
+    Return the first uncalled lead (is_call=False), or else the first assignment.
+    Also logs the “view” via AddLeadStory.
     """
     now = datetime.now(timezone.utc)
     expiry_cutoff = now - timedelta(hours=24)
@@ -70,7 +75,7 @@ async def get_current_lead(
     # pick first uncalled, or fallback to the first
     current = next((a for a in assignments if not a.is_call), assignments[0])
 
-    lead = db.query(Lead).filter(Lead.id == current.lead_id).first()
+    lead = db.query(Lead).get(current.lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Lead not found")
@@ -97,10 +102,11 @@ async def get_current_lead(
 async def get_next_lead(
     current_assignment_id: int = Query(..., description="Current assignment ID"),
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user)
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """
-    Get next lead in sequence
+    Returns the next lead in this user’s active assignments.
+    Also logs the navigation via AddLeadStory.
     """
     # Get user's active assignments - use timezone-aware datetime
     now = datetime.now(timezone.utc)  # Fixed timezone issue
@@ -137,7 +143,7 @@ async def get_next_lead(
     position = current_index + 2  # +2 because index is 0-based and we want next
     total_count = len(assignments)
     
-    return LeadNavigationResponse(
+    resp = LeadNavigationResponse(
         id=lead.id,
         full_name=lead.full_name,
         email=lead.email,
@@ -156,14 +162,29 @@ async def get_next_lead(
         has_previous=position > 1
     )
 
-@router.get("/navigation/previous", response_model=LeadNavigationResponse)
+    # Audit
+    AddLeadStory(
+        lead.id,
+        current_user.employee_code,
+        f"{current_user.name} navigated to next lead (assignment {nxt.id})"
+    )
+
+    return resp
+
+
+@router.get(
+    "/navigation/previous",
+    response_model=LeadNavigationResponse,
+    summary="Get previous lead"
+)
 async def get_previous_lead(
     current_assignment_id: int = Query(..., description="Current assignment ID"),
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user)
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """
-    Get previous lead in sequence (including is_call=true leads)
+    Returns the previous lead in this user’s active assignments.
+    Also logs the navigation via AddLeadStory.
     """
     # Get user's active assignments - use timezone-aware datetime
     now = datetime.now(timezone.utc)  # Fixed timezone issue
@@ -200,7 +221,7 @@ async def get_previous_lead(
     position = current_index  # current_index is already 0-based, so this gives us the position
     total_count = len(assignments)
     
-    return LeadNavigationResponse(
+    resp = LeadNavigationResponse(
         id=lead.id,
         full_name=lead.full_name,
         email=lead.email,
@@ -219,7 +240,20 @@ async def get_previous_lead(
         has_previous=position > 1
     )
 
-@router.put("/navigation/mark-called/{assignment_id}")
+    # Audit
+    AddLeadStory(
+        lead.id,
+        current_user.employee_code,
+        f"{current_user.name} navigated to previous lead"
+    )
+
+    return resp
+
+
+@router.put(
+    "/navigation/mark-called/{assignment_id}",
+    summary="Mark a lead as called"
+)
 async def mark_lead_called(
     assignment_id: int,
     db: Session = Depends(get_db),
@@ -241,17 +275,24 @@ async def mark_lead_called(
     assignment.is_call = True
     # Note: called_at field doesn't exist in the model, removed this line
     db.commit()
-    
+
+    # Audit
+    AddLeadStory(
+        assignment.lead_id,
+        current_user.employee_code,
+        f"{current_user.name} marked lead as called (assignment {assignment_id})"
+    )
+
     return {"message": "Lead marked as called", "assignment_id": assignment_id}
 
 @router.get("/navigation/position")
 async def get_navigation_position(
     current_assignment_id: int = Query(..., description="Current assignment ID"),
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user)
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """
-    Get navigation position info only
+    Return only position/total/has_next/has_previous for an assignment.
     """
     # Get user's active assignments - use timezone-aware datetime
     now = datetime.now(timezone.utc)  # Fixed timezone issue
@@ -286,10 +327,10 @@ async def get_navigation_position(
 @router.get("/navigation/uncalled-count")
 async def get_uncalled_leads_count(
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user)
+    current_user: UserDetails = Depends(get_current_user),
 ):
     """
-    Get count of uncalled leads (is_call = false)
+    Returns how many assigned leads are still uncalled.
     """
     # Use timezone-aware datetime
     now = datetime.now(timezone.utc)  # Fixed timezone issue

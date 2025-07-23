@@ -422,7 +422,7 @@ class LeadComment(Base):
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
     user_id          = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
     timestamp        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    comment              = Column(Text, nullable=False)
+    comment          = Column(Text, nullable=False)
 
     lead             = relationship("Lead", back_populates="comments")
     user             = relationship("UserDetails")
@@ -478,6 +478,7 @@ class Lead(Base):
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
+    comments          = relationship("LeadComment", back_populates="lead", cascade="all, delete-orphan")
     branch            = relationship("BranchDetails", back_populates="leads")
     payments          = relationship("Payment", back_populates="lead")
     stories           = relationship("LeadStory", back_populates="lead", cascade="all, delete-orphan")

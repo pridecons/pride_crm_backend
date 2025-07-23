@@ -12,6 +12,7 @@ from db.connection import get_db
 from db.models import Lead, LeadAssignment, UserDetails
 from routes.auth.auth_dependency import require_permission
 from routes.leads.leads_fetch import load_fetch_config
+from utils.AddLeadStory import AddLeadStory
 
 # Create a separate router with a specific prefix to avoid conflicts
 router = APIRouter(
@@ -62,6 +63,14 @@ def get_my_assignments(
         for assignment in assignments:
             expires_at = assignment.fetched_at + timedelta(hours=config.assignment_ttl_hours)
             hours_remaining = (expires_at - now).total_seconds() / 3600
+
+            # ─── Audit ───────────────────────────────────────
+            AddLeadStory(
+                assignment.lead_id,
+                current_user.employee_code,
+                f"{current_user.name} fetched assignment {assignment.id}"
+            )
+            # ────────────────────────────────────────────────
             
             assignment_data.append(AssignmentResponse(
                 assignment_id=assignment.id,
@@ -114,13 +123,23 @@ def complete_assignment(
                 detail="Assignment not found or not owned by you"
             )
         
+        lead_id = assignment.lead_id
+        
         db.delete(assignment)
         db.commit()
-        
+
+        # ─── Audit ─────────────────────────────────────
+        AddLeadStory(
+            lead_id,
+            current_user.employee_code,
+            f"{current_user.name} completed assignment {assignment_id}"
+        )
+        # ─────────────────────────────────────────────
+
         return {
             "message": "Assignment completed successfully",
             "assignment_id": assignment_id,
-            "lead_id": assignment.lead_id
+            "lead_id": lead_id
         }
         
     except HTTPException:
@@ -163,6 +182,16 @@ def complete_multiple_assignments(
         completed_ids = []
         for assignment in assignments:
             completed_ids.append(assignment.id)
+            lead_id = assignment.lead_id
+
+            # ─── Audit ─────────────────────────────────────
+            AddLeadStory(
+                lead_id,
+                current_user.employee_code,
+                f"{current_user.name} completed assignment {assignment.id}"
+            )
+            # ─────────────────────────────────────────────
+
             db.delete(assignment)
         
         db.commit()
