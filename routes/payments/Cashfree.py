@@ -390,71 +390,31 @@ LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
     summary="Cashfree S2S notification"
 )
 async def payment_webhook(request: Request, db: Session = Depends(get_db)):
-    # 1) Read & log raw body
-    body = await request.body()
-    ts = datetime.utcnow().isoformat()
+    # 1) Read raw body
+    body_bytes = await request.body()
+
+    # 2) Log the raw payload
+    logger.info("💸 Webhook raw payload: %s", body_bytes.decode("utf-8", errors="ignore"))
+
+    # 3) Parse JSON
+    if not body_bytes:
+        logger.warning("Webhook called with empty body")
+        raise HTTPException(status_code=400, detail="Empty body")
+
     try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{ts} ▶ RAW: {body.decode(errors='ignore')}\n")
-    except Exception as e:
-        logger.error("Failed to write raw webhook log: %s", e)
+        data = json.loads(body_bytes)
+    except json.JSONDecodeError as e:
+        logger.error("Failed to decode webhook JSON: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    # 2) Parse JSON
-    if not body:
-        raise HTTPException(400, "Empty webhook payload")
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{ts} ⚠️ INVALID JSON\n\n")
-        raise HTTPException(400, "Invalid JSON")
+    # 4) Log the parsed JSON
+    logger.info("✅ Webhook JSON parsed: %s", data)
 
-    # 3) Log parsed
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{ts} ▶ JSON: {json.dumps(data)}\n")
+    # … your DB logic here …
+    # e.g. upsert Payment, etc.
 
-    # 4) Extract fields
-    order_id    = data.get("orderId")
-    tx_status   = data.get("txStatus")
-    tx_ref      = data.get("referenceId")
-    paid_amount = float(data.get("orderAmount", 0))
-    customer    = data.get("customerDetails", {}) or {}
-    tags        = data.get("orderTags", {}) or {}
-
-    # 5) Upsert Payment
-    payment = db.query(Payment).filter_by(order_id=order_id).first()
-    if not payment:
-        payment = Payment(
-            order_id     = order_id,
-            name         = customer.get("customerName", "Unknown"),
-            email        = customer.get("customerEmail", ""),
-            phone_number = customer.get("customerPhone", ""),
-            Service      = tags.get("service", ""),
-            paid_amount  = paid_amount,
-            mode         = "CASHFREE",
-            status       = tx_status,
-        )
-        db.add(payment)
-
-    payment.status         = tx_status
-    payment.transaction_id = tx_ref
-    payment.paid_amount    = paid_amount
-    payment.updated_at     = datetime.utcnow()
-
-    lead = db.query(Lead).filter_by(mobile=payment.phone_number).first()
-    if lead:
-        payment.lead_id = lead.id
-
-    # 6) Commit
-    try:
-        db.commit()
-    except Exception as e:
-        logger.error("Webhook DB commit failed: %s", e)
-        db.rollback()
-
-    # 7) Log & respond
+    # 5) Prepare and log response
     resp = {"message": "ok"}
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{ts} ◀ RESP: {json.dumps(resp)}\n\n")
+    logger.info("↩️ Webhook response: %s", resp)
 
     return resp
