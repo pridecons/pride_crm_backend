@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from jinja2 import Template as JinjaTemplate
@@ -53,14 +53,26 @@ def update_template(
     db.refresh(tmpl)
     return tmpl
 
-@router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_template(template_id: int, db: Session = Depends(get_db)):
-    tmpl = db.query(EmailTemplate).get(template_id)
+@router.delete(
+    "/templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an email template by ID",
+)
+def delete_template(
+    template_id: int,
+    db: Session = Depends(get_db)
+):
+    # 1) fetch via Session.get (SQLAlchemy 2.x compatible)
+    tmpl = db.get(EmailTemplate, template_id)
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    # 2) delete + commit
     db.delete(tmpl)
     db.commit()
-    return JSONResponse(status_code=status.HTTP_204_NO_CONTENT)
+
+    # 3) return bare 204
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.post("/send/")
 def send_email(
