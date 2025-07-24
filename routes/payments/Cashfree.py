@@ -346,17 +346,7 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
         # you can choose to ignore or 404 here
         logger.warning("⚠️ Webhook for unknown order_id: %s", order_id)
         return {"message": "ignored"}
-
-    # 5) Map CASHFREE status to your field
-    payment.status = "PAID" if status_cf == "SUCCESS" else status_cf
-
-    # 6) Commit
-    try:
-        db.commit()
-    except Exception as e:
-        logger.error("❌ Webhook DB error: %s", e)
-        db.rollback()
-
+    
     is_success = (status_cf == "SUCCESS")
     notify_title = "Payment Successful" if is_success else "Payment Failed"
     ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
@@ -370,20 +360,32 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
         f"  <p>Time: {ist.strftime('%Y-%m-%d %H:%M:%S')} IST</p>"
         f"</div>"
     )
+    if payment.status != "PAID":
+        await notification_service.notify(
+            user_id=payment.user_id,
+            title= notify_title,
+            message= notify_message,
+        )
 
-    await notification_service.notify(
-        user_id=payment.user_id,
-        title= notify_title,
-        message= notify_message,
-    )
+        msg = (
+            f"💸 Payment for order {order_id} "
+            f"{'succeeded' if is_success else 'failed'} "
+            f"for ₹{payment.paid_amount:.2f} "
+            f"at {ist.strftime('%Y-%m-%d %H:%M:%S')} IST"
+        )
 
-    msg = (
-        f"💸 Payment for order {order_id} "
-        f"{'succeeded' if is_success else 'failed'} "
-        f"for ₹{payment.paid_amount:.2f} "
-        f"at {ist.strftime('%Y-%m-%d %H:%M:%S')} IST"
-    )
-    AddLeadStory(payment.lead_id, payment.user_id, msg)
+        AddLeadStory(payment.lead_id, payment.user_id, msg)
+        
+    # 5) Map CASHFREE status to your field
+    payment.status = "PAID" if status_cf == "SUCCESS" else status_cf
+
+    # 6) Commit
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error("❌ Webhook DB error: %s", e)
+        db.rollback()
+
 
     # 7) Respond
     resp = {"message": "ok"}
