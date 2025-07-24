@@ -25,6 +25,7 @@ async def send_notification(payload: NotifyIn):
     ok = await notification_service.notify(
         user_id=payload.user_id,
         title=payload.title,
-        message=payload.message
+        message=payload.message,
+        retry_count=10
     )
     return NotifyOut(success=ok)
