@@ -9,12 +9,16 @@ from db.Schema.email import (
     TemplateCreate, TemplateUpdate, TemplateOut,
     SendEmailRequest, EmailLogOut
 )
-from services.mail import render_template, send_mail
+from services.mail import send_mail_by_client
 from typing import Optional
 from pydantic import EmailStr
+from jinja2 import Template
 
 
 router = APIRouter(prefix="/email", tags=["email"])
+
+def render_template(template_str: str, context: dict) -> str:
+    return Template(template_str).render(**context)
 
 @router.post("/templates/", response_model=TemplateOut)
 def create_template(
@@ -75,7 +79,7 @@ def delete_template(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.post("/send/")
-def send_email(
+async def send_email(
     req: SendEmailRequest,
     db: Session = Depends(get_db)
 ):
@@ -87,9 +91,12 @@ def send_email(
     subject  = render_template(tmpl.subject, req.context)
     body_html = render_template(tmpl.body,    req.context)
 
+    print("body_html : ",body_html)
+    print("subject : ",subject)
+
     # Send
     try:
-        send_mail(req.recipient_email, subject, body_html)
+        send_mail_by_client(req.recipient_email, subject, body_html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SMTP error: {e}")
 

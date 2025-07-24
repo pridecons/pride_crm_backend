@@ -486,6 +486,35 @@ class Lead(Base):
     lead_source       = relationship("LeadSource", back_populates="leads")
     lead_response     = relationship("LeadResponse", back_populates="leads")
     assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
+    recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
+
+
+class LeadRecording(Base):
+    __tablename__ = "lead_recordings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # link back to Lead
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
+
+    # optional link to an employee (must match crm_user_details.employee_code)
+    employee_code = Column(
+        String(100),                           # ← use String, not Integer
+        ForeignKey("crm_user_details.employee_code"),
+        nullable=True
+    )
+
+    recording_url = Column(String(255), nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+
+    lead = relationship("Lead", back_populates="recordings")
+    employee = relationship("UserDetails", backref="recordings")
+
 
 
 class Payment(Base):
