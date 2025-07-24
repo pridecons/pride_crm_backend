@@ -9,6 +9,7 @@ from db.connection import Base
 import uuid
 import enum
 from sqlalchemy.dialects.postgresql import JSONB
+from datetime import datetime
 
 class UserRoleEnum(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
@@ -670,4 +671,33 @@ class NARRATION(Base):
                     nullable=False
                 )
     
-    
+
+class TemplateTypeEnum(str, enum.Enum):
+    ADMIN = "admin"
+    EMPLOYEE = "employee"
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True, index=True)
+    template_type = Column(SAEnum(TemplateTypeEnum), nullable=False)
+    subject = Column(String(200), nullable=False)
+    body = Column(Text, nullable=False)
+
+class EmailLog(Base):
+    __tablename__ = "email_logs"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    template_id     = Column(Integer, ForeignKey("email_templates.id"), nullable=False)
+    recipient_email = Column(String(320), nullable=False, index=True)
+    subject         = Column(String(200), nullable=False)
+    body            = Column(Text, nullable=False)
+    sent_at         = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    template = relationship("EmailTemplate", back_populates="logs")
+
+# also add back‑ref on EmailTemplate:
+EmailTemplate.logs = relationship(
+    "EmailLog", order_by=EmailLog.sent_at.desc(), back_populates="template"
+)
