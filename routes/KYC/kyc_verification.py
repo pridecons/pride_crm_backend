@@ -8,13 +8,15 @@ from db.connection import get_db
 from routes.KYC.agreement_kyc_pdf import generate_kyc_pdf
 import pytz
 from routes.mail_service.send_mail import send_mail
+from routes.auth.auth_dependency import get_current_user
 
 router = APIRouter(tags=["Agreement KYC"])
 
 @router.post("/kyc_user_details")
 async def update_kyc_details(
     mobile: str = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Initialize KYC process for a user"""
     try:
@@ -71,8 +73,9 @@ async def update_kyc_details(
         }
         
         # Generate KYC PDF and get signer details
+        employee_code = current_user.employee_code
         try:
-            signer_details = await generate_kyc_pdf(data, mobile, db)
+            signer_details = await generate_kyc_pdf(data, mobile,employee_code, db)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

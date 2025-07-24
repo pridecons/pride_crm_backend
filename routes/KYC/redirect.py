@@ -7,9 +7,11 @@ import httpx
 from db.models import Lead
 from routes.mail_service.kyc_agreement_mail import send_agreement
 import base64
+from routes.notification.notification_service import notification_service
+from datetime import datetime, timezone, timedelta
+from utils.AddLeadStory import AddLeadStory
 
 router = APIRouter(tags=["Agreement KYC Redirect"])
-S3_BUCKET_NAME = "pride-user-data"
 
 # Middleware-like functionality for each endpoint
 def set_cors_allow_all(response: Response):
@@ -32,8 +34,8 @@ async def redirect_route(response: Response,platform: str, mobile: str):
         status_code=302
     )
 
-@router.post("/response_url/{mobile}")
-async def response_url_endpoint(request: Request,response: Response,mobile: str,db: Session = Depends(get_db)):
+@router.post("/response_url/{mobile}/{employee_code}")
+async def response_url_endpoint(request: Request,response: Response,mobile: str,employee_code:str, db: Session = Depends(get_db)):
     set_cors_allow_all(response)
     payload = await request.json()
     result = payload.get("result")
@@ -57,6 +59,32 @@ async def response_url_endpoint(request: Request,response: Response,mobile: str,
     kyc_user.kyc = True
 
     db.commit()
+    
+    ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
+
+    # 2) Build your HTML message
+    msg_html = (
+        "<div style='font-family:Arial,sans-serif; line-height:1.4;'>"
+        "  <h3>📝 Agreement Completed</h3>"
+        f"  <p><strong>Lead</strong>: {kyc_user.full_name} ({mobile})</p>"
+        f"  <p><strong>Time</strong>: {ist.strftime('%Y-%m-%d %H:%M:%S')} IST</p>"
+        f"  <p><strong>Employee</strong>: {employee_code}</p>"
+        "</div>"
+    )
+
+    await notification_service.notify(
+        user_id=employee_code,
+        title= "Agreement Done",
+        message= msg_html,
+    )
+
+    msg = (
+        f"📝 Agreement completed for lead “{kyc_user.full_name}” "
+        f"(mobile: {kyc_user.mobile}) by employee {employee_code} "
+        f"at {ist.strftime('%Y-%m-%d %H:%M:%S')} IST"
+    )
+
+    AddLeadStory(kyc_user.id, employee_code, msg)
 
     print("✅ Zoop callback received:")
     print(payload)

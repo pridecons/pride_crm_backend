@@ -207,7 +207,7 @@ def create_watermark_overlay(page_width: float, page_height: float, text: str):
 
     return PdfReader(buffer).pages[0]
 
-async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
+async def generate_kyc_pdf(data,mobile:str,employee_code:str , db:Session = Depends(get_db)):
     kyc_user = db.query(Lead).filter(Lead.mobile == mobile).first()
     if not kyc_user:
             raise HTTPException(status_code=404, detail="User not found")
@@ -1129,7 +1129,7 @@ async def generate_kyc_pdf(data,mobile:str,db:Session = Depends(get_db)):
         "txn_expiry_min": "10080",
         "white_label": "N",
         "redirect_url": f"https://pridecons.sbs/redirect/{platform}/{mobile}",
-        "response_url": f"https://pridecons.sbs/response_url/{mobile}",
+        "response_url": f"https://crm.24x7techelp.com/api/v1/response_url/{mobile}/{employee_code}",
         "esign_type": "AADHAAR",
         "email_template": {
             "org_name": "Pride Trading Consultancy"

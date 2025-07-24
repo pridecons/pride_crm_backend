@@ -1,5 +1,5 @@
 import json
-from datetime import datetime,date
+from datetime import datetime,date, timezone, timedelta
 from fastapi import APIRouter, HTTPException, status, Body, Depends, Request, Query
 from httpx import AsyncClient
 from sqlalchemy.orm import Session
@@ -14,6 +14,8 @@ from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 import os
 import logging
 from routes.auth.auth_dependency import get_current_user
+from routes.notification.notification_service import notification_service
+from utils.AddLeadStory import AddLeadStory
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +356,34 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error("❌ Webhook DB error: %s", e)
         db.rollback()
+
+    is_success = (status_cf == "SUCCESS")
+    notify_title = "Payment Successful" if is_success else "Payment Failed"
+    ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
+    notify_message = (
+        f"<div style='font-family:Arial,sans-serif; line-height:1.4;'>"
+        f"  <h2 style='color:{ 'green' if is_success else 'red' };'>{notify_title}</h2>"
+        f"  <p>Your payment for order <strong>{order_id}</strong> "
+        f"of <strong>₹{payment.paid_amount:.2f}</strong> has "
+        f"<strong>{'succeeded' if is_success else 'failed'}</strong>.</p>"
+        f"  <p>Status: <em>{status_cf}</em></p>"
+        f"  <p>Time: {ist.strftime('%Y-%m-%d %H:%M:%S')} IST</p>"
+        f"</div>"
+    )
+
+    await notification_service.notify(
+        user_id=payment.user_id,
+        title= notify_title,
+        message= notify_message,
+    )
+
+    msg = (
+        f"💸 Payment for order {order_id} "
+        f"{'succeeded' if is_success else 'failed'} "
+        f"for ₹{payment.paid_amount:.2f} "
+        f"at {ist.strftime('%Y-%m-%d %H:%M:%S')} IST"
+    )
+    AddLeadStory(payment.lead_id, payment.user_id, msg)
 
     # 7) Respond
     resp = {"message": "ok"}
