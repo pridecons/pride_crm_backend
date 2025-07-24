@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,8 @@ from db.models import Lead, LeadAssignment, UserDetails
 from routes.auth.auth_dependency import require_permission
 from routes.leads.leads_fetch import load_fetch_config
 from utils.AddLeadStory import AddLeadStory
+import json
+from datetime import datetime, date
 
 # Create a separate router with a specific prefix to avoid conflicts
 router = APIRouter(
@@ -20,13 +22,92 @@ router = APIRouter(
     tags=["lead assignments"],
 )
 
+class LeadOut(BaseModel):
+    id: int
+    
+    # Personal Information
+    full_name: Optional[str] = None
+    director_name: Optional[str] = None
+    father_name: Optional[str] = None
+    gender: Optional[str] = None
+    marital_status: Optional[str] = None
+    
+    # Contact Information
+    email: Optional[str] = None
+    mobile: Optional[str] = None
+    alternate_mobile: Optional[str] = None
+    
+    # Documents
+    aadhaar: Optional[str] = None
+    pan: Optional[str] = None
+    gstin: Optional[str] = None
+    
+    # Address Information
+    state: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    address: Optional[str] = None
+    pincode: Optional[str] = None
+    country: Optional[str] = None
+    
+    # Additional Information
+    dob: Optional[date] = None
+    occupation: Optional[str] = None
+    segment: Optional[List[str]] = None
+    experience: Optional[str] = None
+    investment: Optional[str] = None
+    profile: Optional[str] = None
+    
+    # Lead Management
+    lead_response_id: Optional[int] = None
+    lead_source_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    
+    # Metadata
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    
+    # File uploads
+    aadhar_front_pic: Optional[str] = None
+    aadhar_back_pic: Optional[str] = None
+    pan_pic: Optional[str] = None
+    
+    # Status fields
+    kyc: Optional[bool] = False
+    kyc_id: Optional[str] = None
+    is_old_lead: Optional[bool] = False
+    call_back_date: Optional[datetime] = None
+    lead_status: Optional[str] = None
+    
+    # Timestamps
+    created_at: datetime
+    
+    @validator('segment', pre=True, always=True)
+    def parse_segment(cls, v):
+        """Parse segment field safely"""
+        if v is None:
+            return None
+        
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else [parsed]
+            except json.JSONDecodeError:
+                return [v] if v.strip() else None
+        
+        if isinstance(v, list):
+            return v
+        
+        return [str(v)] if v is not None else None
+    
+    class Config:
+        from_attributes = True
+
+
 class AssignmentResponse(BaseModel):
     assignment_id: int
     lead_id: int
-    lead_name: Optional[str]
-    lead_mobile: Optional[str]
-    lead_email: Optional[str]
-    lead_city: Optional[str]
+    lead : LeadOut
     fetched_at: datetime
     expires_at: datetime
     hours_remaining: float
