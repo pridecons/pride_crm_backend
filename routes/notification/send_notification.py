@@ -8,31 +8,23 @@ router = APIRouter(
     tags=["send-notification"],
 )
 
-class NotificationPayload(BaseModel):
+class NotifyIn(BaseModel):
     user_id: str
-    title: str
+    title:   str
     message: str
 
-@router.post("/", status_code=status.HTTP_200_OK)
-async def send_notification(payload: NotificationPayload):
-    """
-    Send a single notification to a connected user.
-    """
-    success = await notification_service.notify(
-        user_id=payload.user_id,
-        title= payload.title,
-        message= payload.message,
-    )
-    if not success:
-        # e.g. user not connected
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User {payload.user_id} is not connected"
-        )
-    return {"success": True}
+class NotifyOut(BaseModel):
+    success: bool
 
-    # await notification_service.notify(
-    #     user_id="Admin001",
-    #     title="New Task Assigned",
-    #     message="Please follow up with lead #1234."
-    # )
+@router.post("/", response_model=NotifyOut)
+async def send_notification(payload: NotifyIn):
+    """
+    Send a one‑off notification to a connected user.
+    Returns {"success":true} if at least one socket got it.
+    """
+    ok = await notification_service.notify(
+        user_id=payload.user_id,
+        title=payload.title,
+        message=payload.message
+    )
+    return NotifyOut(success=ok)

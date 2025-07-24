@@ -1,5 +1,3 @@
-# notification_service.py
-
 import json
 import logging
 import uuid
@@ -23,9 +21,11 @@ class NotificationService:
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept WebSocket and register it under user_id."""
         await websocket.accept()
+        # *** FIX: append the actual websocket, not `ws`! ***
         self.active_connections[user_id].append(websocket)
         self.connection_info[websocket] = user_id
         logger.info(f"User {user_id} connected ({len(self.active_connections[user_id])} sockets).")
+
         # send confirmation
         await self.send_to_user(user_id, {
             "type": "connection_confirmed",
@@ -41,17 +41,16 @@ class NotificationService:
         # remove this socket
         sockets = self.active_connections.get(user_id, [])
         self.active_connections[user_id] = [ws for ws in sockets if ws is not websocket]
-        # cleanup maps
         del self.connection_info[websocket]
         logger.info(f"User {user_id} disconnected one socket ({len(self.active_connections[user_id])} remain).")
-        # if no sockets remain, remove the key entirely
+        # if none remain, clean up the key
         if not self.active_connections[user_id]:
             del self.active_connections[user_id]
 
     async def send_to_user(self, user_id: str, data: Dict[str, Any]) -> bool:
         """
-        Send a JSON notification to all connected sockets for user_id.
-        Cleans up any dead sockets.
+        Send a JSON notification to *all* sockets of a user,
+        removing any that have died.
         """
         sockets = list(self.active_connections.get(user_id, []))
         if not sockets:
@@ -73,20 +72,18 @@ class NotificationService:
                 sent = True
             except Exception as e:
                 logger.error(f"Error sending to {user_id} on one socket: {e}")
-                # remove this dead socket
+                # drop the bad socket
                 self.disconnect(ws)
 
         return sent
 
     async def send_to_multiple(self, user_ids: List[str], data: Dict[str, Any]) -> Dict[str, bool]:
-        """Fan‑out a notification to multiple users."""
         results: Dict[str, bool] = {}
         for uid in user_ids:
             results[uid] = await self.send_to_user(uid, data)
         return results
 
     async def broadcast(self, data: Dict[str, Any]) -> Dict[str, bool]:
-        """Send to every connected user."""
         return await self.send_to_multiple(list(self.active_connections.keys()), data)
 
     def get_connected_users(self) -> List[str]:
@@ -106,7 +103,7 @@ class NotificationService:
         at_time: Optional[str] = None
     ) -> bool:
         """
-        High‑level helper to send a titled notification.
+        High‑level helper:
         - user_id: who to send to
         - title:   headline
         - message: body HTML/text
