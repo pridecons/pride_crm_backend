@@ -21,7 +21,7 @@ from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
 from routes.Pan_verification import PanVerification
-from routes.KYC import kyc_verification, redirect
+from routes.KYC import kyc_verification, redirect, View_Agreement
 from routes.profile_role import ProfileRole
 from routes.attendance import attendance
 from routes.Rational import Rational
@@ -137,6 +137,7 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
+    app.include_router(View_Agreement.router, prefix="/api/v1")
     app.include_router(Client_mail_service.router, prefix="/api/v1")
     app.include_router(send_notification.router, prefix="/api/v1")
     app.include_router(notifiaction_websocket.router, prefix="/api/v1")

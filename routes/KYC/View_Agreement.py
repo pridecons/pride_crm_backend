@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from db.connection import get_db
 from db.models import Lead
-from config import settings
 from routes.mail_service.send_mail import send_mail
 from routes.auth.auth_dependency import get_current_user
 from config import PAN_API_ID, PAN_API_KEY
