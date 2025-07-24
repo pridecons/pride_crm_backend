@@ -25,6 +25,7 @@ from routes.KYC import kyc_verification, redirect
 from routes.profile_role import ProfileRole
 from routes.attendance import attendance
 from routes.Rational import Rational
+from routes.notification import notifiaction_websocket, send_notification
 
 # Configure logging
 logging.basicConfig(
@@ -135,8 +136,8 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
-    app.include_router(Rational.router, prefix="/api/v1")
-    app.include_router(attendance.router, prefix="/api/v1")
+    app.include_router(send_notification.router, prefix="/api/v1")
+    app.include_router(notifiaction_websocket.router, prefix="/api/v1")
     app.include_router(Cashfree.router, prefix="/api/v1")
     # Authentication routes
     app.include_router(login.router, prefix="/api/v1")
@@ -162,6 +163,8 @@ try:
     app.include_router(PanVerification.router, prefix="/api/v1")
     app.include_router(kyc_verification.router, prefix="/api/v1")
     app.include_router(redirect.router, prefix="/api/v1")
+    app.include_router(Rational.router, prefix="/api/v1")
+    app.include_router(attendance.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     
 except Exception as e:
