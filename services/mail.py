@@ -16,7 +16,7 @@ def send_mail(
 ) -> None:
     """Send an HTML email via SMTP."""
     msg = MIMEMultipart("alternative")
-    msg["From"] = COM_SMTP_USER
+    msg["From"] = "Pride Trading Consultancy Pvt. Ltd. <compliance@pridecons.com>"
     msg["To"] = to_email
     msg["Subject"] = subject
 
