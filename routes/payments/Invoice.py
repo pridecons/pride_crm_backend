@@ -443,16 +443,16 @@ def calculate_end_date(start_str: str, billing_cycle: str, call_count: int = 0) 
         return ""
     return end.strftime("%d-%b-%Y")
 
-def service_quantity(billing_cycle: str, call_count: int = 0) -> str:
+def service_quantity(billing_cycle: str, call_count: int = 0, duration_day: int = 0) -> str:
     cycle = billing_cycle.upper()
     if cycle == "CALL":
         return f"{call_count} calls (No Time Limit)"
     elif cycle == "MONTHLY":
-        return "1 month"
+        return duration_day
     elif cycle == "YEARLY":
-        return "1 year"
+        return duration_day
     else:
-        return ""
+        return billing_cycle
 
 def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -473,7 +473,9 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
         discounted_price = plan["discounted_price"]
         start = datetime.fromisoformat(payment["created_at"]).strftime("%d-%b-%Y")
         end   = calculate_end_date(start, plan["billing_cycle"], payment.get("call", 0))
-        qty   = service_quantity(plan["billing_cycle"], payment.get("call", 0))
+
+        duration_day = payment.get("duration_day", 0)
+        qty   = service_quantity(plan["billing_cycle"], payment.get("call", 0), duration_day)
 
         # 1) Total paid amount (includes everything)
         paid_amount = payment["paid_amount"]
