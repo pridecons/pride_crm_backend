@@ -16,6 +16,7 @@ import logging
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_service import notification_service
 from utils.AddLeadStory import AddLeadStory
+from routes.payments.Invoice import generate_invoices_from_payments
 
 logger = logging.getLogger(__name__)
 
@@ -340,13 +341,14 @@ async def front_create(
         Service        = data.service,         # if you still need this field
         order_id       = cf_order_id,
         paid_amount    = data.amount,
-        status         = "PENDING",
+        status         = "ACTIVE",
         mode           = "CASHFREE",
         plan           = [plan_json],          # <<< store your JSON here
         call           = data.call,
         description    = data.description,
         user_id        = current_user.employee_code,
         branch_id      = current_user.branch_id,
+        lead_id        = data.lead_id
     )
     db.add(payment)
     db.commit()
@@ -394,6 +396,8 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     order_id  = order.get("order_id")
     status_cf = payment_d.get("payment_status")
 
+    new_status = "PAID" if status_cf == "SUCCESS" else status_cf
+
     if not order_id or not status_cf:
         raise HTTPException(400, "Missing order_id or payment_status")
 
@@ -403,6 +407,10 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
         # you can choose to ignore or 404 here
         logger.warning("⚠️ Webhook for unknown order_id: %s", order_id)
         return {"message": "ignored"}
+    
+    if payment.status == new_status:
+        logger.info("↩️ Webhook called again but status unchanged (%s). Ignoring.", new_status)
+        return {"message": "no_change"}
     
     is_success = (status_cf == "SUCCESS")
     notify_title = "Payment Successful" if is_success else "Payment Failed"
@@ -439,9 +447,24 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     # 6) Commit
     try:
         db.commit()
+        db.refresh(payment)
     except Exception as e:
         logger.error("❌ Webhook DB error: %s", e)
         db.rollback()
+
+    payload = {
+        "order_id":     payment.order_id,
+        "paid_amount":  payment.paid_amount,
+        "plan":         payment.plan,
+        "call":         payment.call or 0,
+        "created_at":   payment.created_at.isoformat(),
+        "phone_number": payment.phone_number,
+        "email":        payment.email,
+        "name":         payment.name,
+        "mode":         payment.mode,
+    }
+    
+    await generate_invoices_from_payments([payload])
 
 
     # 7) Respond

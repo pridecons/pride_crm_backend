@@ -11,7 +11,7 @@ from num2words import num2words
 from io import BytesIO
 
 from db.connection import get_db
-from db.models import Lead, Invoice
+from db.models import Lead, Invoice, Payment
 
 from reportlab.pdfgen import canvas
 from reportlab.pdfgen import canvas as rl_canvas
@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import event
 import asyncio
+from services.mail_with_file import send_mail_by_client_with_file
 
 
 @event.listens_for(Invoice, "before_insert")
@@ -588,7 +589,7 @@ def generate_invoice_pdf(data: Dict[str, Any], add_header: bool = True, add_wate
 
 async def generate_invoices_from_payments(
     payments: List[Dict[str, Any]],
-    output_dir: str = "invoices",
+    output_dir: str = "static/invoices",
     add_header: bool = True,
     add_watermark: bool = True
 ) -> None:
@@ -597,87 +598,111 @@ async def generate_invoices_from_payments(
     """
     os.makedirs(output_dir, exist_ok=True)
     for pay in payments:
+        db = next(get_db())
         details   = build_invoice_details(pay)
+        invoice_no = details["invoice_no"]
         pdf_bytes = generate_invoice_pdf(details, add_header, add_watermark)
         signPdf   = await sign_pdf(pdf_bytes)
+        order_id  = pay['order_id']
         fn        = f"invoice_{pay['order_id']}.pdf"
         path      = os.path.join(output_dir, fn)
         with open(path, "wb") as f:
             f.write(signPdf)
         print(f"Generated {path}")
+        to_addr = pay.get("email")
+        subject = f"Your Invoice #{invoice_no}"
+        html_body = (
+            f"<p>Dear {details['customer']['name']},</p>"
+            f"<p>Thank you for your payment of ₹{pay['paid_amount']:.2f}. "
+            f"Please find attached your invoice <strong>{invoice_no}</strong>.</p>"
+            "<p>Regards,<br/>Pride Trading Consultancy</p>"
+        )
+
+        send_mail_by_client_with_file(
+            to_email=to_addr,
+            subject=subject,
+            html_content=html_body,
+            pdf_file_path=path
+        )
+
+        payment_obj = db.query(Payment).filter(Payment.order_id == order_id).first()
+        if payment_obj:
+            payment_obj.is_send_invoice = True
+            db.commit()
+            db.refresh(payment_obj)
 
 # ─── USAGE ──────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    payments = [
-        {
-            "Service": "CASH",
-            "description": "hello",
-            "paid_amount": 2.1,
-            "transaction_id": None,
-            "call": 0,
-            "user_id": "Admin001",
-            "name": "Dheeraj Malviya",
-            "duration_day": None,
-            "branch_id": None,
-            "id": 2,
-            "plan": [
-                {
-                    "id": 2,
-                    "name": "monthly",
-                    "price": 10,
-                    "description": "jjkkk",
-                    "service_type": None,
-                    "billing_cycle": "MONTHLY",
-                    "discount_percent": 9,
-                    "discounted_price": 9.1
-                }
-            ],
-            "created_at": "2025-07-24T10:06:09.441566+00:00",
-            "email": "rajmalviya545@gmail.com",
-            "status": "PAID",
-            "updated_at": "2025-07-24T10:07:11.193833+00:00",
-            "phone_number": "7869615290",
-            "mode": "CASHFREE",
-            "lead_id": None,
-            "order_id": "order_76311130JhQs0gTgZTB1nWFnbelQ7oWvX",
-            "is_send_invoice": False
-        },
-        {
-            "Service": "CASH",
-            "description": "hello",
-            "paid_amount": 1,
-            "transaction_id": None,
-            "call": 2,
-            "user_id": "Admin001",
-            "name": "Dheeraj Malviya",
-            "duration_day": None,
-            "branch_id": None,
-            "id": 1,
-            "plan": [
-                {
-                    "id": 1,
-                    "name": "Lead Validation",
-                    "price": 250,
-                    "description": "Validate lead data integrity",
-                    "service_type": "premium",
-                    "billing_cycle": "CALL",
-                    "discount_percent": 10,
-                    "discounted_price": 225
-                }
-            ],
-            "created_at": "2025-07-23T19:01:03.683064+00:00",
-            "email": "rajmalviya545@gmail.com",
-            "status": "PENDING",
-            "updated_at": "2025-07-23T19:01:03.683064+00:00",
-            "phone_number": "7869615290",
-            "mode": "CASHFREE",
-            "lead_id": None,
-            "order_id": "order_76311130HvMLmADECyCPAqK9poLqSdbji",
-            "is_send_invoice": False
-        }
-    ]
+# if __name__ == "__main__":
+#     payments = [
+#         {
+#             "Service": "CASH",
+#             "description": "hello",
+#             "paid_amount": 2.1,
+#             "transaction_id": None,
+#             "call": 0,
+#             "user_id": "Admin001",
+#             "name": "Dheeraj Malviya",
+#             "duration_day": None,
+#             "branch_id": None,
+#             "id": 2,
+#             "plan": [
+#                 {
+#                     "id": 2,
+#                     "name": "monthly",
+#                     "price": 10,
+#                     "description": "jjkkk",
+#                     "service_type": None,
+#                     "billing_cycle": "MONTHLY",
+#                     "discount_percent": 9,
+#                     "discounted_price": 9.1
+#                 }
+#             ],
+#             "created_at": "2025-07-24T10:06:09.441566+00:00",
+#             "email": "rajmalviya545@gmail.com",
+#             "status": "PAID",
+#             "updated_at": "2025-07-24T10:07:11.193833+00:00",
+#             "phone_number": "7869615290",
+#             "mode": "CASHFREE",
+#             "lead_id": None,
+#             "order_id": "order_76311130JhQs0gTgZTB1nWFnbelQ7oWvX",
+#             "is_send_invoice": False
+#         },
+#         {
+#             "Service": "CASH",
+#             "description": "hello",
+#             "paid_amount": 1,
+#             "transaction_id": None,
+#             "call": 2,
+#             "user_id": "Admin001",
+#             "name": "Dheeraj Malviya",
+#             "duration_day": None,
+#             "branch_id": None,
+#             "id": 1,
+#             "plan": [
+#                 {
+#                     "id": 1,
+#                     "name": "Lead Validation",
+#                     "price": 250,
+#                     "description": "Validate lead data integrity",
+#                     "service_type": "premium",
+#                     "billing_cycle": "CALL",
+#                     "discount_percent": 10,
+#                     "discounted_price": 225
+#                 }
+#             ],
+#             "created_at": "2025-07-23T19:01:03.683064+00:00",
+#             "email": "rajmalviya545@gmail.com",
+#             "status": "PENDING",
+#             "updated_at": "2025-07-23T19:01:03.683064+00:00",
+#             "phone_number": "7869615290",
+#             "mode": "CASHFREE",
+#             "lead_id": None,
+#             "order_id": "order_76311130HvMLmADECyCPAqK9poLqSdbji",
+#             "is_send_invoice": False
+#         }
+#     ]
     
-    # Generate invoices with header and watermark
-    asyncio.run(generate_invoices_from_payments(payments, add_header=True, add_watermark=True))
+#     # Generate invoices with header and watermark
+#     asyncio.run(generate_invoices_from_payments(payments))
     

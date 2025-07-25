@@ -71,6 +71,7 @@ class FrontUserCreate(BaseModel):
     service_id: int = None
     description: str = None
     user_id: Optional[str]   = None
+    lead_id: Optional[int]   = None
     branch_id: Optional[str] = None
 
 
