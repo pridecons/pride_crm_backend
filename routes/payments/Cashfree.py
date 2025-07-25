@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
 from db.connection import get_db
 from db.models import Payment, Lead, Service
-from db.Schema.payment import CreateOrderRequest, FrontUserCreate
+from db.Schema.payment import CreateOrderRequest, FrontUserCreate, PaymentOut
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
@@ -89,6 +89,7 @@ async def get_order(order_id: str):
     status_code=status.HTTP_200_OK,
     summary="Get payment history by phone number (optional date filter)",
 )
+
 async def get_payment_history(
     phone: str,
     on_date: date | None = Query(
@@ -125,17 +126,73 @@ async def get_payment_history(
                     current_status = cf_status
             except HTTPException:
                 pass
+        print("r:", r.__dict__)
 
-        results.append({
-            "order_id":       r.order_id,
-            "paid_amount":    r.paid_amount,
-            "status":         current_status,
-            "transaction_id": r.transaction_id,
-            "service":        r.Service,
-            "created_at":     r.created_at,
-        })
+        data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
+
+        # If created_at/updated_at are datetime, ensure they serialize properly:
+        for dt_field in ("created_at", "updated_at"):
+            if isinstance(data.get(dt_field), datetime):
+                data[dt_field] = data[dt_field]
+
+        results.append(data)
 
     return results
+
+@router.get(
+    "/employee/history",
+    status_code=status.HTTP_200_OK,
+    summary="Get payment history by phone number (optional date filter)",
+)
+async def get_payment_history_lead(
+    on_date: date | None = Query(
+        None,
+        alias="date",
+        description="(Optional) YYYY-MM-DD to fetch only that day's payments"
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Fetch all payments for the given phone.
+    - If `?date=` is provided, only payments on that date are returned.
+    - Any PENDING records will be refreshed via a one-off GET /orders/{order_id}.
+    """
+    # 1) Build base query
+    query = db.query(Payment).filter(Payment.user_id == current_user.employee_code)
+
+    # 2) Apply date filter only if provided
+    if on_date is not None:
+        query = query.filter(func.date(Payment.created_at) == on_date)
+
+    # 3) Fetch ordered
+    records = query.order_by(Payment.created_at.desc()).all()
+
+    # 4) Refresh any PENDING statuses
+    results = []
+    for r in records:
+        current_status = r.status
+        if current_status.upper() == "PENDING":
+            try:
+                cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
+                cf_status = cf.get("order_status")
+                if cf_status:
+                    current_status = cf_status
+            except HTTPException:
+                pass
+        print("r:", r.__dict__)
+
+        data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
+
+        # If created_at/updated_at are datetime, ensure they serialize properly:
+        for dt_field in ("created_at", "updated_at"):
+            if isinstance(data.get(dt_field), datetime):
+                data[dt_field] = data[dt_field]
+
+        results.append(data)
+
+    return results
+
 
 @router.post(
     "/generate-qr-code/{order_id}",

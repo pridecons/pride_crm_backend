@@ -3,6 +3,8 @@
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import Optional, Dict
 from datetime import datetime
+from typing import Any, Dict, List
+
 
 def to_camel(string: str) -> str:
     parts = string.split('_')
@@ -70,4 +72,30 @@ class FrontUserCreate(BaseModel):
     description: str = None
     user_id: Optional[str]   = None
     branch_id: Optional[str] = None
+
+
+class PaymentOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    phone_number: str
+    order_id: str
+    Service: str
+    paid_amount: float
+    call: int
+    duration_day: int | None
+    plan: List[Dict[str, Any]]
+    status: str
+    mode: str
+    is_send_invoice: bool
+    description: str | None
+    transaction_id: str | None
+    user_id: str | None
+    branch_id: str | None
+    lead_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
