@@ -161,9 +161,10 @@ def delete_template(
     return JSONResponse(status_code=status.HTTP_204_NO_CONTENT, content=None)
 
 
+
 @router.post(
     "/send/",
-    response_model=Dict[str, str],
+    response_model=Dict[str, Any],  # Changed from Dict[str, str] to Dict[str, Any]
     summary="Render and send an email based on a template"
 )
 def send_email(
@@ -234,8 +235,8 @@ def send_email(
         template_id=tmpl.id,
         recipient_email=req.recipient_email,
         subject=subject,
-        body=body_html,
-        status="sent"  # Add status field if you have it
+        body=body_html
+        # Remove status field since it doesn't exist in EmailLog model
     )
     db.add(log)
     
@@ -254,13 +255,11 @@ def send_email(
 
     return {
         "message": "Email sent and logged successfully",
-        "email_details": {
-            "recipient": req.recipient_email,
-            "subject": subject,
-            "attempts": email_result.get("attempt", 1),
-            "status": email_result.get("status", "success")
-        }
+        "recipient": req.recipient_email,
+        "subject": subject,
+        "status": "success"
     }
+
 
 @router.get(
     "/logs/",
