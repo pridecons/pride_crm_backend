@@ -3,7 +3,7 @@ import uuid
 import json
 from typing import Optional, List, Any, Dict, Union
 from datetime import datetime, date
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 from pydantic import BaseModel, constr, validator
@@ -698,40 +698,46 @@ def patch_lead(
         )
 
 
-@router.delete("/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{lead_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete (soft by default) or hard-delete a lead"
+)
 def delete_lead(
     lead_id: int,
+    soft_delete: bool = Query(
+        True,
+        description="Perform soft delete by default; set false for hard delete"
+    ),
     db: Session = Depends(get_db),
 ):
-    """Delete a lead"""
-    try:
-        lead = db.query(Lead).filter_by(id=lead_id).first()
-        if not lead:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Lead not found"
-            )
-        
-        # Delete associated files
-        for file_path in [lead.aadhar_front_pic, lead.aadhar_back_pic, lead.pan_pic]:
-            if file_path and os.path.exists(file_path.lstrip('/')):
+    """Delete a lead—soft by default, hard if `soft_delete=false`."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lead not found"
+        )
+
+    if soft_delete:
+        # Soft delete: just flip the flag & save
+        lead.is_delete = True
+        db.commit()
+        return {"message": "Lead deleted successfully"}
+
+    # Hard delete: remove files, then the record
+    for file_path in (lead.aadhar_front_pic, lead.aadhar_back_pic, lead.pan_pic):
+        if file_path:
+            p = file_path.lstrip('/')
+            if os.path.exists(p):
                 try:
-                    os.remove(file_path.lstrip('/'))
+                    os.remove(p)
                 except OSError:
                     pass
-        
-        db.delete(lead)
-        db.commit()
-        return None
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting lead: {str(e)}"
-        )
+
+    db.delete(lead)
+    db.commit()
+    return {"message": "Lead deleted"}
 
 
 @router.post(
