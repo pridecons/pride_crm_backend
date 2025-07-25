@@ -180,6 +180,8 @@ def fetch_leads(
         # ─── Find unassigned or expired leads ────────────────────────────────────
         expiry_cutoff = datetime.utcnow() - timedelta(hours=config.assignment_ttl_hours)
         query = db.query(Lead).outerjoin(LeadAssignment)
+        query = query.filter(Lead.is_delete == False)
+        
         if current_user.branch_id:
             query = query.filter(Lead.branch_id == current_user.branch_id)
 

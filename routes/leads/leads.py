@@ -439,6 +439,8 @@ def get_all_leads(
         
         if state:
             query = query.filter(Lead.state.ilike(f"%{state}%"))
+
+        query = query.filter(Lead.is_delete == False)
         
         leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
         
@@ -840,6 +842,8 @@ def search_leads(
                 Lead.city.ilike(search_term) |
                 Lead.state.ilike(search_term)
             )
+
+        query = query.filter(Lead.is_delete == False)
         
         leads = query.limit(50).all()
         

@@ -75,7 +75,7 @@ async def get_current_lead(
     # pick first uncalled, or fallback to the first
     current = next((a for a in assignments if not a.is_call), assignments[0])
 
-    lead = db.query(Lead).get(current.lead_id)
+    lead = db.query(Lead).filter(Lead.is_delete == False).get(current.lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Lead not found")
@@ -136,7 +136,7 @@ async def get_next_lead(
     next_assignment = assignments[current_index + 1]
     
     # Get lead details
-    lead = db.query(Lead).filter(Lead.id == next_assignment.lead_id).first()
+    lead = db.query(Lead).filter(Lead.id == next_assignment.lead_id, Lead.is_delete == False).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     
@@ -214,7 +214,7 @@ async def get_previous_lead(
     prev_assignment = assignments[current_index - 1]
     
     # Get lead details
-    lead = db.query(Lead).filter(Lead.id == prev_assignment.lead_id).first()
+    lead = db.query(Lead).filter(Lead.id == prev_assignment.lead_id, Lead.is_delete == False).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     
