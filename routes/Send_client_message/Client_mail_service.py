@@ -21,8 +21,12 @@ from db.Schema.email import (
     SendEmailRequest, EmailLogOut
 )
 from services.mail import send_mail_by_client
+import logging
 
 router = APIRouter(prefix="/email", tags=["email"])
+
+
+logger = logging.getLogger(__name__)
 
 
 def render_template(template_str: str, context: Dict[str, Any]) -> str:
@@ -166,6 +170,7 @@ def send_email(
     req: SendEmailRequest,
     db: Session = Depends(get_db)
 ):
+    # Get template
     tmpl = db.get(EmailTemplate, req.template_id)
     if not tmpl:
         raise HTTPException(
@@ -174,43 +179,88 @@ def send_email(
         )
 
     # 1) Render subject & body
-    subject = render_template(tmpl.subject, req.context)
-    body_html = render_template(tmpl.body, req.context)
-
-    # 2) Send via SMTP
     try:
-        send_mail_by_client(req.recipient_email, subject, body_html)
-    except SMTPException as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"SMTP send error: {e}"
-        )
+        subject = render_template(tmpl.subject, req.context)
+        body_html = render_template(tmpl.body, req.context)
     except Exception as e:
+        logger.error(f"Template rendering error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Template rendering error: {e}"
+        )
+
+    # 2) Send via SMTP - Handle the response properly
+    try:
+        email_result = send_mail_by_client(req.recipient_email, subject, body_html)
+        
+        # Check if email was actually sent successfully
+        if isinstance(email_result, JSONResponse):
+            # If it's a JSONResponse, it means there was an error
+            logger.error(f"Email sending failed: {email_result.body}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="SMTP send error - check server logs for details"
+            )
+        elif isinstance(email_result, dict):
+            if email_result.get("status") != "success":
+                logger.error(f"Email sending failed: {email_result}")
+                error_msg = email_result.get("message", "Unknown error")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"SMTP send error: {error_msg}"
+                )
+            else:
+                logger.info(f"Email sent successfully: {email_result}")
+        else:
+            # Unexpected response type
+            logger.error(f"Unexpected email function response: {email_result}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected response from email function"
+            )
+            
+    except HTTPException:
+        # Re-raise HTTPExceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in email sending: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected send error: {e}"
         )
 
-    # 3) Log it
+    # 3) Log it only if email was sent successfully
     log = EmailLog(
         template_id=tmpl.id,
         recipient_email=req.recipient_email,
         subject=subject,
         body=body_html,
+        status="sent"  # Add status field if you have it
     )
     db.add(log)
+    
     try:
         db.commit()
+        logger.info(f"Email logged successfully for {req.recipient_email}")
     except SQLAlchemyError as e:
         db.rollback()
-        # We already sent the mail, so return 200 but inform about log failure
+        logger.error(f"Failed to log email: {e}")
+        # Email was sent successfully, but logging failed
         return {
-            "message": "Email sent, but failed to log.",
-            "logging_error": str(e)
+            "message": "Email sent successfully, but failed to log.",
+            "logging_error": str(e),
+            "email_status": email_result.get("message", "Email sent")
         }
 
-    return {"message": "Email sent and logged successfully"}
-
+    return {
+        "message": "Email sent and logged successfully",
+        "email_details": {
+            "recipient": req.recipient_email,
+            "subject": subject,
+            "attempts": email_result.get("attempt", 1),
+            "status": email_result.get("status", "success")
+        }
+    }
 
 @router.get(
     "/logs/",
