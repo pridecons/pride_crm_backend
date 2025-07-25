@@ -199,10 +199,6 @@ class LeadOut(BaseModel):
 class ChangeResponse(BaseModel):
     lead_response_id: int
 
-class CommentCreate(BaseModel):
-    user_id: str
-    comment: str
-
 class CommentOut(BaseModel):
     id: int
     lead_id: int
@@ -928,8 +924,9 @@ def change_lead_response(
 )
 def create_lead_comment(
     lead_id: int,
-    comment_in: CommentCreate,
+    comment: str,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     # 1) ensure lead exists
     lead = db.query(Lead).filter_by(id=lead_id).first()
@@ -937,15 +934,15 @@ def create_lead_comment(
         raise HTTPException(status_code=404, detail="Lead not found")
 
     # 2) ensure user exists
-    user = db.query(UserDetails).filter_by(employee_code=comment_in.user_id).first()
+    user = db.query(UserDetails).filter_by(employee_code=current_user.employee_code).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     # 3) create comment
     comment = LeadComment(
         lead_id=lead_id,
-        user_id=comment_in.user_id,
-        comment=comment_in.comment
+        user_id=current_user.employee_code,
+        comment=comment
     )
     db.add(comment)
     db.commit()
