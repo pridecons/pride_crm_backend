@@ -489,6 +489,36 @@ class Lead(Base):
     lead_response     = relationship("LeadResponse", back_populates="leads")
     assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
     recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
+    invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
+
+
+class Invoice(Base):
+    __tablename__ = "crm_invoice"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # ← NEW: a unique, non‑nullable invoice number
+    invoice_no = Column(
+        String(50),
+        unique=True,
+        nullable=False,
+    )
+
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
+    employee_code = Column(
+        String(100),
+        ForeignKey("crm_user_details.employee_code"),
+        nullable=True
+    )
+    path = Column(String(255), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+
+    lead     = relationship("Lead", back_populates="invoices")
+    employee = relationship("UserDetails", backref="invoices")
 
 
 class LeadRecording(Base):
