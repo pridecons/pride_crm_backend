@@ -705,13 +705,13 @@ def patch_lead(
 )
 def delete_lead(
     lead_id: int,
-    soft_delete: bool = Query(
-        True,
+    hard_delete: bool = Query(
+        False,
         description="Perform soft delete by default; set false for hard delete"
     ),
     db: Session = Depends(get_db),
 ):
-    """Delete a lead—soft by default, hard if `soft_delete=false`."""
+    """Delete a lead—soft by default, hard if `hard_delete=True`."""
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(
@@ -719,7 +719,7 @@ def delete_lead(
             detail="Lead not found"
         )
 
-    if soft_delete:
+    if not hard_delete:
         # Soft delete: just flip the flag & save
         lead.is_delete = True
         db.commit()
