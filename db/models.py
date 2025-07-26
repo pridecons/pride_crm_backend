@@ -19,8 +19,18 @@ class UserRoleEnum(str, enum.Enum):
     TL = "TL"  # Team Leader
     SBA = "SBA"  # Senior Business Associate
     BA = "BA"  # Business Associate
+     
 
-
+class RecommendationType(str, enum.Enum):
+    equity_cash= "Equity Cash"
+    stock_future= "Stock Future"
+    index_future= "Index Future"
+    index_option= "Index Option"
+    stock_option= "Stock Option"
+    mcx_bullion= "MCX Bullion"
+    mcx_base_metal= "MCX Base Metal"
+    mcx_energy= "MCX Energy"
+    
 class OTP(Base):
     __tablename__ = "crm_otps"
 
@@ -721,9 +731,15 @@ class NARRATION(Base):
     entry_price = Column(Float, nullable=True)
     stop_loss   = Column(Float, nullable=True)
     targets    = Column(Float, default=0, nullable=True)
+    targets2    = Column(Float, nullable=True)
+    targets3    = Column(Float, nullable=True)
+    status = Column(String(50), default="OPEN", nullable=False)
+    # OPEN, TARGET1_HIT, TARGET2_HIT, TARGET3_HIT, STOP_LOSS_HIT, CLOSED
+    graph    = Column(String, nullable=True)
     rational   = Column(String(100),nullable=True )
     stock_name       = Column(String(100),nullable=True )
-    recommendation_type = Column(String(100),nullable=True )
+    recommendation_type = Column(String(500),nullable=True )
+    user_id   = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
                     DateTime(timezone=True),

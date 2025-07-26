@@ -12,7 +12,7 @@ from db.models import (
     Lead, UserDetails, LeadAssignment, BranchDetails, 
     UserRoleEnum, LeadStory, AuditLog
 )
-from routes.auth.jwt_handler import get_current_user
+from routes.auth.auth_dependency import get_current_user
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
