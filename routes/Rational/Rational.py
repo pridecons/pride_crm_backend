@@ -87,11 +87,6 @@ router = APIRouter(
     tags=["Recommendations"],
 )
 
-# Database dependency (aapko apna database session setup karna hoga)
-def get_db():
-    # Yahan aapka database session setup hoga
-    pass
-
 # 1. CREATE - Nai recommendation create karna
 @router.post("/", response_model=NarrationResponse)
 async def create_recommendation(
