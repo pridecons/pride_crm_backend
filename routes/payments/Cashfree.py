@@ -1,6 +1,6 @@
 import json
 from datetime import datetime,date, timezone, timedelta
-from fastapi import APIRouter, HTTPException, status, Body, Depends, Request, Query
+from fastapi import APIRouter, HTTPException, status, Body, Depends, Request, Query, BackgroundTasks
 from httpx import AsyncClient
 from sqlalchemy.orm import Session
 
@@ -368,16 +368,70 @@ async def front_create(
 
 LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
 
+
+import json
+import logging
+from datetime import datetime
+from fastapi import (
+    APIRouter,
+    Request,
+    HTTPException,
+    status,
+    Depends,
+    BackgroundTasks,
+)
+from sqlalchemy.orm import Session
+
+from db.connection import get_db
+from db.models import Payment
+from routes.notification.notification_service import notification_service
+from utils.AddLeadStory import AddLeadStory
+from routes.payments.Invoice import generate_invoices_from_payments
+
+
+async def _safe_notify(user_id: str, title: str, message: str):
+    try:
+        await notification_service.notify(user_id=user_id, title=title, message=message)
+    except Exception as e:
+        logger.error("🔔 background notification failed: %s", e)
+
+
+async def _safe_add_lead_story(lead_id: int, user_id: str, msg: str):
+    if not lead_id:
+        logger.warning("Skipping AddLeadStory: lead_id is None")
+        return
+    try:
+        AddLeadStory(lead_id, user_id, msg)
+    except Exception as e:
+        logger.error("📖 background AddLeadStory failed: %s", e)
+
+
+async def _safe_generate_invoices(payloads: list[dict]):
+    try:
+        # Try async
+        await generate_invoices_from_payments(payloads)
+    except HTTPException as he:
+        # invoice builder might raise HTTPException if Lead not found, etc.
+        logger.error("📄 invoice gen HTTPException: %s", he.detail)
+    except Exception as e:
+        # catch-all
+        logger.error("📄 background invoice gen failed: %s", e)
+
+
+# ── Webhook endpoint ─────────────────────────────────────────────────────────
+
 @router.post(
     "/webhook",
     status_code=status.HTTP_200_OK,
     summary="Cashfree S2S notification"
 )
-async def payment_webhook(request: Request, db: Session = Depends(get_db)):
+async def payment_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     # 1) Read & log raw body
-    body = await request.body()
-    raw  = body.decode("utf-8", errors="ignore")
-    logger.info("💸 Webhook raw payload: %s", raw)
+    raw = (await request.body()).decode("utf-8", errors="ignore")
     with open(LOG_FILE, "a") as f:
         f.write(f"{datetime.utcnow().isoformat()} RAW: {raw}\n")
 
@@ -385,76 +439,44 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        logger.error("❌ Webhook invalid JSON")
         raise HTTPException(400, "Invalid JSON")
 
-    # 3) Extract order_id & status
     data      = payload.get("data", {})
     order     = data.get("order", {})
     payment_d = data.get("payment", {})
 
     order_id  = order.get("order_id")
     status_cf = payment_d.get("payment_status")
-
-    new_status = "PAID" if status_cf == "SUCCESS" else status_cf
-
     if not order_id or not status_cf:
         raise HTTPException(400, "Missing order_id or payment_status")
 
-    # 4) Fetch existing payment
-    payment = db.query(Payment).filter_by(order_id=order_id).first()
+    # 3) Normalize to your status
+    new_status = "PAID" if status_cf.upper() == "SUCCESS" else status_cf.upper()
+
+    # 4) Fetch & update your Payment record
+    payment = db.query(Payment).filter(Payment.order_id == order_id).first()
     if not payment:
-        # you can choose to ignore or 404 here
-        logger.warning("⚠️ Webhook for unknown order_id: %s", order_id)
-        return {"message": "ignored"}
-    
-    if payment.status == new_status:
-        logger.info("↩️ Webhook called again but status unchanged (%s). Ignoring.", new_status)
-        return {"message": "no_change"}
-    
-    is_success = (status_cf == "SUCCESS")
-    notify_title = "Payment Successful" if is_success else "Payment Failed"
-    ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
-    notify_message = (
-        f"<div style='font-family:Arial,sans-serif; line-height:1.4;'>"
-        f"  <h2 style='color:{ 'green' if is_success else 'red' };'>{notify_title}</h2>"
-        f"  <p>Your payment for order <strong>{order_id}</strong> "
-        f"of <strong>₹{payment.paid_amount:.2f}</strong> has "
-        f"<strong>{'succeeded' if is_success else 'failed'}</strong>.</p>"
-        f"  <p>Status: <em>{status_cf}</em></p>"
-        f"  <p>Time: {ist.strftime('%Y-%m-%d %H:%M:%S')} IST</p>"
-        f"</div>"
-    )
-    if payment.status != "PAID":
-        await notification_service.notify(
-            user_id=payment.user_id,
-            title= notify_title,
-            message= notify_message,
-        )
+        raise HTTPException(404, "Payment record not found")
 
-        msg = (
-            f"💸 Payment for order {order_id} "
-            f"{'succeeded' if is_success else 'failed'} "
-            f"for ₹{payment.paid_amount:.2f} "
-            f"at {ist.strftime('%Y-%m-%d %H:%M:%S')} IST"
-        )
+    old_status = payment.status
 
-        AddLeadStory(payment.lead_id, payment.user_id, msg)
-        
-    # 5) Map CASHFREE status to your field
-    payment.status = "PAID" if status_cf == "SUCCESS" else status_cf
+    if old_status == new_status:
+        return {"message": "processed", "new_status": new_status}
 
-    # 6) Commit
+    payment.status = new_status
     try:
         db.commit()
         db.refresh(payment)
-    except Exception as e:
-        logger.error("❌ Webhook DB error: %s", e)
+    except Exception:
         db.rollback()
+        raise HTTPException(500, "DB update error")
 
-    payload = {
+    # 5) Build messages & invoice payload
+    notify_msg = f"Order {order_id} status updated to {new_status}"
+    story_msg  = f"Payment for order {order_id} updated to {new_status}"
+    invoice_payload = {
         "order_id":     payment.order_id,
-        "paid_amount":  payment.paid_amount,
+        "paid_amount":  float(payment.paid_amount),
         "plan":         payment.plan,
         "call":         payment.call or 0,
         "created_at":   payment.created_at.isoformat(),
@@ -463,15 +485,24 @@ async def payment_webhook(request: Request, db: Session = Depends(get_db)):
         "name":         payment.name,
         "mode":         payment.mode,
     }
-    
-    await generate_invoices_from_payments([payload])
 
+    # 6) Schedule background tasks (won’t block the response)
+    background_tasks.add_task(
+        _safe_notify,
+        payment.user_id,
+        "Payment Update",
+        notify_msg,
+    )
+    background_tasks.add_task(
+        _safe_add_lead_story,
+        payment.lead_id,
+        payment.user_id,
+        story_msg,
+    )
+    background_tasks.add_task(
+        _safe_generate_invoices,
+        [invoice_payload],
+    )
 
-    # 7) Respond
-    resp = {"message": "ok"}
-    logger.info("↩️ Webhook updated status: %s → %s", order_id, payment.status)
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{datetime.utcnow().isoformat()} RESP: {resp}\n\n")
-
-    return resp
-
+    # 7) Return immediately
+    return {"message": "processed", "new_status": new_status}
