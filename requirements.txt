@@ -25,3 +25,4 @@ pyhanko
 fastapi[all]
 python-dateutil
 num2words
+aiofiles

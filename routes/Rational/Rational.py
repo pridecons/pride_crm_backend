@@ -1,16 +1,30 @@
+# routes/recommendations.py
+import os
+import time
+import aiofiles
 
-from fastapi import FastAPI, HTTPException, Depends, Query, APIRouter
+from fastapi import (
+    APIRouter, Depends, HTTPException,
+    Query, UploadFile, File, Form
+)
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, desc
-from pydantic import BaseModel, Field
+from sqlalchemy import func, desc, case
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from enum import Enum
+
 from db.models import NARRATION
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 
-# Pydantic Models for Request/Response
+router = APIRouter(
+    prefix="/recommendations",
+    tags=["Recommendations"],
+)
+
+# ── Pydantic Schemas ────────────────────────────────────────────────────────────
 class RecommendationType(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
@@ -30,7 +44,6 @@ class NarrationCreate(BaseModel):
     targets: Optional[float] = 0
     targets2: Optional[float] = None
     targets3: Optional[float] = None
-    graph: Optional[str] = None
     rational: Optional[str] = None
     stock_name: Optional[str] = None
     recommendation_type: Optional[str] = None
@@ -62,7 +75,7 @@ class NarrationResponse(BaseModel):
     user_id: str
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -80,363 +93,281 @@ class AnalyticsResponse(BaseModel):
     best_recommendation: Optional[Dict]
     worst_recommendation: Optional[Dict]
 
+# ── Helpers ─────────────────────────────────────────────────────────────────────
+# Ensure the upload folder exists
+UPLOAD_DIR = "static/graphs"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-
-router = APIRouter(
-    prefix="/recommendations",
-    tags=["Recommendations"],
-)
-
-# 1. CREATE - Nai recommendation create karna
+# ── 1. CREATE ───────────────────────────────────────────────────────────────────
 @router.post("/", response_model=NarrationResponse)
 async def create_recommendation(
-    recommendation: NarrationCreate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    entry_price: float                   = Form(...),
+    stop_loss: float                     = Form(None),
+    targets: float                       = Form(0),
+    targets2: float                      = Form(None),
+    targets3: float                      = Form(None),
+    rational: str                        = Form(None),
+    stock_name: str                      = Form(None),
+    recommendation_type: str             = Form(None),
+    graph: UploadFile                    = File(None),
+    db: Session                          = Depends(get_db),
+    current_user                        = Depends(get_current_user),
 ):
     """
-    Nayi stock recommendation create karta hai
+    Create a new stock recommendation with optional graph upload.
     """
+    graph_path: Optional[str] = None
+    if graph:
+        filename    = f"{current_user.employee_code}_{int(time.time())}_{graph.filename}"
+        file_path   = os.path.join(UPLOAD_DIR, filename)
+        async with aiofiles.open(file_path, "wb") as out:
+            await out.write(await graph.read())
+        graph_path = f"/static/graphs/{filename}"
 
     try:
-        # merge in the user_id from JWT
-        payload = recommendation.dict()
-        db_recommendation = NARRATION(**payload, user_id=current_user.employee_code)
-        db.add(db_recommendation)
+        rec = NARRATION(
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+            targets2=targets2,
+            targets3=targets3,
+            rational=rational,
+            stock_name=stock_name,
+            recommendation_type=recommendation_type,
+            graph=graph_path,
+            user_id=current_user.employee_code,
+        )
+        db.add(rec)
         db.commit()
-        db.refresh(db_recommendation)
-        return db_recommendation
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error creating recommendation: {str(e)}")
+        db.refresh(rec)
+        return rec
 
-# 2. GET - Single recommendation get karna
+    except Exception as e:
+        try:
+            db.rollback()
+        except:
+            pass
+        raise HTTPException(status_code=400, detail=f"Error creating recommendation: {e}")
+
+# ── 2. READ (single) ────────────────────────────────────────────────────────────
 @router.get("/{recommendation_id}", response_model=NarrationResponse)
-async def get_recommendation(
+def get_recommendation(
     recommendation_id: int,
     db: Session = Depends(get_db)
 ):
-    """
-    Specific recommendation ID se data get karta hai
-    """
-    recommendation = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not recommendation:
+    rec = db.query(NARRATION).get(recommendation_id)
+    if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-    return recommendation
+    return rec
 
-# 3. GET - All recommendations with filters
+# ── 3. READ (list + filters) ───────────────────────────────────────────────────
 @router.get("/", response_model=List[NarrationResponse])
-async def get_recommendations(
-    user_id: Optional[str] = Query(None, description="Filter by user ID"),
-    stock_name: Optional[str] = Query(None, description="Filter by stock name"),
-    status: Optional[StatusType] = Query(None, description="Filter by status"),
-    recommendation_type: Optional[str] = Query(None, description="Filter by recommendation type"),
-    date_from: Optional[date] = Query(None, description="Filter from date"),
-    date_to: Optional[date] = Query(None, description="Filter to date"),
-    limit: int = Query(100, description="Limit results"),
-    offset: int = Query(0, description="Offset for pagination"),
-    db: Session = Depends(get_db)
+def get_recommendations(
+    user_id: Optional[str]               = Query(None),
+    stock_name: Optional[str]            = Query(None),
+    status: Optional[StatusType]         = Query(None),
+    recommendation_type: Optional[str]   = Query(None),
+    date_from: Optional[date]            = Query(None),
+    date_to: Optional[date]              = Query(None),
+    limit: int                           = Query(100),
+    offset: int                          = Query(0),
+    db: Session                          = Depends(get_db),
 ):
-    """
-    Recommendations list with filters
-    """
-    query = db.query(NARRATION)
-    
-    # Filters apply karna
+    q = db.query(NARRATION)
     if user_id:
-        query = query.filter(NARRATION.user_id == user_id)
+        q = q.filter(NARRATION.user_id == user_id)
     if stock_name:
-        query = query.filter(NARRATION.stock_name.ilike(f"%{stock_name}%"))
+        q = q.filter(NARRATION.stock_name.ilike(f"%{stock_name}%"))
     if status:
-        query = query.filter(NARRATION.status == status)
+        q = q.filter(NARRATION.status == status)
     if recommendation_type:
-        query = query.filter(NARRATION.recommendation_type == recommendation_type)
+        q = q.filter(NARRATION.recommendation_type == recommendation_type)
     if date_from:
-        query = query.filter(NARRATION.created_at >= date_from)
+        q = q.filter(NARRATION.created_at >= date_from)
     if date_to:
-        query = query.filter(NARRATION.created_at <= date_to)
-    
-    # Sorting and pagination
-    recommendations = query.order_by(desc(NARRATION.created_at)).offset(offset).limit(limit).all()
-    return recommendations
+        q = q.filter(NARRATION.created_at <= date_to)
 
-# 4. UPDATE - Recommendation update karna (status, targets hit karna)
+    return q.order_by(desc(NARRATION.created_at)).offset(offset).limit(limit).all()
+
+# ── 4. UPDATE ───────────────────────────────────────────────────────────────────
 @router.put("/{recommendation_id}", response_model=NarrationResponse)
-async def update_recommendation(
+def update_recommendation(
     recommendation_id: int,
-    recommendation_update: NarrationUpdate,
-    db: Session = Depends(get_db)
+    payload: NarrationUpdate,
+    db: Session = Depends(get_db),
 ):
-    """
-    Recommendation update karta hai (jaise target hit, stop loss etc.)
-    """
-    db_recommendation = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not db_recommendation:
+    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
+    if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-    
-    # Update fields
-    update_data = recommendation_update.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(db_recommendation, field, value)
-    
+
+    for field, val in payload.dict(exclude_unset=True).items():
+        setattr(rec, field, val)
+
     try:
         db.commit()
-        db.refresh(db_recommendation)
-        return db_recommendation
+        db.refresh(rec)
+        return rec
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error updating recommendation: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error updating recommendation: {e}")
 
-# 5. DELETE - Recommendation delete karna
+# ── 5. DELETE ───────────────────────────────────────────────────────────────────
 @router.delete("/{recommendation_id}")
-async def delete_recommendation(
+def delete_recommendation(
     recommendation_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Recommendation delete karta hai
-    """
-    db_recommendation = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not db_recommendation:
+    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
+    if not rec:
         raise HTTPException(status_code=404, detail="Recommendation not found")
-    
     try:
-        db.delete(db_recommendation)
+        db.delete(rec)
         db.commit()
         return {"message": "Recommendation deleted successfully"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error deleting recommendation: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error deleting recommendation: {e}")
 
-# 6. ANALYTICS - User wise analytics
+# ── 6. USER ANALYTICS ───────────────────────────────────────────────────────────
 @router.get("/user/{user_id}", response_model=AnalyticsResponse)
-async def get_user_analytics(
+def get_user_analytics(
     user_id: str,
     date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    db: Session = Depends(get_db)
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
 ):
-    """
-    Specific user ki performance analytics
-    """
-    query = db.query(NARRATION).filter(NARRATION.user_id == user_id)
-    
+    recs = db.query(NARRATION).filter(NARRATION.user_id == user_id)
     if date_from:
-        query = query.filter(NARRATION.created_at >= date_from)
+        recs = recs.filter(NARRATION.created_at >= date_from)
     if date_to:
-        query = query.filter(NARRATION.created_at <= date_to)
-    
-    recommendations = query.all()
-    
-    if not recommendations:
-        raise HTTPException(status_code=404, detail="No recommendations found for this user")
-    
-    # Analytics calculate karna
-    total_recommendations = len(recommendations)
-    status_counts = {}
-    returns = []
-    
-    for rec in recommendations:
-        status = rec.status
-        status_counts[status] = status_counts.get(status, 0) + 1
-        
-        # Return calculate karna (simple example)
-        if rec.entry_price and rec.status in ['TARGET1_HIT', 'TARGET2_HIT', 'TARGET3_HIT']:
-            if rec.status == 'TARGET1_HIT' and rec.targets:
-                return_pct = ((rec.targets - rec.entry_price) / rec.entry_price) * 100
-            elif rec.status == 'TARGET2_HIT' and rec.targets2:
-                return_pct = ((rec.targets2 - rec.entry_price) / rec.entry_price) * 100
-            elif rec.status == 'TARGET3_HIT' and rec.targets3:
-                return_pct = ((rec.targets3 - rec.entry_price) / rec.entry_price) * 100
-            else:
-                return_pct = 0
-            returns.append(return_pct)
-        elif rec.entry_price and rec.status == 'STOP_LOSS_HIT' and rec.stop_loss:
-            return_pct = ((rec.stop_loss - rec.entry_price) / rec.entry_price) * 100
-            returns.append(return_pct)
-    
-    # Success rate calculate karna
-    successful = status_counts.get('TARGET1_HIT', 0) + status_counts.get('TARGET2_HIT', 0) + status_counts.get('TARGET3_HIT', 0)
-    closed_trades = successful + status_counts.get('STOP_LOSS_HIT', 0)
-    success_rate = (successful / closed_trades * 100) if closed_trades > 0 else 0
-    
-    # Average return
-    avg_return = sum(returns) / len(returns) if returns else None
-    
-    # Best and worst recommendations
-    best_rec = None
-    worst_rec = None
-    if returns:
-        best_return = max(returns)
-        worst_return = min(returns)
-        
-        for i, rec in enumerate(recommendations):
-            if i < len(returns):
-                if returns[i] == best_return and not best_rec:
-                    best_rec = {
-                        "id": rec.id,
-                        "stock_name": rec.stock_name,
-                        "return_pct": best_return,
-                        "status": rec.status
-                    }
-                if returns[i] == worst_return and not worst_rec:
-                    worst_rec = {
-                        "id": rec.id,
-                        "stock_name": rec.stock_name,
-                        "return_pct": worst_return,
-                        "status": rec.status
-                    }
-    
+        recs = recs.filter(NARRATION.created_at <= date_to)
+
+    all_recs = recs.all()
+    if not all_recs:
+        raise HTTPException(status_code=404, detail="No recommendations found")
+
+    # compute metrics…
+    total       = len(all_recs)
+    counts      = {s.value: 0 for s in StatusType}
+    returns     = []
+    for r in all_recs:
+        counts[r.status] = counts.get(r.status, 0) + 1
+        # calculate return %
+        if r.entry_price and r.status in {"TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"}:
+            target = getattr(r, {"TARGET1_HIT":"targets",
+                                 "TARGET2_HIT":"targets2",
+                                 "TARGET3_HIT":"targets3"}[r.status])
+            returns.append(((target - r.entry_price)/r.entry_price)*100)
+        elif r.entry_price and r.status=="STOP_LOSS_HIT" and r.stop_loss:
+            returns.append(((r.stop_loss - r.entry_price)/r.entry_price)*100)
+
+    successful = sum(counts[s] for s in ["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"])
+    closed     = successful + counts["STOP_LOSS_HIT"]
+    success_rate = round((successful/closed*100) if closed else 0, 2)
+    avg_return  = round(sum(returns)/len(returns),2) if returns else None
+
+    best_idx = returns.index(max(returns)) if returns else None
+    worst_idx= returns.index(min(returns)) if returns else None
+
+    best = {"id":all_recs[best_idx].id,"stock_name":all_recs[best_idx].stock_name,"return_pct":round(returns[best_idx],2)} if best_idx is not None else None
+    worst={"id":all_recs[worst_idx].id,"stock_name":all_recs[worst_idx].stock_name,"return_pct":round(returns[worst_idx],2)} if worst_idx is not None else None
+
     return AnalyticsResponse(
         user_id=user_id,
-        total_recommendations=total_recommendations,
-        open_recommendations=status_counts.get('OPEN', 0),
-        target1_hit=status_counts.get('TARGET1_HIT', 0),
-        target2_hit=status_counts.get('TARGET2_HIT', 0),
-        target3_hit=status_counts.get('TARGET3_HIT', 0),
-        stop_loss_hit=status_counts.get('STOP_LOSS_HIT', 0),
-        closed_recommendations=status_counts.get('CLOSED', 0),
-        success_rate=round(success_rate, 2),
-        avg_return=round(avg_return, 2) if avg_return else None,
-        best_recommendation=best_rec,
-        worst_recommendation=worst_rec
+        total_recommendations=total,
+        open_recommendations=counts["OPEN"],
+        target1_hit=counts["TARGET1_HIT"],
+        target2_hit=counts["TARGET2_HIT"],
+        target3_hit=counts["TARGET3_HIT"],
+        stop_loss_hit=counts["STOP_LOSS_HIT"],
+        closed_recommendations=counts["CLOSED"],
+        success_rate=success_rate,
+        avg_return=avg_return,
+        best_recommendation=best,
+        worst_recommendation=worst,
     )
 
-# 7. ANALYTICS - Overall team analytics
+# ── 7. TEAM ANALYTICS ──────────────────────────────────────────────────────────
 @router.get("/analytics/team")
-async def get_team_analytics(
+def get_team_analytics(
     date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    db: Session = Depends(get_db)
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
 ):
-    """
-    Puri team ki analytics
-    """
-    query = db.query(NARRATION)
-    
+    base = db.query(NARRATION)
     if date_from:
-        query = query.filter(NARRATION.created_at >= date_from)
+        base = base.filter(NARRATION.created_at >= date_from)
     if date_to:
-        query = query.filter(NARRATION.created_at <= date_to)
-    
-    # User wise stats
-    user_stats = db.query(
-        NARRATION.user_id,
-        func.count(NARRATION.id).label('total_recommendations'),
-        func.sum(func.case(
-            (NARRATION.status.in_(['TARGET1_HIT', 'TARGET2_HIT', 'TARGET3_HIT']), 1),
-            else_=0
-        )).label('successful_recommendations'),
-        func.sum(func.case(
-            (NARRATION.status == 'STOP_LOSS_HIT', 1),
-            else_=0
-        )).label('failed_recommendations')
-    ).group_by(NARRATION.user_id)
-    
-    if date_from:
-        user_stats = user_stats.filter(NARRATION.created_at >= date_from)
-    if date_to:
-        user_stats = user_stats.filter(NARRATION.created_at <= date_to)
-    
-    user_stats = user_stats.all()
-    
-    team_analytics = []
-    for stat in user_stats:
-        closed_trades = stat.successful_recommendations + stat.failed_recommendations
-        success_rate = (stat.successful_recommendations / closed_trades * 100) if closed_trades > 0 else 0
-        
-        team_analytics.append({
-            "user_id": stat.user_id,
-            "total_recommendations": stat.total_recommendations,
-            "successful_recommendations": stat.successful_recommendations,
-            "failed_recommendations": stat.failed_recommendations,
-            "success_rate": round(success_rate, 2)
+        base = base.filter(NARRATION.created_at <= date_to)
+
+    stats = (
+        base
+        .with_entities(
+            NARRATION.user_id,
+            func.count(NARRATION.id).label("total_recs"),
+            func.sum(case([(NARRATION.status.in_(["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"]),1)], else_=0)).label("succ"),
+            func.sum(case([(NARRATION.status=="STOP_LOSS_HIT",1)], else_=0)).label("fail"),
+        )
+        .group_by(NARRATION.user_id)
+        .all()
+    )
+
+    team = []
+    for u, total, succ, fail in stats:
+        closed = succ + fail
+        rate   = round((succ/closed*100) if closed else 0, 2)
+        team.append({
+            "user_id": u,
+            "total_recommendations": total,
+            "successful_recommendations": succ,
+            "failed_recommendations": fail,
+            "success_rate": rate,
         })
-    
-    # Sort by success rate
-    team_analytics.sort(key=lambda x: x['success_rate'], reverse=True)
-    
+
+    team.sort(key=lambda x: x["success_rate"], reverse=True)
+    overall_closed = sum(u["successful_recommendations"]+u["failed_recommendations"] for u in team)
+    overall_succ   = sum(u["successful_recommendations"] for u in team)
+    overall_rate   = round((overall_succ/overall_closed*100) if overall_closed else 0, 2)
+
     return {
-        "team_analytics": team_analytics,
+        "team_analytics": team,
         "summary": {
-            "total_users": len(team_analytics),
-            "total_recommendations": sum([x['total_recommendations'] for x in team_analytics]),
-            "overall_success_rate": round(
-                sum([x['successful_recommendations'] for x in team_analytics]) / 
-                sum([x['successful_recommendations'] + x['failed_recommendations'] for x in team_analytics]) * 100
-                if sum([x['successful_recommendations'] + x['failed_recommendations'] for x in team_analytics]) > 0 else 0, 2
-            )
+            "total_users": len(team),
+            "total_recommendations": sum(u["total_recommendations"] for u in team),
+            "overall_success_rate": overall_rate,
         }
     }
 
-# 8. Bulk status update (multiple recommendations ka status update karna)
-@router.put("/bulk-update")
-async def bulk_update_status(
-    updates: List[Dict[str, Any]],
-    db: Session = Depends(get_db)
-):
-    """
-    Multiple recommendations ka status ek saath update karna
-    Expected format: [{"id": 1, "status": "TARGET1_HIT"}, {"id": 2, "status": "STOP_LOSS_HIT"}]
-    """
-    updated_count = 0
-    
-    try:
-        for update in updates:
-            recommendation_id = update.get("id")
-            new_status = update.get("status")
-            
-            if recommendation_id and new_status:
-                db_recommendation = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-                if db_recommendation:
-                    db_recommendation.status = new_status
-                    updated_count += 1
-        
-        db.commit()
-        return {"message": f"{updated_count} recommendations updated successfully"}
-    
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error in bulk update: {str(e)}")
-
-# 9. Top performing stocks
+# ── 8. TOP STOCKS ──────────────────────────────────────────────────────────────
 @router.get("/analytics/top-stocks")
-async def get_top_performing_stocks(
-    limit: int = Query(10, description="Number of top stocks to return"),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    db: Session = Depends(get_db)
+def get_top_performing_stocks(
+    limit: int               = Query(10),
+    date_from: Optional[date]= Query(None),
+    date_to: Optional[date]  = Query(None),
+    db: Session              = Depends(get_db),
 ):
-    """
-    Top performing stocks ki list
-    """
-    query = db.query(
+    q = db.query(
         NARRATION.stock_name,
-        func.count(NARRATION.id).label('total_recommendations'),
-        func.sum(func.case(
-            (NARRATION.status.in_(['TARGET1_HIT', 'TARGET2_HIT', 'TARGET3_HIT']), 1),
-            else_=0
-        )).label('successful_recommendations')
+        func.count(NARRATION.id).label("total"),
+        func.sum(case([(NARRATION.status.in_(["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"]),1)], else_=0)).label("succ"),
     ).filter(NARRATION.stock_name.isnot(None))
-    
+
     if date_from:
-        query = query.filter(NARRATION.created_at >= date_from)
+        q = q.filter(NARRATION.created_at >= date_from)
     if date_to:
-        query = query.filter(NARRATION.created_at <= date_to)
-    
-    stocks = query.group_by(NARRATION.stock_name).all()
-    
-    stock_performance = []
-    for stock in stocks:
-        success_rate = (stock.successful_recommendations / stock.total_recommendations * 100) if stock.total_recommendations > 0 else 0
-        stock_performance.append({
-            "stock_name": stock.stock_name,
-            "total_recommendations": stock.total_recommendations,
-            "successful_recommendations": stock.successful_recommendations,
-            "success_rate": round(success_rate, 2)
+        q = q.filter(NARRATION.created_at <= date_to)
+
+    stats = q.group_by(NARRATION.stock_name).all()
+
+    results = []
+    for stock, tot, succ in stats:
+        rate = round((succ/tot*100) if tot else 0, 2)
+        results.append({
+            "stock_name": stock,
+            "total_recommendations": tot,
+            "successful_recommendations": succ,
+            "success_rate": rate,
         })
-    
-    # Sort by success rate and total recommendations
-    stock_performance.sort(key=lambda x: (x['success_rate'], x['total_recommendations']), reverse=True)
-    
-    return stock_performance[:limit]
+
+    results.sort(key=lambda x: (x["success_rate"], x["total_recommendations"]), reverse=True)
+    return results[:limit]

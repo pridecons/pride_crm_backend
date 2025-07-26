@@ -62,7 +62,7 @@ async def sign_pdf(pdf_bytes: bytes) -> bytes:
                 sig_field_spec = SigFieldSpec(
                     'Signature1',
                     on_page=-1,
-                    box=(390, 330, 520, 380)
+                    box=(390, 250, 520, 300)
                 )
 
                 # (left, bottom, right, top)
@@ -156,7 +156,7 @@ def create_header_overlay(page_width: float, page_height: float):
         logo_width = 140  
         logo_height = 40  
         # Position: 40 pts from left, 20 pts from top (adjusting for logo height)
-        c.drawImage(pride_logo_path, 20, page_height - logo_height - 20, 
+        c.drawImage(pride_logo_path, 30, page_height - logo_height - 20, 
                    width=logo_width, height=logo_height)
     else:
         # If logo doesn't exist, draw company name instead
@@ -249,7 +249,7 @@ pdf_format = """
     body { font-family: Arial, sans-serif; margin:0; padding:0; font-size:10px; line-height:1.2; }
     .container { width:100%; max-width:190mm; margin:0 auto; padding:5mm; box-sizing:border-box; }
     
-    .header { text-align:center; margin-bottom:10px; }
+    .header { text-align:center; margin-bottom:10px; margin-top:70px; }
     .header h1 { margin:60px 0 5px 0; font-size:18px; font-weight:bold; }
     .header p { margin:2px 0; font-size:9px; }
     .header h2 { margin:8px 0 3px 0; font-size:16px; }
@@ -299,9 +299,9 @@ pdf_format = """
     <div class="header">
       <h1>Pride Trading Consultancy Pvt. Ltd.</h1>
       <p>410-411, Serene Centrum Sevasi Road, Vadodara, Gujarat 390021</p>
-      <p>Phone: +91 9981919424 | Email: compliance@pridecons.com</p>
+      <p style="margin-bottom:20px">Phone: +91 9981919424 | Email: compliance@pridecons.com</p>
       <hr/>
-      <h2>Tax Invoice</h2>
+      <h2 style="margin-top:10px;">Tax Invoice</h2>
       <p><strong>Original for Recipient</strong></p>
     </div>
 
@@ -317,7 +317,7 @@ pdf_format = """
       </tr>
     </table>
 
-    <h3>Bill To:</h3>
+    <h3 style="text-align:center; margin-top:30px;">Bill To:</h3>
     <table class="bill-table">
       <tr>
         <td style="width:50%"><strong>Name:</strong> {{ customer.name }}</td>
@@ -336,7 +336,7 @@ pdf_format = """
       </tr>
     </table>
 
-    <h3>Details of Services</h3>
+    <h3 style="text-align:center; margin-top:30px;">Details of Services</h3>
     <table class="services-table">
       <thead>
         <tr>
@@ -368,9 +368,9 @@ pdf_format = """
       </tbody>
     </table>
 
-    <div class="bottom-section">
+    <div class="bottom-section" style="margin-top:30px;">
       <div class="payment-section">
-        <h3>Payment Details</h3>
+        <h3 style="text-align:center; margin-top:10px;">Payment Details</h3>
         <table>
           <tr><td><strong>Mode:</strong></td><td>{{ payment.mode }}</td></tr>
           <tr><td><strong>Amount Paid:</strong></td><td class="right">{{ payment.amount }}</td></tr>
@@ -403,7 +403,7 @@ pdf_format = """
     <p>Certified that the particulars given above are true and correct</p>
 
     </div>
-    <div style="margin-top: 100px; display:flex;">
+    <div style="margin-top: 150px; display:flex;">
       <div class="terms"  style="width: 65%;" >
         <h3>Terms &amp; Conditions</h3>
         <p>1. This is Computer Generated Invoice No Need Any Sign. & Stamp.</p>
@@ -670,41 +670,41 @@ async def generate_invoices_from_payments(
 #             "order_id": "order_76311130JhQs0gTgZTB1nWFnbelQ7oWvX",
 #             "is_send_invoice": False
 #         },
-#         {
-#             "Service": "CASH",
-#             "description": "hello",
-#             "paid_amount": 1,
-#             "transaction_id": None,
-#             "call": 2,
-#             "user_id": "Admin001",
-#             "name": "Dheeraj Malviya",
-#             "duration_day": None,
-#             "branch_id": None,
-#             "id": 1,
-#             "plan": [
-#                 {
-#                     "id": 1,
-#                     "name": "Lead Validation",
-#                     "price": 250,
-#                     "description": "Validate lead data integrity",
-#                     "service_type": "premium",
-#                     "billing_cycle": "CALL",
-#                     "discount_percent": 10,
-#                     "discounted_price": 225
-#                 }
-#             ],
-#             "created_at": "2025-07-23T19:01:03.683064+00:00",
-#             "email": "rajmalviya545@gmail.com",
-#             "status": "PENDING",
-#             "updated_at": "2025-07-23T19:01:03.683064+00:00",
-#             "phone_number": "7869615290",
-#             "mode": "CASHFREE",
-#             "lead_id": None,
-#             "order_id": "order_76311130HvMLmADECyCPAqK9poLqSdbji",
-#             "is_send_invoice": False
-#         }
-#     ]
+        # {
+        #     "Service": "CASH",
+        #     "description": "hello",
+        #     "paid_amount": 1,
+        #     "transaction_id": None,
+        #     "call": 2,
+        #     "user_id": "Admin001",
+        #     "name": "Dheeraj Malviya",
+        #     "duration_day": None,
+        #     "branch_id": None,
+        #     "id": 1,
+        #     "plan": [
+        #         {
+        #             "id": 1,
+        #             "name": "Lead Validation",
+        #             "price": 250,
+        #             "description": "Validate lead data integrity",
+        #             "service_type": "premium",
+        #             "billing_cycle": "CALL",
+        #             "discount_percent": 10,
+        #             "discounted_price": 225
+        #         }
+        #     ],
+        #     "created_at": "2025-07-23T19:01:03.683064+00:00",
+        #     "email": "rajmalviya545@gmail.com",
+        #     "status": "PENDING",
+        #     "updated_at": "2025-07-23T19:01:03.683064+00:00",
+        #     "phone_number": "7869615290",
+        #     "mode": "CASHFREE",
+        #     "lead_id": None,
+        #     "order_id": "order_76311130HvMLmADECyCPAqK9poLqSdbji",
+        #     "is_send_invoice": False
+        # }
+    # ]
     
-#     # Generate invoices with header and watermark
-#     asyncio.run(generate_invoices_from_payments(payments))
+    # Generate invoices with header and watermark
+    # asyncio.run(generate_invoices_from_payments(payments))
     
