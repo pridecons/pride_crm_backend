@@ -178,5 +178,109 @@ def test_database_connection():
         logger.error(f"❌ Database test failed: {e}")
         logger.error(f"Database URL: postgresql://{DB_USERNAME}:***@{DB_HOST}:{DB_PORT}/{DB_NAME}")
         return False
+
+
+import os
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import QueuePool
+import socket
+
+# Force IPv4 resolution
+def force_ipv4_connection():
+    """Force IPv4 connection by resolving hostname"""
+    hostname = os.getenv('DB_HOST', '194.238.18.167')
+    try:
+        # Get IPv4 address explicitly
+        ipv4_addr = socket.getaddrinfo(hostname, None, socket.AF_INET)[0][4][0]
+        return ipv4_addr
+    except:
+        return hostname
+
+# Database configuration with forced IPv4
+DB_HOST = force_ipv4_connection()
+DB_PORT = os.getenv('DB_PORT', 5432)
+DB_USER = os.getenv('DB_USER', 'pridecons')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_NAME = os.getenv('DB_NAME', 'pridedb')
+
+# Construct database URL with explicit IPv4
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Create engine with connection pooling and IPv4 settings
+engine = create_engine(
+    DATABASE_URL,
+    poolclass=QueuePool,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=3600,
+    pool_pre_ping=True,
+    connect_args={
+        "connect_timeout": 15,
+        "application_name": "pride_crm_backend",
+        "options": "-c timezone=UTC"
+    },
+    echo=False
+)
+
+def check_database_connection(retry_count=3, retry_delay=5):
+    """Check database connection with retries"""
+    import time
+    import logging
     
+    logger = logging.getLogger(__name__)
+    
+    for attempt in range(retry_count):
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(text("SELECT 1"))
+                logger.info(f"✅ Database connection successful on attempt {attempt + 1}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Database connection attempt {attempt + 1} failed: {str(e)}")
+            if attempt < retry_count - 1:
+                logger.info(f"⏳ Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"❌ All {retry_count} connection attempts failed")
+                return False
+    
+    return False
+
+import psycopg2
+import socket
+import os
+
+# Force IPv4 resolution
+def get_ipv4_address(hostname):
+    try:
+        return socket.getaddrinfo(hostname, None, socket.AF_INET)[0][4][0]
+    except:
+        return hostname
+
+db_host = get_ipv4_address('194.238.18.167')
+print(f"Connecting to IPv4 address: {db_host}")
+
+try:
+    conn = psycopg2.connect(
+        host=db_host,
+        port=5432,
+        user='pridecons',
+        password='your_password',  # Replace with actual password
+        database='pridedb',
+        connect_timeout=10
+    )
+    print("✅ Direct Python connection successful!")
+    
+    cursor = conn.cursor()
+    cursor.execute("SELECT version();")
+    result = cursor.fetchone()
+    print(f"Database version: {result[0]}")
+    
+    conn.close()
+    
+except Exception as e:
+    print(f"❌ Direct Python connection failed: {e}")
+
     

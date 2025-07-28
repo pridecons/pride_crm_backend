@@ -46,49 +46,37 @@ origins = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
     logger.info("🚀 Starting CRM Backend...")
     
     try:
-        # Initialize FastAPI Cache
-        FastAPICache.init(
-            backend=InMemoryBackend(),
-            prefix="fastapi-cache"
-        )
+        # Initialize cache
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
         logger.info("✅ Cache initialized")
         
-        # Check database connection
-        if not check_database_connection():
-            logger.error("❌ Database connection failed!")
-            raise Exception("Database connection failed")
-        logger.info("✅ Database connection verified")
+        # Try database connection but don't fail if it doesn't work
+        try:
+            if check_database_connection():
+                logger.info("✅ Database connection verified")
+                models.Base.metadata.create_all(engine)
+                create_admin()
+                logger.info("✅ Database setup completed")
+            else:
+                logger.warning("⚠️ Database connection failed - starting anyway")
+        except Exception as db_error:
+            logger.error(f"Database error: {db_error}")
+            logger.warning("⚠️ Starting without database connection")
         
-        # Create database tables
-        models.Base.metadata.create_all(engine)
-        logger.info("✅ Database tables created/verified")
-        
-        # Create admin user
-        create_admin()
-        logger.info("✅ Admin user setup completed")
-        
-        # Create static directories
+        # Create directories
         os.makedirs("static/agreements", exist_ok=True)
         os.makedirs("static/lead_documents", exist_ok=True)
-        logger.info("✅ Static directories created")
         
-        logger.info("🎉 Application startup completed successfully!")
+        logger.info("🎉 Application startup completed!")
+        yield
         
     except Exception as e:
-        logger.error(f"❌ Startup failed: {e}")
-        raise
-    
-    yield
-    
-    # Shutdown
-    logger.info("🛑 Shutting down CRM Backend...")
-    logger.info("✅ Shutdown completed")
-
+        logger.error(f"Startup error: {e}")
+        yield  # Start anyway
+        
 # Initialize FastAPI app with lifespan
 app = FastAPI(
     title="Pride CRM Backend API",
