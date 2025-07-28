@@ -75,7 +75,8 @@ def get_client_query_base(db: Session):
     return db.query(Lead).join(Payment, Lead.id == Payment.lead_id).filter(
         and_(
             Lead.is_delete == False,
-            Payment.paid_amount > 0
+            Payment.paid_amount > 0,
+            Payment.status == "PAID"
         )
     ).distinct()
 
@@ -473,7 +474,7 @@ async def get_client_stats(
     
     # Get active clients (with successful payments)
     active_clients = base_query.join(Payment, Lead.id == Payment.lead_id).filter(
-        Payment.status == "success"
+        Payment.status == "PAID"
     ).distinct().count()
     
     # Get KYC completed clients
