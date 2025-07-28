@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from jinja2 import Template, TemplateError
 from smtplib import SMTPException
-
+from routes.auth.auth_dependency import get_current_user
 from db.connection import get_db
 from db.models import EmailTemplate, EmailLog
 from db.Schema.email import (
@@ -169,7 +169,8 @@ def delete_template(
 )
 def send_email(
     req: SendEmailRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     # Get template
     tmpl = db.get(EmailTemplate, req.template_id)
@@ -235,7 +236,8 @@ def send_email(
         template_id=tmpl.id,
         recipient_email=req.recipient_email,
         subject=subject,
-        body=body_html
+        body=body_html,
+        user_id= current_user.employee_code
         # Remove status field since it doesn't exist in EmailLog model
     )
     db.add(log)

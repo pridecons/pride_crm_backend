@@ -37,3 +37,9 @@ WHATSAPP_ACCESS_TOKEN=os.getenv("WHATSAPP_ACCESS_TOKEN")
 PHONE_NUMBER_ID=os.getenv("PHONE_NUMBER_ID")
 
 
+SMS_API_URL = os.getenv("SMS_API_URL")
+SMS_AUTHKEY = os.getenv("SMS_AUTHKEY")
+DLT_TE_ID = os.getenv("DLT_TE_ID")
+SENDER_ID = os.getenv("SENDER_ID")
+ROUTE = os.getenv("ROUTE")
+COUNTRY = os.getenv("COUNTRY")

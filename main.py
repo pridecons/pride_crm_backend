@@ -26,7 +26,7 @@ from routes.profile_role import ProfileRole
 from routes.attendance import attendance
 from routes.Rational import Rational
 from routes.notification import notifiaction_websocket, send_notification
-from routes.Send_client_message import Client_mail_service
+from routes.Send_client_message import Client_mail_service, sms_templates
 
 # Configure logging
 logging.basicConfig(
@@ -137,6 +137,7 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
+    app.include_router(sms_templates.router, prefix="/api/v1")
     app.include_router(lead_analytics.router, prefix="/api/v1")
     app.include_router(clients.router, prefix="/api/v1")
     app.include_router(lead_sharing.router, prefix="/api/v1")

@@ -729,6 +729,27 @@ class EmailTemplate(Base):
     subject = Column(String(200), nullable=False)
     body = Column(Text, nullable=False)
 
+class SMSTemplate(Base):
+    __tablename__ = "crm_sms_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(200), nullable=False)
+    template = Column(Text, nullable=False)
+
+    logs = relationship("SMSLog", back_populates="template")
+
+class SMSLog(Base):
+    __tablename__ = "crm_sms_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    template_id = Column(Integer, ForeignKey("crm_sms_templates.id"), nullable=False)
+    recipient_phone_number = Column(String(320), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    sent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    user_id = Column(String(50), nullable=False, index=True)
+
+    template = relationship("SMSTemplate", back_populates="logs")
+
 class EmailLog(Base):
     __tablename__ = "email_logs"
 
@@ -737,6 +758,7 @@ class EmailLog(Base):
     recipient_email = Column(String(320), nullable=False, index=True)
     subject         = Column(String(200), nullable=False)
     body            = Column(Text, nullable=False)
+    user_id         = Column(String(50), nullable=False, index=True)
     sent_at         = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     template = relationship("EmailTemplate", back_populates="logs")
