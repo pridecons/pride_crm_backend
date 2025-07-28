@@ -16,7 +16,7 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, lead_sharing
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, lead_sharing, clients, lead_analytics
 from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
@@ -137,6 +137,8 @@ def health_check():
 
 # Register all routes with proper error handling
 try:
+    app.include_router(lead_analytics.router, prefix="/api/v1")
+    app.include_router(clients.router, prefix="/api/v1")
     app.include_router(lead_sharing.router, prefix="/api/v1")
     app.include_router(lead_recordings.router, prefix="/api/v1")
     app.include_router(View_Agreement.router, prefix="/api/v1")

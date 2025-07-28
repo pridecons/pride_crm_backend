@@ -745,3 +745,4 @@ class EmailLog(Base):
 EmailTemplate.logs = relationship(
     "EmailLog", order_by=EmailLog.sent_at.desc(), back_populates="template"
 )
+
