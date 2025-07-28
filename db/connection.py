@@ -33,7 +33,7 @@ pw_quoted = quote_plus(str(DB_PASSWORD))
 try:
     DATABASE_URL = (
         f"postgresql://{DB_USERNAME}:{pw_quoted}"
-        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=disable"
     )
     logger.info(f"Database URL constructed for: {DB_USERNAME}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
 except Exception as e:
