@@ -234,9 +234,9 @@ async def get_employee_analytics(
     total_payments = payments_query.count()
     total_revenue = payments_query.with_entities(func.sum(Payment.paid_amount)).scalar() or 0
     
-    successful_payments = payments_query.filter(Payment.status == "success").count()
-    pending_payments = payments_query.filter(Payment.status == "pending").count()
-    failed_payments = payments_query.filter(Payment.status == "failed").count()
+    successful_payments = payments_query.filter(Payment.status == "PAID").count()
+    pending_payments = payments_query.filter(Payment.status == "ACTIVE").count()
+    failed_payments = payments_query.filter(Payment.status == "EXPIRED").count()
     
     avg_payment = (total_revenue / total_payments) if total_payments > 0 else 0
     
@@ -500,9 +500,9 @@ async def get_admin_analytics(
     
     total_payments = payments_query.count()
     total_revenue = payments_query.with_entities(func.sum(Payment.paid_amount)).scalar() or 0
-    successful_payments = payments_query.filter(Payment.status == "success").count()
-    pending_payments = payments_query.filter(Payment.status == "pending").count()
-    failed_payments = payments_query.filter(Payment.status == "failed").count()
+    successful_payments = payments_query.filter(Payment.status == "PAID").count()
+    pending_payments = payments_query.filter(Payment.status == "ACTIVE").count()
+    failed_payments = payments_query.filter(Payment.status == "EXPIRED").count()
     
     avg_payment = (total_revenue / total_payments) if total_payments > 0 else 0
     
