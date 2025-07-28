@@ -211,6 +211,29 @@ def update_recommendation(
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Error updating recommendation: {e}")
 
+
+@router.put("/status/{recommendation_id}")
+def update_recommendation(
+    recommendation_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+):
+    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    rec.status = status
+
+    try:
+        db.commit()
+        db.refresh(rec)
+        return rec
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Error updating recommendation: {e}")
+
+
+
 # ── 5. DELETE ───────────────────────────────────────────────────────────────────
 @router.delete("/{recommendation_id}")
 def delete_recommendation(

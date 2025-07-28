@@ -32,6 +32,7 @@ class AttendanceUpdate(BaseModel):
 class AttendanceOut(AttendanceBase):
     id: int
     created_at: datetime.datetime
+    updated_at: datetime.datetime
 
-    # tell Pydantic to pull values off ORM objects
     model_config = ConfigDict(from_attributes=True)
+

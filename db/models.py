@@ -124,11 +124,7 @@ class UserDetails(Base):
                          back_populates="user",
                          cascade="all, delete-orphan"
                        )
-    notifications     = relationship(
-                         "Notification",
-                         back_populates="user",
-                         cascade="all, delete-orphan"
-                       )
+
     attendance_records= relationship(
                          "Attendance",
                          back_populates="employee",
@@ -137,11 +133,6 @@ class UserDetails(Base):
     salary_slips      = relationship(
                          "SalarySlip",
                          back_populates="employee",
-                         cascade="all, delete-orphan"
-                       )
-    campaigns         = relationship(
-                         "Campaign",
-                         back_populates="owner",
                          cascade="all, delete-orphan"
                        )
     tokens            = relationship(
@@ -651,18 +642,6 @@ class AuditLog(Base):
     user      = relationship("UserDetails", back_populates="audit_logs")
 
 
-class Notification(Base):
-    __tablename__ = "crm_notifications"
-
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    user_id    = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
-    type       = Column(String(30), nullable=False)
-    message    = Column(Text, nullable=False)
-    is_read    = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    user       = relationship("UserDetails", back_populates="notifications")
-
 
 class Attendance(Base):
     __tablename__ = "crm_attendance"
@@ -673,6 +652,9 @@ class Attendance(Base):
     check_in      = Column(DateTime(timezone=True), nullable=True)
     check_out     = Column(DateTime(timezone=True), nullable=True)
     status        = Column(String(20), nullable=False)
+
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     employee      = relationship("UserDetails", back_populates="attendance_records")
 
@@ -693,21 +675,6 @@ class SalarySlip(Base):
 
     employee         = relationship("UserDetails", back_populates="salary_slips")
 
-
-class Campaign(Base):
-    __tablename__ = "crm_campaigns"
-
-    id          = Column(Integer, primary_key=True, autoincrement=True)
-    name        = Column(String(150), nullable=False, unique=True)
-    start_date  = Column(Date, nullable=False)
-    end_date    = Column(Date, nullable=True)
-    budget      = Column(Float, nullable=True)
-    status      = Column(String(20), nullable=False, default="planned")
-    results     = Column(JSON, nullable=True)
-    created_by  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
-    created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    owner       = relationship("UserDetails", back_populates="campaigns")
 
 class PanVerification(Base):
     __tablename__ = "crm_pan_verifications"
