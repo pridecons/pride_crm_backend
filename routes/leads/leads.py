@@ -63,6 +63,7 @@ class LeadBase(BaseModel):
     lead_source_id: Optional[int] = None
     
     branch_id: Optional[int] = None
+    ft_date: Optional[str] = None
 
 
 class LeadCreate(LeadBase):
@@ -113,6 +114,7 @@ class LeadUpdate(BaseModel):
     call_back_date: Optional[datetime] = None
     kyc: Optional[bool] = None
     is_old_lead: Optional[bool] = None
+    ft_date: Optional[str] = None
 
 
 class LeadOut(BaseModel):
@@ -171,6 +173,7 @@ class LeadOut(BaseModel):
     is_old_lead: Optional[bool] = False
     call_back_date: Optional[datetime] = None
     lead_status: Optional[str] = None
+    ft_date: Optional[str] = None
     
     # Timestamps
     created_at: datetime
@@ -198,6 +201,7 @@ class LeadOut(BaseModel):
 
 class ChangeResponse(BaseModel):
     lead_response_id: int
+    ft_date: Optional[str] = None
 
 class CommentOut(BaseModel):
     id: int
@@ -899,6 +903,9 @@ def change_lead_response(
             status_code=400,
             detail=f"LeadResponse with ID {payload.lead_response_id} not found"
         )
+    
+    if payload.ft_date:
+        lead.ft_date = payload.ft_date
 
     # 3) apply and mark as old
     lead.lead_response_id = payload.lead_response_id
