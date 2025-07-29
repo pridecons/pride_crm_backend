@@ -23,6 +23,7 @@ class LeadFetchConfigBase(BaseModel):
     daily_call_limit: int
     last_fetch_limit: int  # NEW FIELD
     assignment_ttl_hours: int = 24 * 7  # Default 7 days
+    old_lead_remove_days: int = 30
 
     @validator('per_request_limit')
     def validate_per_request_limit(cls, v):
@@ -66,6 +67,7 @@ class LeadFetchConfigUpdate(BaseModel):
     daily_call_limit: Optional[int] = None
     last_fetch_limit: Optional[int] = None  # NEW FIELD
     assignment_ttl_hours: Optional[int] = None
+    old_lead_remove_days: Optional[int] = None
 
     @validator('per_request_limit')
     def validate_per_request_limit(cls, v):
@@ -112,6 +114,7 @@ class LeadFetchConfigResponse(BaseModel):
     daily_call_limit: int
     last_fetch_limit: int  # NEW FIELD
     assignment_ttl_hours: int
+    old_lead_remove_days: int
 
     class Config:
         from_attributes = True
@@ -156,7 +159,8 @@ def create_fetch_config(
             per_request_limit=config.per_request_limit,
             daily_call_limit=config.daily_call_limit,
             last_fetch_limit=config.last_fetch_limit,  # NEW FIELD
-            assignment_ttl_hours=config.assignment_ttl_hours
+            assignment_ttl_hours=config.assignment_ttl_hours,
+            old_lead_remove_days=config.old_lead_remove_days
         )
         
         db.add(new_config)
@@ -170,7 +174,8 @@ def create_fetch_config(
             per_request_limit=new_config.per_request_limit,
             daily_call_limit=new_config.daily_call_limit,
             last_fetch_limit=new_config.last_fetch_limit,
-            assignment_ttl_hours=new_config.assignment_ttl_hours
+            assignment_ttl_hours=new_config.assignment_ttl_hours,
+            old_lead_remove_days=new_config.old_lead_remove_days
         )
         
     except HTTPException:
@@ -207,6 +212,7 @@ def get_all_fetch_configs(
                 "daily_call_limit": config.daily_call_limit,
                 "last_fetch_limit": config.last_fetch_limit,
                 "assignment_ttl_hours": config.assignment_ttl_hours,
+                "old_lead_remove_days": config.old_lead_remove_days,
                 "branch_name": None,
                 "branch_address": None
             }
@@ -257,6 +263,7 @@ def get_fetch_config(
             "daily_call_limit": config.daily_call_limit,
             "last_fetch_limit": config.last_fetch_limit,
             "assignment_ttl_hours": config.assignment_ttl_hours,
+            "old_lead_remove_days": config.old_lead_remove_days,
             "branch_name": None,
             "branch_address": None
         }
@@ -315,7 +322,8 @@ def update_fetch_config(
             per_request_limit=config.per_request_limit,
             daily_call_limit=config.daily_call_limit,
             last_fetch_limit=config.last_fetch_limit,
-            assignment_ttl_hours=config.assignment_ttl_hours
+            assignment_ttl_hours=config.assignment_ttl_hours,
+            old_lead_remove_days=config.old_lead_remove_days
         )
         
     except HTTPException:
