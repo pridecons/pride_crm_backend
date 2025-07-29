@@ -1,17 +1,19 @@
-# routes/leads/old_leads_fetch.py
+# routes/leads/old_leads_fetch.py - Complete Implementation
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List, Optional
 from datetime import datetime, timedelta
+import logging
 
 from db.connection import get_db
-from db.models import Lead, LeadAssignment, UserDetails, LeadFetchConfig
+from db.models import Lead, LeadAssignment, UserDetails, LeadFetchConfig, LeadFetchHistory
 from routes.auth.auth_dependency import require_permission
 from utils.AddLeadStory import AddLeadStory
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/old-leads", tags=["Old Lead Management"])
 
 class OldLeadResponse(BaseModel):
@@ -30,21 +32,208 @@ class OldLeadResponse(BaseModel):
     lead_response_id: Optional[int]
     assigned_to_user: Optional[str]
 
+# Helper functions
+def load_fetch_config(db: Session, user: UserDetails):
+    """Load fetch config for user from LeadFetchConfig"""
+    cfg = None
+    source = "default"
+
+    try:
+        # 1️⃣ Try role+branch first
+        if user.role and user.branch_id:
+            cfg = db.query(LeadFetchConfig).filter_by(
+                role=user.role, 
+                branch_id=user.branch_id
+            ).first()
+            if cfg:
+                source = "role_branch"
+
+        # 2️⃣ Try role global
+        if not cfg and user.role:
+            cfg = db.query(LeadFetchConfig).filter_by(
+                role=user.role, 
+                branch_id=None
+            ).first()
+            if cfg:
+                source = "role_global"
+
+        # 3️⃣ Try branch global
+        if not cfg and user.branch_id:
+            cfg = db.query(LeadFetchConfig).filter_by(
+                role=None, 
+                branch_id=user.branch_id
+            ).first()
+            if cfg:
+                source = "branch_global"
+
+        # 4️⃣ Default fallback based on role
+        if not cfg:
+            defaults = {
+                "SUPERADMIN": dict(
+                    per_request_limit=50, 
+                    daily_call_limit=30, 
+                    last_fetch_limit=15, 
+                    assignment_ttl_hours=24,
+                    old_lead_remove_days=15
+                ),
+                "BRANCH_MANAGER": dict(
+                    per_request_limit=30, 
+                    daily_call_limit=20, 
+                    last_fetch_limit=10, 
+                    assignment_ttl_hours=48,
+                    old_lead_remove_days=20
+                ),
+                "SALES_MANAGER": dict(
+                    per_request_limit=25, 
+                    daily_call_limit=15, 
+                    last_fetch_limit=8, 
+                    assignment_ttl_hours=72,
+                    old_lead_remove_days=25
+                ),
+                "TL": dict(
+                    per_request_limit=20, 
+                    daily_call_limit=12, 
+                    last_fetch_limit=6, 
+                    assignment_ttl_hours=72,
+                    old_lead_remove_days=30
+                ),
+                "BA": dict(
+                    per_request_limit=10, 
+                    daily_call_limit=8, 
+                    last_fetch_limit=4, 
+                    assignment_ttl_hours=168,
+                    old_lead_remove_days=30
+                ),
+                "SBA": dict(
+                    per_request_limit=15, 
+                    daily_call_limit=10, 
+                    last_fetch_limit=5, 
+                    assignment_ttl_hours=120,
+                    old_lead_remove_days=25
+                ),
+                "HR": dict(
+                    per_request_limit=5, 
+                    daily_call_limit=3, 
+                    last_fetch_limit=2, 
+                    assignment_ttl_hours=168,
+                    old_lead_remove_days=30
+                )
+            }
+            
+            role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+            cfg_values = defaults.get(role_str, defaults["BA"])
+
+            class TempConfig:
+                def __init__(self, **kw):
+                    for k, v in kw.items():
+                        setattr(self, k, v)
+
+            cfg = TempConfig(**cfg_values)
+            source = "default"
+
+    except Exception as e:
+        logger.error(f"Error loading fetch config: {e}")
+        # Emergency fallback
+        class TempConfig:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+        cfg = TempConfig(
+            per_request_limit=10,
+            daily_call_limit=5,
+            last_fetch_limit=3,
+            assignment_ttl_hours=168,
+            old_lead_remove_days=30
+        )
+        source = "emergency_fallback"
+
+    return cfg, source
+
+def get_user_active_assignments_count(db: Session, user_id: str, assignment_ttl_hours: int):
+    """Get count of user's active assignments"""
+    try:
+        expiry_cutoff = datetime.utcnow() - timedelta(hours=assignment_ttl_hours)
+        
+        active_count = db.query(LeadAssignment).filter(
+            and_(
+                LeadAssignment.user_id == user_id,
+                LeadAssignment.fetched_at >= expiry_cutoff
+            )
+        ).count()
+        
+        return active_count
+    except Exception as e:
+        logger.error(f"Error getting active assignments count: {e}")
+        return 0
+
+def can_user_fetch_leads(db: Session, user_id: str, config):
+    """Check if user can fetch more leads based on last_fetch_limit"""
+    try:
+        current_assignments = get_user_active_assignments_count(
+            db, user_id, config.assignment_ttl_hours
+        )
+        
+        can_fetch = current_assignments < config.last_fetch_limit
+        return can_fetch, current_assignments
+    except Exception as e:
+        logger.error(f"Error checking fetch eligibility: {e}")
+        return False, 0
+
+def check_daily_call_limit(db: Session, user_id: str, daily_limit: int):
+    """Check if user has exceeded daily call limit"""
+    try:
+        today = datetime.utcnow().date()
+        
+        # Get or create today's history record
+        hist = db.query(LeadFetchHistory).filter_by(
+            user_id=user_id,
+            date=today
+        ).first()
+        
+        if not hist:
+            return True, 0  # No calls made today, can fetch
+        
+        return hist.call_count < daily_limit, hist.call_count
+    except Exception as e:
+        logger.error(f"Error checking daily limit: {e}")
+        return False, 0
+
 @router.post("/fetch", response_model=dict)
 def fetch_old_leads(
-    limit: Optional[int] = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(require_permission("fetch_lead"))
 ):
     """
     Fetch old leads for the current user (Point 10)
     Only returns leads marked as is_old_lead = True
+    Limits are taken from LeadFetchConfig based on user role/branch
     """
     try:
-        # Load user's fetch configuration
-        config, cfg_source = load_fetch_config(db, current_user)
+        logger.info(f"User {current_user.employee_code} requesting old leads fetch")
         
-        # Check if user can fetch more leads
+        # Load user's fetch configuration from database
+        config, cfg_source = load_fetch_config(db, current_user)
+        logger.info(f"Using config from: {cfg_source}")
+        
+        # Check daily call limit
+        can_call_today, today_calls = check_daily_call_limit(
+            db, current_user.employee_code, config.daily_call_limit
+        )
+        
+        if not can_call_today:
+            return {
+                "leads": [],
+                "message": f"Daily fetch limit reached ({today_calls}/{config.daily_call_limit}). Try again tomorrow.",
+                "fetched_count": 0,
+                "config_used": {
+                    "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": config.daily_call_limit,
+                    "last_fetch_limit": config.last_fetch_limit,
+                    "source": cfg_source
+                }
+            }
+        
+        # Check if user can fetch more leads (last_fetch_limit)
         can_fetch, active_count = can_user_fetch_leads(
             db, current_user.employee_code, config
         )
@@ -54,19 +243,23 @@ def fetch_old_leads(
                 "leads": [],
                 "message": f"You have {active_count} active assignments (limit: {config.last_fetch_limit})",
                 "fetched_count": 0,
+                "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": config.daily_call_limit,
                     "last_fetch_limit": config.last_fetch_limit,
                     "source": cfg_source
                 }
             }
         
+        # Determine how many leads to fetch
+
+        to_fetch = config.per_request_limit
+        logger.info(f"Using config per_request_limit: {to_fetch}")
+        
         # Calculate expiry cutoff for assignments
         now = datetime.utcnow()
         expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
-        
-        # Use limit or config per_request_limit
-        to_fetch = min(limit, config.per_request_limit)
         
         # Query for old leads
         query = db.query(Lead).outerjoin(LeadAssignment)
@@ -92,9 +285,11 @@ def fetch_old_leads(
         # Branch filtering if user has branch
         if current_user.branch_id:
             query = query.filter(Lead.branch_id == current_user.branch_id)
+            logger.info(f"Filtering by branch: {current_user.branch_id}")
         
-        # Get leads
+        # Get leads with limit
         old_leads = query.limit(to_fetch).all()
+        logger.info(f"Found {len(old_leads)} old leads to assign")
         
         if not old_leads:
             return {
@@ -104,62 +299,97 @@ def fetch_old_leads(
                 "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": config.daily_call_limit,
                     "last_fetch_limit": config.last_fetch_limit,
                     "source": cfg_source
                 }
             }
         
         # Process each lead
+        assigned_leads = []
         for lead in old_leads:
-            # Remove expired assignments
-            expired_assignment = db.query(LeadAssignment).filter(
-                and_(
-                    LeadAssignment.lead_id == lead.id,
-                    or_(
-                        LeadAssignment.fetched_at < expiry_cutoff,
-                        and_(
-                            Lead.assigned_for_conversion == True,
-                            Lead.conversion_deadline < now
+            try:
+                # Remove expired assignments
+                expired_assignment = db.query(LeadAssignment).filter(
+                    and_(
+                        LeadAssignment.lead_id == lead.id,
+                        or_(
+                            LeadAssignment.fetched_at < expiry_cutoff,
+                            and_(
+                                Lead.assigned_for_conversion == True,
+                                Lead.conversion_deadline < now
+                            )
                         )
                     )
-                )
-            ).first()
-            
-            if expired_assignment:
-                db.delete(expired_assignment)
-            
-            # Create new assignment if not already assigned
-            existing_assignment = db.query(LeadAssignment).filter_by(
-                lead_id=lead.id
-            ).first()
-            
-            if not existing_assignment:
-                new_assignment = LeadAssignment(
-                    lead_id=lead.id,
-                    user_id=current_user.employee_code,
-                    fetched_at=now
-                )
-                db.add(new_assignment)
+                ).first()
                 
-                # Reset conversion fields if expired
-                if lead.assigned_for_conversion and lead.conversion_deadline and lead.conversion_deadline < now:
-                    lead.assigned_for_conversion = False
-                    lead.assigned_to_user = None
-                    lead.conversion_deadline = None
+                if expired_assignment:
+                    logger.info(f"Removing expired assignment for lead {lead.id}")
+                    db.delete(expired_assignment)
+                
+                # Create new assignment if not already assigned
+                existing_assignment = db.query(LeadAssignment).filter_by(
+                    lead_id=lead.id
+                ).first()
+                
+                if not existing_assignment:
+                    new_assignment = LeadAssignment(
+                        lead_id=lead.id,
+                        user_id=current_user.employee_code,
+                        fetched_at=now
+                    )
+                    db.add(new_assignment)
+                    assigned_leads.append(lead)
+                    
+                    # Reset conversion fields if expired
+                    if (lead.assigned_for_conversion and 
+                        lead.conversion_deadline and 
+                        lead.conversion_deadline < now):
+                        
+                        logger.info(f"Resetting expired conversion fields for lead {lead.id}")
+                        lead.assigned_for_conversion = False
+                        lead.assigned_to_user = None
+                        lead.conversion_deadline = None
+                        
+            except Exception as e:
+                logger.error(f"Error processing lead {lead.id}: {e}")
+                continue
         
+        # Update daily fetch history
+        today = datetime.utcnow().date()
+        hist = db.query(LeadFetchHistory).filter_by(
+            user_id=current_user.employee_code,
+            date=today
+        ).first()
+        
+        if not hist:
+            hist = LeadFetchHistory(
+                user_id=current_user.employee_code,
+                date=today,
+                call_count=1
+            )
+            db.add(hist)
+        else:
+            hist.call_count += 1
+        
+        # Commit all changes
         db.commit()
+        logger.info(f"Successfully assigned {len(assigned_leads)} old leads to user {current_user.employee_code}")
         
         # Add stories for fetched leads
-        for lead in old_leads:
-            AddLeadStory(
-                lead.id,
-                current_user.employee_code,
-                f"{current_user.name} ({current_user.employee_code}) fetched this OLD lead"
-            )
+        for lead in assigned_leads:
+            try:
+                AddLeadStory(
+                    lead.id,
+                    current_user.employee_code,
+                    f"{current_user.name} ({current_user.employee_code}) fetched this OLD lead"
+                )
+            except Exception as e:
+                logger.error(f"Error adding story for lead {lead.id}: {e}")
         
         # Prepare response
         response_leads = []
-        for lead in old_leads:
+        for lead in assigned_leads:
             days_remaining = None
             if lead.conversion_deadline:
                 delta = lead.conversion_deadline - now
@@ -187,16 +417,22 @@ def fetch_old_leads(
             "message": f"Successfully fetched {len(response_leads)} old leads",
             "fetched_count": len(response_leads),
             "current_assignments": active_count + len(response_leads),
+            "today_calls": hist.call_count,
             "config_used": {
                 "per_request_limit": config.per_request_limit,
+                "daily_call_limit": config.daily_call_limit,
                 "last_fetch_limit": config.last_fetch_limit,
+                "assignment_ttl_hours": config.assignment_ttl_hours,
                 "source": cfg_source
             }
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error in fetch_old_leads: {e}")
         db.rollback()
-        raise HTTPException(500, f"Error fetching old leads: {e}")
+        raise HTTPException(500, f"Error fetching old leads: {str(e)}")
 
 
 @router.get("/my-assigned")
@@ -206,108 +442,173 @@ def get_my_assigned_old_leads(
 ):
     """Get old leads currently assigned to user"""
     
-    # Get active assignments for old leads
-    now = datetime.utcnow()
-    expiry_cutoff = now - timedelta(hours=24 * 7)  # 7 days default TTL
-    
-    assigned_leads = db.query(Lead).join(LeadAssignment).filter(
-        and_(
-            Lead.is_old_lead == True,
-            Lead.is_delete == False,
-            Lead.is_client == False,
-            LeadAssignment.user_id == current_user.employee_code,
-            LeadAssignment.fetched_at >= expiry_cutoff
-        )
-    ).all()
-    
-    response_leads = []
-    for lead in assigned_leads:
-        days_remaining = None
-        if lead.conversion_deadline:
-            delta = lead.conversion_deadline - now
-            days_remaining = max(0, delta.days)
+    try:
+        # Load config to get TTL
+        config, _ = load_fetch_config(db, current_user)
         
-        response_leads.append({
-            "id": lead.id,
-            "full_name": lead.full_name,
-            "mobile": lead.mobile,
-            "email": lead.email,
-            "response_changed_at": lead.response_changed_at,
-            "conversion_deadline": lead.conversion_deadline,
-            "days_remaining": days_remaining,
-            "assigned_for_conversion": lead.assigned_for_conversion
-        })
-    
-    return {
-        "assigned_old_leads": response_leads,
-        "count": len(response_leads)
-    }
+        # Get active assignments for old leads
+        now = datetime.utcnow()
+        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
+        
+        assigned_leads = db.query(Lead).join(LeadAssignment).filter(
+            and_(
+                Lead.is_old_lead == True,
+                Lead.is_delete == False,
+                Lead.is_client == False,
+                LeadAssignment.user_id == current_user.employee_code,
+                LeadAssignment.fetched_at >= expiry_cutoff
+            )
+        ).all()
+        
+        response_leads = []
+        for lead in assigned_leads:
+            days_remaining = None
+            if lead.conversion_deadline:
+                delta = lead.conversion_deadline - now
+                days_remaining = max(0, delta.days)
+            
+            response_leads.append({
+                "id": lead.id,
+                "full_name": lead.full_name,
+                "mobile": lead.mobile,
+                "email": lead.email,
+                "response_changed_at": lead.response_changed_at,
+                "conversion_deadline": lead.conversion_deadline,
+                "days_remaining": days_remaining,
+                "assigned_for_conversion": lead.assigned_for_conversion,
+                "assigned_at": db.query(LeadAssignment).filter_by(
+                    lead_id=lead.id, 
+                    user_id=current_user.employee_code
+                ).first().fetched_at
+            })
+        
+        return {
+            "assigned_old_leads": response_leads,
+            "count": len(response_leads),
+            "assignment_ttl_hours": config.assignment_ttl_hours
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting assigned old leads: {e}")
+        raise HTTPException(500, f"Error getting assigned leads: {str(e)}")
 
 
 @router.get("/stats")
 def get_old_leads_stats(
+    db: Session = Depends(get_db), 
+    current_user: UserDetails = Depends(require_permission("fetch_lead"))
+):
+    """Get statistics about old leads with config-based limits"""
+    
+    try:
+        # Load user config
+        config, cfg_source = load_fetch_config(db, current_user)
+        
+        now = datetime.utcnow()
+        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
+        
+        # Total old leads available for this user
+        available_query = db.query(Lead).outerjoin(LeadAssignment).filter(
+            and_(
+                Lead.is_old_lead == True,
+                Lead.is_delete == False,
+                Lead.is_client == False,
+                or_(
+                    LeadAssignment.id == None,
+                    LeadAssignment.fetched_at < expiry_cutoff
+                )
+            )
+        )
+        
+        if current_user.branch_id:
+            available_query = available_query.filter(Lead.branch_id == current_user.branch_id)
+        
+        total_available = available_query.count()
+        
+        # User's assigned old leads
+        user_assigned = db.query(Lead).join(LeadAssignment).filter(
+            and_(
+                Lead.is_old_lead == True,
+                Lead.is_delete == False,
+                Lead.is_client == False,
+                LeadAssignment.user_id == current_user.employee_code,
+                LeadAssignment.fetched_at >= expiry_cutoff
+            )
+        ).count()
+        
+        # Conversion deadline approaching (next 3 days)
+        deadline_approaching = db.query(Lead).filter(
+            and_(
+                Lead.is_old_lead == True,
+                Lead.assigned_to_user == current_user.employee_code,
+                Lead.conversion_deadline.between(now, now + timedelta(days=3)),
+                Lead.is_client == False
+            )
+        ).count()
+        
+        # Daily call limit status
+        today = datetime.utcnow().date()
+        today_calls = 0
+        hist = db.query(LeadFetchHistory).filter_by(
+            user_id=current_user.employee_code,
+            date=today
+        ).first()
+        if hist:
+            today_calls = hist.call_count
+        
+        can_fetch_more = (
+            user_assigned < config.last_fetch_limit and 
+            today_calls < config.daily_call_limit
+        )
+        
+        return {
+            "total_available_old_leads": total_available,
+            "my_assigned_old_leads": user_assigned,
+            "deadline_approaching": deadline_approaching,
+            "can_fetch_more": can_fetch_more,
+            "daily_stats": {
+                "calls_made_today": today_calls,
+                "daily_limit": config.daily_call_limit,
+                "calls_remaining": max(0, config.daily_call_limit - today_calls)
+            },
+            "limits": {
+                "per_request_limit": config.per_request_limit,
+                "last_fetch_limit": config.last_fetch_limit,
+                "assignment_ttl_hours": config.assignment_ttl_hours,
+                "config_source": cfg_source
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting old leads stats: {e}")
+        raise HTTPException(500, f"Error getting stats: {str(e)}")
+
+
+@router.get("/config")
+def get_user_fetch_config(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(require_permission("fetch_lead"))
 ):
-    """Get statistics about old leads"""
+    """Get current user's fetch configuration"""
     
-    now = datetime.utcnow()
+    try:
+        config, source = load_fetch_config(db, current_user)
+        
+        return {
+            "user_role": current_user.role,
+            "user_branch_id": current_user.branch_id,
+            "config": {
+                "per_request_limit": config.per_request_limit,
+                "daily_call_limit": config.daily_call_limit,
+                "last_fetch_limit": config.last_fetch_limit,
+                "assignment_ttl_hours": config.assignment_ttl_hours,
+                "old_lead_remove_days": getattr(config, 'old_lead_remove_days', 30)
+            },
+            "config_source": source
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting fetch config: {e}")
+        raise HTTPException(500, f"Error getting config: {str(e)}")
     
-    # Total old leads available
-    available_old_leads = db.query(Lead).outerjoin(LeadAssignment).filter(
-        and_(
-            Lead.is_old_lead == True,
-            Lead.is_delete == False,
-            Lead.is_client == False,
-            or_(
-                LeadAssignment.id == None,
-                LeadAssignment.fetched_at < now - timedelta(hours=168)  # 7 days
-            )
-        )
-    )
-    
-    if current_user.branch_id:
-        available_old_leads = available_old_leads.filter(Lead.branch_id == current_user.branch_id)
-    
-    total_available = available_old_leads.count()
-    
-    # User's assigned old leads
-    user_assigned = db.query(Lead).join(LeadAssignment).filter(
-        and_(
-            Lead.is_old_lead == True,
-            Lead.is_delete == False,
-            Lead.is_client == False,
-            LeadAssignment.user_id == current_user.employee_code,
-            LeadAssignment.fetched_at >= now - timedelta(hours=168)
-        )
-    ).count()
-    
-    # Conversion deadline approaching (next 3 days)
-    deadline_approaching = db.query(Lead).filter(
-        and_(
-            Lead.is_old_lead == True,
-            Lead.assigned_to_user == current_user.employee_code,
-            Lead.conversion_deadline.between(now, now + timedelta(days=3)),
-            Lead.is_client == False
-        )
-    ).count()
-    
-    return {
-        "total_available_old_leads": total_available,
-        "my_assigned_old_leads": user_assigned,
-        "deadline_approaching": deadline_approaching,
-        "can_fetch_more": user_assigned < 10  # Assuming limit of 10
-    }
-
-
-# Helper functions
-def load_fetch_config(db: Session, user: UserDetails):
-    """Same as in leads_fetch.py"""
-    # Implementation same as leads_fetch.py
-    pass
-
-def can_user_fetch_leads(db: Session, user_id: str, config):
-    """Same as in leads_fetch.py"""
-    # Implementation same as leads_fetch.py
-    pass
 

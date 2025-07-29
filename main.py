@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 import logging
 import os
-
+from datetime import datetime, timedelta
 # Import database
 from db.connection import engine, check_database_connection
 from db import models
@@ -22,7 +22,7 @@ from scheduler import lead_scheduler
 from routes.auth.auth_dependency import get_current_user
 from db.models import UserRoleEnum
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, lead_sharing, clients, lead_analytics
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, lead_sharing, clients, lead_analytics, old_leads_fetch, client_management
 from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree
@@ -154,6 +154,8 @@ def get_scheduler_status(
 
 # Register all your existing routes
 try:
+    app.include_router(old_leads_fetch.router, prefix="/api/v1")
+    app.include_router(client_management.router, prefix="/api/v1")
     app.include_router(sms_templates.router, prefix="/api/v1")
     app.include_router(lead_analytics.router, prefix="/api/v1")
     app.include_router(clients.router, prefix="/api/v1")
