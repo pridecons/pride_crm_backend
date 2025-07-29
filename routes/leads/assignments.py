@@ -59,7 +59,8 @@ class LeadOut(BaseModel):
     call_back_date: Optional[datetime] = None
     lead_status: Optional[str] = None
     created_at: datetime
-    ft_date: Optional[str] = None
+    ft_to_date: Optional[str] = None
+    ft_from_date: Optional[str] = None
 
     @validator('segment', pre=True, always=True)
     def parse_segment(cls, v):

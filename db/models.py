@@ -477,7 +477,8 @@ class Lead(Base):
     lead_status       = Column(String(50), nullable=True)
     profile           = Column(String(50), nullable=True)
     is_delete         = Column(Boolean, default=False, nullable=True)
-    ft_date           = Column(String(50), nullable=False)
+    ft_to_date           = Column(String(50), nullable=False)
+    ft_from_date           = Column(String(50), nullable=False)
 
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
