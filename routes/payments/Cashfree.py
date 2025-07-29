@@ -455,8 +455,12 @@ async def payment_webhook(
 
     # 4) Fetch & update your Payment record
     payment = db.query(Payment).filter(Payment.order_id == order_id).first()
+    lead = db.query(Lead).filter(Lead.mobile == payment.phone_number).first()
+
     if not payment:
         raise HTTPException(404, "Payment record not found")
+    
+
 
     old_status = payment.status
 
@@ -464,6 +468,9 @@ async def payment_webhook(
         return {"message": "processed", "new_status": new_status}
 
     payment.status = new_status
+    if status_cf.upper() == "SUCCESS":   
+        lead.is_client = True
+        
     try:
         db.commit()
         db.refresh(payment)

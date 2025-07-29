@@ -65,6 +65,7 @@ class LeadBase(BaseModel):
     branch_id: Optional[int] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
+    is_client: Optional[str] = None
 
 
 class LeadCreate(LeadBase):
@@ -117,6 +118,7 @@ class LeadUpdate(BaseModel):
     is_old_lead: Optional[bool] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
+    is_client: Optional[str] = None
 
 
 class LeadOut(BaseModel):
@@ -177,6 +179,7 @@ class LeadOut(BaseModel):
     lead_status: Optional[str] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
+    is_client: Optional[str] = None
     
     # Timestamps
     created_at: datetime
