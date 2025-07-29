@@ -111,7 +111,7 @@ def process_segment(segment_text: str) -> List[str]:
 def process_bulk_lead_data(row, mobile_column, name_column, email_column, 
                           city_column, address_column, segment_column, 
                           occupation_column, investment_column, 
-                          lead_source_id, employee, default_response_id):
+                          lead_source_id, employee):
     """Process a single row of bulk lead data"""
     
     # Extract data from row
@@ -142,7 +142,6 @@ def process_bulk_lead_data(row, mobile_column, name_column, email_column,
         "investment": investment,
         "segment": segments,  # This will be JSON string or None
         "lead_source_id": lead_source_id,
-        "lead_response_id": default_response_id,
         "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
         "created_by_name": employee.employee_code,
         "branch_id": employee.branch_id,
@@ -226,9 +225,6 @@ async def upload_bulk_leads(
         errors = []
         uploaded_leads = []
         
-        # Get default lead response
-        default_response = db.query(LeadResponse).first()
-        default_response_id = default_response.id if default_response else None
         
         for row_index, row in enumerate(data_rows, start=2):
             try:
@@ -299,7 +295,6 @@ async def upload_bulk_leads(
                     "investment": investment,
                     "segment": segments,  # JSON string or None
                     "lead_source_id": lead_source_id,
-                    "lead_response_id": default_response_id,
                     "created_by": employee.role.value if hasattr(employee.role, 'value') else str(employee.role),
                     "created_by_name": employee.employee_code,
                     "branch_id": branch_id,

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
 from db.connection import get_db
-from db.models import Payment, Lead, Service
+from db.models import Payment, Lead, Service, LeadAssignment
 from db.Schema.payment import CreateOrderRequest, FrontUserCreate, PaymentOut
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
@@ -457,6 +457,24 @@ async def payment_webhook(
     payment = db.query(Payment).filter(Payment.order_id == order_id).first()
     lead = db.query(Lead).filter(Lead.mobile == payment.phone_number).first()
 
+    if payment.lead_id and status_cf.upper() == "SUCCESS":
+                lead = db.query(Lead).filter_by(id=payment.lead_id).first()
+                if lead:
+                    lead.is_client = True
+                    
+                    # Remove from assignment pool
+                    assignment = db.query(LeadAssignment).filter_by(
+                        lead_id=lead.id
+                    ).first()
+                    if assignment:
+                        # Add story before deletion
+                        AddLeadStory(
+                            lead.id,
+                            assignment.user_id,
+                            f"Lead converted to client via payment {order_id}. Amount: ₹{payment.paid_amount}"
+                        )
+                        db.delete(assignment)
+
     if not payment:
         raise HTTPException(404, "Payment record not found")
     
@@ -468,9 +486,7 @@ async def payment_webhook(
         return {"message": "processed", "new_status": new_status}
 
     payment.status = new_status
-    if status_cf.upper() == "SUCCESS":   
-        lead.is_client = True
-        
+
     try:
         db.commit()
         db.refresh(payment)
