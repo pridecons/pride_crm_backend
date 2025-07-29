@@ -26,3 +26,6 @@ fastapi[all]
 python-dateutil
 num2words
 aiofiles
+celery 
+redis
+apscheduler==3.10.4

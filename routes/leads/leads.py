@@ -2,7 +2,7 @@ import os
 import uuid
 import json
 from typing import Optional, List, Any, Dict, Union
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
@@ -10,7 +10,7 @@ from pydantic import BaseModel, constr, validator
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, Payment, LeadComment, LeadStory
+    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
 )
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
@@ -65,7 +65,11 @@ class LeadBase(BaseModel):
     branch_id: Optional[int] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
-    is_client: Optional[str] = None
+    is_client: Optional[bool] = None
+    assigned_to_user: Optional[str] = None
+    response_changed_at: Optional[datetime] = None
+    assigned_for_conversion: Optional[bool] = False
+    conversion_deadline: Optional[datetime] = None
 
 
 class LeadCreate(LeadBase):
@@ -118,7 +122,11 @@ class LeadUpdate(BaseModel):
     is_old_lead: Optional[bool] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
-    is_client: Optional[str] = None
+    is_client: Optional[bool] = None
+    assigned_to_user: Optional[str] = None
+    response_changed_at: Optional[datetime] = None
+    assigned_for_conversion: Optional[bool] = False
+    conversion_deadline: Optional[datetime] = None
 
 
 class LeadOut(BaseModel):
@@ -179,7 +187,11 @@ class LeadOut(BaseModel):
     lead_status: Optional[str] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
-    is_client: Optional[str] = None
+    is_client: Optional[bool] = None
+    assigned_to_user: Optional[str] = None
+    response_changed_at: Optional[datetime] = None
+    assigned_for_conversion: Optional[bool] = False
+    conversion_deadline: Optional[datetime] = None
     
     # Timestamps
     created_at: datetime
@@ -885,11 +897,64 @@ def search_leads(
             detail=f"Error searching leads: {str(e)}"
         )
 
+def load_fetch_config(db: Session, user: UserDetails):
+    """Load fetch config for user - same as in leads_fetch.py"""
+    cfg = None
+    source = "default"
+
+    # Try role+branch first
+    if user.role and user.branch_id:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=user.role, 
+            branch_id=user.branch_id
+        ).first()
+        if cfg:
+            source = "role_branch"
+
+    # Try role global
+    if not cfg and user.role:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=user.role, 
+            branch_id=None
+        ).first()
+        if cfg:
+            source = "role_global"
+
+    # Try branch global
+    if not cfg and user.branch_id:
+        cfg = db.query(LeadFetchConfig).filter_by(
+            role=None, 
+            branch_id=user.branch_id
+        ).first()
+        if cfg:
+            source = "branch_global"
+
+    # Default fallback
+    if not cfg:
+        defaults = {
+            "SUPERADMIN": dict(old_lead_remove_days=15),
+            "BRANCH_MANAGER": dict(old_lead_remove_days=20),
+            "SALES_MANAGER": dict(old_lead_remove_days=25),
+            "TL": dict(old_lead_remove_days=30),
+            "BA": dict(old_lead_remove_days=30),
+            "SBA": dict(old_lead_remove_days=25),
+        }
+        role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+        cfg_values = defaults.get(role_str, {"old_lead_remove_days": 30})
+
+        class TempConfig:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+
+        cfg = TempConfig(**cfg_values)
+
+    return cfg, source
 
 @router.patch(
     "/{lead_id}/response",
     response_model=LeadOut,
-    summary="Change the LeadResponse on a lead"
+    summary="Change the LeadResponse on a lead with retention logic"
 )
 def change_lead_response(
     lead_id: int,
@@ -897,37 +962,80 @@ def change_lead_response(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    # 1) fetch lead
-    lead = db.query(Lead).filter_by(id=lead_id).first()
-    old = lead.lead_response_id
+    # 1) Fetch lead
+    lead = db.query(Lead).filter_by(id=lead_id, is_delete=False).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # 2) validate new response
-    resp = db.query(LeadResponse).filter_by(id=payload.lead_response_id).first()
-    if not resp:
+    # 2) Validate new response
+    new_response = db.query(LeadResponse).filter_by(id=payload.lead_response_id).first()
+    if not new_response:
         raise HTTPException(
             status_code=400,
             detail=f"LeadResponse with ID {payload.lead_response_id} not found"
         )
     
+    # Store old response for logging
+    old_response_id = lead.lead_response_id
+    old_response_name = "None"
+    if old_response_id:
+        old_resp = db.query(LeadResponse).filter_by(id=old_response_id).first()
+        old_response_name = old_resp.name if old_resp else "Unknown"
+
+    # 2) Check if response is actually changing
+    if old_response_id != payload.lead_response_id:
+        # Response changed - implement retention logic (Point 8)
+        lead.lead_response_id = payload.lead_response_id
+        lead.is_old_lead = True  # Point 11: Mark as old lead
+        lead.response_changed_at = datetime.utcnow()
+        lead.assigned_for_conversion = True
+        lead.assigned_to_user = current_user.employee_code
+        
+        # Get timeout from config (Point 9)
+        config, _ = load_fetch_config(db, current_user)
+        timeout_days = config.old_lead_remove_days or 30
+        lead.conversion_deadline = datetime.utcnow() + timedelta(days=timeout_days)
+        
+        # Ensure lead stays with current user (Point 8)
+        assignment = db.query(LeadAssignment).filter_by(lead_id=lead_id).first()
+        if assignment:
+            assignment.user_id = current_user.employee_code
+            assignment.fetched_at = datetime.utcnow()
+        else:
+            # Create exclusive assignment
+            new_assignment = LeadAssignment(
+                lead_id=lead_id,
+                user_id=current_user.employee_code,
+                fetched_at=datetime.utcnow()
+            )
+            db.add(new_assignment)
+
+    # 4) Update ft dates if provided
     if payload.ft_to_date:
         lead.ft_to_date = payload.ft_to_date
 
     if payload.ft_from_date:
         lead.ft_from_date = payload.ft_from_date
 
-    # 3) apply and mark as old
-    lead.lead_response_id = payload.lead_response_id
-    lead.is_old_lead = True
-
+    # 6) Commit changes
     db.commit()
     db.refresh(lead)
-    msg = (
-      f"Response changed by {current_user.name}: "
-      f"{old or 'None'} ➔ {payload.lead_response_id}"
+
+    # 7) Add detailed story
+    story_msg = (
+        f"Response changed by {current_user.name} ({current_user.employee_code}): "
+        f"'{old_response_name}' ➔ '{new_response.name}'. "
     )
-    AddLeadStory(lead.id, current_user.employee_code, msg)
+    
+    if old_response_id != payload.lead_response_id:
+        story_msg += (
+            f"Lead assigned for conversion with {timeout_days} days deadline "
+            f"(expires: {lead.conversion_deadline.strftime('%Y-%m-%d %H:%M')}). "
+            f"Marked as old lead."
+        )
+    
+    AddLeadStory(lead.id, current_user.employee_code, story_msg)
+    
     return LeadOut(**safe_convert_lead_to_dict(lead))
 
 

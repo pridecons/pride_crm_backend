@@ -478,9 +478,13 @@ class Lead(Base):
     lead_status       = Column(String(50), nullable=True)
     profile           = Column(String(50), nullable=True)
     is_delete         = Column(Boolean, default=False, nullable=True)
-    ft_to_date        = Column(String(50), nullable=False)
-    ft_from_date      = Column(String(50), nullable=False)
+    ft_to_date        = Column(String(50), nullable=True)
+    ft_from_date      = Column(String(50), nullable=True)
     is_client         = Column(Boolean, default=False, nullable=True)
+    assigned_to_user = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    response_changed_at = Column(DateTime(timezone=True), nullable=True)
+    assigned_for_conversion = Column(Boolean, default=False, nullable=True) 
+    conversion_deadline = Column(DateTime(timezone=True), nullable=True)
 
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
@@ -494,6 +498,7 @@ class Lead(Base):
     assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
     recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
     invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
+    assigned_user = relationship("UserDetails", foreign_keys=[assigned_to_user])
 
 
 class Invoice(Base):
