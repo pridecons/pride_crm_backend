@@ -19,7 +19,7 @@ from routes.auth.auth_dependency import get_current_user
 from routes.Rational.rational_pdf_gen import generate_signed_pdf
 import io
 import pandas as pd
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 
 from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError, RecommendationType, StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
 
@@ -1001,6 +1001,46 @@ def export_recommendations_xlsx(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get(
+    "/{recommendation_id}/pdf",
+    summary="Download the signed PDF for a recommendation",
+    responses={
+        200: {"content": {"application/pdf": {}}},
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
+)
+def download_recommendation_pdf(
+    recommendation_id: int,
+    db: Session = Depends(get_db),
+):
+    # 1) fetch or 404
+    recommendation = get_recommendation_or_404(db, recommendation_id)
+
+    # 2) ensure PDF was generated
+    if not recommendation.pdf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No PDF available for recommendation {recommendation_id}"
+        )
+
+    # 3) resolve file path and check existence
+    pdf_path = Path(recommendation.pdf.lstrip("/"))
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PDF file not found on server for recommendation {recommendation_id}"
+        )
+
+    # 4) return FileResponse
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=pdf_path.name,
+        headers={"Content-Disposition": f"inline; filename={pdf_path.name}"}
     )
 
 
