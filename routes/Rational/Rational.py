@@ -20,7 +20,7 @@ from routes.Rational.rational_pdf_gen import generate_signed_pdf
 import io
 import pandas as pd
 from fastapi.responses import StreamingResponse, FileResponse
-
+import zipfile
 from fastapi import BackgroundTasks
 import asyncio
 from db.connection import SessionLocal
@@ -1055,4 +1055,66 @@ def download_recommendation_pdf(
         headers={"Content-Disposition": f"inline; filename={pdf_path.name}"}
     )
 
+@router.get(
+    "/pdfs/export",
+    summary="Export matching recommendation PDFs as a ZIP",
+    response_class=StreamingResponse,
+)
+def export_pdfs_zip(
+    user_id: Optional[str]               = Query(None, description="Filter by user_id"),
+    stock_name: Optional[str]            = Query(None, description="Filter by stock_name (ILIKE)"),
+    status: Optional[StatusType]         = Query(None, description="Filter by status"),
+    recommendation_type: Optional[str]   = Query(None, description="Filter by recommendation_type"),
+    date_from: Optional[date]            = Query(None, description="Created at >= date_from"),
+    date_to: Optional[date]              = Query(None, description="Created at <= date_to"),
+    db: Session                          = Depends(get_db),
+):
+    """
+    Apply filters on recommendations, collect their signed PDFs,
+    and stream them back as a ZIP file. Only includes records
+    where `pdf` is set and the file actually exists.
+    """
+    # 1) Build query with the same filters
+    q = db.query(NARRATION)
+    if user_id:
+        q = q.filter(NARRATION.user_id == user_id)
+    if stock_name:
+        q = q.filter(NARRATION.stock_name.ilike(f"%{stock_name}%"))
+    if status:
+        q = q.filter(NARRATION.status == status)
+    if recommendation_type:
+        q = q.filter(NARRATION.recommendation_type == recommendation_type)
+    if date_from:
+        q = q.filter(NARRATION.created_at >= date_from)
+    if date_to:
+        q = q.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+    recs = q.all()
+
+    # 2) Collect valid PDF paths
+    pdf_items: List[Path] = []
+    for r in recs:
+        if not r.pdf:
+            continue
+        pdf_path = Path(r.pdf.lstrip("/"))
+        print("pdf_path : ",pdf_path)
+        if pdf_path.exists() and pdf_path.is_file():
+            pdf_items.append(pdf_path)
+
+    # 3) Create in‑memory ZIP
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for path in pdf_items:
+            # preserve the original filename on disk
+            zipf.write(path, arcname=path.name)
+    zip_buffer.seek(0)
+
+    # 4) Stream back to client
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"recommendation_pdfs_{timestamp}.zip"
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
