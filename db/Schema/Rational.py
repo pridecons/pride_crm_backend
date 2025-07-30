@@ -19,11 +19,6 @@ class DatabaseOperationError(Exception):
 
 # ── Schemas ─────────────────────────────────────────────────────────────────────
 
-class RecommendationType(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
-    HOLD = "HOLD"
-
 class StatusType(str, Enum):
     OPEN = "OPEN"
     TARGET1_HIT = "TARGET1_HIT"

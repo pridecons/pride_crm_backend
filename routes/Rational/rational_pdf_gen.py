@@ -143,7 +143,24 @@ def process_data_for_pdf(data):
     
     return processed_data
 
-async def generate_signed_pdf(data):
+async def generate_signed_pdf(recommendation):
+    data = {
+        "id": recommendation.id,
+        "entry_price": recommendation.entry_price,
+        "stop_loss": recommendation.stop_loss,
+        "targets": recommendation.targets,
+        "targets2": recommendation.targets2,
+        "targets3": recommendation.targets3,
+        "status": recommendation.status,
+        "rational": recommendation.rational,
+        "stock_name": recommendation.stock_name,
+        "recommendation_type": recommendation.recommendation_type,
+        "graph": recommendation.graph,
+        "pdf": recommendation.pdf,
+        "user_id": recommendation.user_id,
+        "created_at": recommendation.created_at,
+        "updated_at": recommendation.updated_at,
+    }
     """Generate PDF and optionally sign it"""
     # Process data to handle images
     processed_data = process_data_for_pdf(data)
@@ -173,16 +190,23 @@ async def generate_signed_pdf(data):
 
     pdf_bytes = await sign_pdf(pdf_bytes)
     print("✅ PDF signed successfully")
+
+    rational_dir = os.path.join(project_root, "static", "rational")
+    os.makedirs(rational_dir, exist_ok=True)
     
     # Save to file
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"/static/rational/{timestamp}.pdf"
-    output_path = os.path.join(project_root, output_filename)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_filename = f"{timestamp}.pdf"
+
+    output_path = os.path.join(rational_dir, output_filename)
     with open(output_path, "wb") as f:
         f.write(pdf_bytes)
+    
+    rel_path = os.path.relpath(output_path, project_root)      # e.g. "static/rational/2025-07-30_13-30-33.pdf"
+    url_path = "/" + rel_path.replace(os.path.sep, "/")
 
     print(f"✅ PDF generated at: {output_path}")
-    return output_path, pdf_bytes
+    return output_path, url_path, pdf_bytes
 
 # if __name__ == "__main__":
 #     data = {

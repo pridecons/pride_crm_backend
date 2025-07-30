@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter, Depends, HTTPException,
-    Query, UploadFile, File, Form, status
+    Query, UploadFile, File, Form, status, BackgroundTasks
 )
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, case
@@ -21,7 +21,12 @@ import io
 import pandas as pd
 from fastapi.responses import StreamingResponse, FileResponse
 
-from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError, RecommendationType, StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
+from fastapi import BackgroundTasks
+import asyncio
+from db.connection import SessionLocal
+from typing import Literal
+
+from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError,  StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
@@ -30,7 +35,30 @@ router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 UPLOAD_DIR = "static/graphs"
 ALLOWED_FILE_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".pdf", ".svg"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+def _pdf_background_task(recommendation_id: int):
+    """
+    Fetch the freshly‐created recommendation, run generate_signed_pdf,
+    write back the URL and commit, all outside the request.
+    """
+    db = SessionLocal()
+    try:
+        rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
+        if not rec or not rec.rational or not rec.rational.strip():
+            return
+
+        # run our async PDF gen in a sync context
+        _, url_path, _ = asyncio.run(generate_signed_pdf(rec))
+
+        rec.pdf = url_path
+        db.commit()
+        logger.info(f"Background PDF generated for recommendation {recommendation_id}: {url_path}")
+    except Exception as e:
+        logger.error(f"Background PDF generation failed for recommendation {recommendation_id}: {e}", exc_info=True)
+    finally:
+        db.close()
+
 
 def ensure_upload_directory():
     """Ensure upload directory exists with proper permissions."""
@@ -74,6 +102,7 @@ def get_recommendation_or_404(db: Session, recommendation_id: int) -> NARRATION:
 # ── 1. CREATE ───────────────────────────────────────────────────────────────────
 @router.post("/", response_model=NarrationResponse, status_code=status.HTTP_201_CREATED)
 async def create_recommendation(
+    background_tasks: BackgroundTasks,
     entry_price: float                   = Form(...),
     stop_loss: Optional[float]           = Form(None),
     targets: float                       = Form(0),
@@ -99,12 +128,7 @@ async def create_recommendation(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Stop loss must be greater than 0"
             )
-        
-        if recommendation_type and recommendation_type not in [e.value for e in RecommendationType]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid recommendation type. Must be one of: {[e.value for e in RecommendationType]}"
-            )
+    
 
         # Ensure upload directory exists
         if not ensure_upload_directory():
@@ -184,17 +208,7 @@ async def create_recommendation(
 
         # Generate PDF if rationale provided
         if rational and rational.strip():
-            try:
-                output_path, _ = await generate_signed_pdf(recommendation)
-                recommendation.pdf = output_path
-                db.commit()
-                db.refresh(recommendation)
-                logger.info(f"PDF generated successfully for recommendation {recommendation.id}")
-                
-            except Exception as e:
-                # Don't rollback the recommendation creation, just log the PDF error
-                logger.error(f"PDF generation failed for recommendation {recommendation.id}: {e}", exc_info=True)
-                # Continue without raising exception - recommendation is still created
+            background_tasks.add_task(_pdf_background_task, recommendation.id)
 
         return recommendation
 
@@ -264,13 +278,7 @@ def get_recommendations(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="date_from cannot be later than date_to"
             )
-        
-        # Validate recommendation_type
-        if recommendation_type and recommendation_type not in [e.value for e in RecommendationType]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid recommendation type. Must be one of: {[e.value for e in RecommendationType]}"
-            )
+    
 
         # Build query with filters
         query = db.query(NARRATION)
@@ -317,6 +325,7 @@ def get_recommendations(
 # ── 4. UPDATE ───────────────────────────────────────────────────────────────────
 @router.put("/{recommendation_id}", response_model=NarrationResponse)
 async def update_recommendation(
+    background_tasks: BackgroundTasks,
     recommendation_id: int,
     payload: NarrationUpdate,
     db: Session = Depends(get_db),
@@ -377,16 +386,7 @@ async def update_recommendation(
 
         # Regenerate PDF if rationale exists
         if recommendation.rational and recommendation.rational.strip():
-            try:
-                output_path, _ = await generate_signed_pdf(recommendation)
-                recommendation.pdf = output_path
-                db.commit()
-                db.refresh(recommendation)
-                logger.info(f"PDF regenerated successfully for recommendation {recommendation_id}")
-                
-            except Exception as e:
-                logger.error(f"PDF regeneration failed for recommendation {recommendation_id}: {e}", exc_info=True)
-                # Don't fail the update just because PDF generation failed
+           background_tasks.add_task(_pdf_background_task, recommendation_id)
 
         return recommendation
 
@@ -912,9 +912,8 @@ def get_analytics_summary(
             detail="An unexpected error occurred while fetching analytics summary"
         )
     
-
 @router.get(
-    "/export",
+    "/xlsx/export",
     summary="Export recommendations (including rational) to XLSX",
     response_class=StreamingResponse
 )
@@ -929,12 +928,16 @@ def export_recommendations_xlsx(
         None,
         description="List of columns to include in the XLSX, e.g. columns=ID&columns=Rational"
     ),
+    sort_order: Literal["asc", "desc"]   = Query(
+        "desc",
+        description="Sort by creation date: `asc` or `desc`"
+    ),
     db: Session                          = Depends(get_db),
 ):
     """
     Apply filters, then stream back an XLSX file containing only the requested columns.
     """
-    # 1) Build query with filters (same as before)
+    # 1) Build query with filters
     q = db.query(NARRATION)
     if user_id:
         q = q.filter(NARRATION.user_id == user_id)
@@ -949,9 +952,13 @@ def export_recommendations_xlsx(
     if date_to:
         q = q.filter(NARRATION.created_at <= date_to)
 
-    recs = q.order_by(desc(NARRATION.created_at)).all()
+    # 2) Apply ordering
+    if sort_order == "asc":
+        recs = q.order_by(NARRATION.created_at.asc()).all()
+    else:
+        recs = q.order_by(NARRATION.created_at.desc()).all()
 
-    # 2) Transform to list of dicts
+    # 3) Transform to list of dicts
     data = []
     for r in recs:
         data.append({
@@ -970,7 +977,7 @@ def export_recommendations_xlsx(
             "Updated At": r.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
         })
 
-    # 3) Build DataFrame and filter columns if requested
+    # 4) Build DataFrame and filter columns if requested
     df = pd.DataFrame(data)
     if columns:
         invalid = set(columns) - set(df.columns)
@@ -981,7 +988,7 @@ def export_recommendations_xlsx(
             )
         df = df[columns]
 
-    # 4) Write to Excel in-memory
+    # 5) Write to Excel in-memory
     output = io.BytesIO()
     try:
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -994,7 +1001,7 @@ def export_recommendations_xlsx(
             detail="Could not generate Excel file"
         )
 
-    # 5) Stream back to client
+    # 6) Stream it back
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"recommendations_{timestamp}.xlsx"
     return StreamingResponse(
