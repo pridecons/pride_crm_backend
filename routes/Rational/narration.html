@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    /* Remove default margins and set page size */
+    @page {
+      size: A4;
+      margin: 10mm 8mm; /* Minimal page margins */
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body { 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      line-height: 1.3;
+      font-size: 12px;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    
+    .container { 
+      width: 100%; 
+      position: relative;
+      min-height: 100vh;
+    }
+    
+    .main-content {
+      width: 100%;
+      padding-bottom: 200px; /* Space for footer */
+    }
+    
+    /* Company Header - Compact */
+    .company-header {
+      border-bottom: 2px solid #3498db;
+      padding: 8px 0;
+      margin-bottom: 12px;
+    }
+    
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    
+    .company-logo img {
+      width: 120px;
+      height: auto;
+    }
+    
+    .company-details {
+      text-align: right;
+      font-size: 9px;
+      line-height: 1.2;
+    }
+    
+    .company-details div {
+      margin-bottom: 2px;
+    }
+    
+    .company-name {
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      color: #2c3e50;
+      margin-bottom: 4px;
+    }
+    
+    .company-address {
+      text-align: center;
+      font-size: 10px;
+      color: #666;
+    }
+    
+    /* Main Title */
+    h1 { 
+      color: #2c3e50;
+      font-size: 16px; 
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 8px;
+    }
+    
+    /* Recommendation Table - Compact */
+    .recommendation-table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    
+    .recommendation-table th {
+      background: linear-gradient(135deg, #3498db, #2980b9);
+      color: white;
+      padding: 8px 10px;
+      text-align: left;
+      font-weight: bold;
+      font-size: 11px;
+    }
+    
+    .recommendation-table td { 
+      padding: 6px 10px; 
+      border: 1px solid #ddd; 
+      vertical-align: middle;
+    }
+    
+    .recommendation-table tr:nth-child(even) {
+      background-color: #f8f9fa;
+    }
+    
+    .recommendation-table tr:hover {
+      background-color: #e3f2fd;
+    }
+    
+    /* Price styling */
+    .price {
+      font-weight: bold;
+      color: #27ae60;
+      font-size: 12px;
+    }
+    
+    .stop-loss {
+      font-weight: bold;
+      color: #e74c3c;
+      font-size: 12px;
+    }
+    
+    /* Rationale section - Compact */
+    .rationale-section {
+      background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+      border-left: 4px solid #f39c12;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 0 6px 6px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .rationale-title {
+      font-weight: bold;
+      color: #d68910;
+      margin-bottom: 6px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .rationale-content {
+      color: #856404;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    
+    /* Graph section - Compact */
+    .graph-section {
+      text-align: center;
+      margin: 12px 0;
+      padding: 10px;
+      background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+      border-radius: 8px;
+      border: 2px dashed #3498db;
+    }
+    
+    .graph-section h3 {
+      margin: 0 0 8px 0;
+      color: #2c3e50;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    
+    .graph-section img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+    }
+    
+    /* Watermark - Subtle */
+    .watermark {
+      position: fixed; 
+      top: 50%; 
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-45deg);
+      font-size: 60px; 
+      color: rgba(52, 152, 219, 0.03); 
+      white-space: nowrap;
+      z-index: -1;
+      font-weight: bold;
+      pointer-events: none;
+    }
+    
+    /* Footer - Fixed at bottom */
+    .footer {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100%;
+      background: white;
+      margin: 0;
+      padding: 30px 0;
+      margin-top: 100%;
+    }
+    
+    /* Contact Info - Inline */
+    .contact-info {
+      text-align: center;
+      font-size: 9px;
+      color: #666;
+      margin: 8px 0;
+      padding: 6px 0;
+      border-top: 1px solid #ddd;
+      width: 100%;
+    }
+    
+    /* Disclaimer - Compact */
+    .disclaimer {
+      background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 9px;
+      text-align: center;
+      margin-bottom: 10px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    
+    /* Icons */
+    .icon {
+      display: inline-block;
+      font-size: 14px;
+    }
+    
+    /* Professional touches */
+    .highlight-box {
+      background: linear-gradient(135deg, #e8f5e8, #d4edda);
+      border-left: 4px solid #28a745;
+      padding: 8px 12px;
+      margin: 8px 0;
+      border-radius: 0 6px 6px 0;
+    }
+    
+    /* Print optimizations */
+    @media print {
+      @page {
+        size: A4;
+        margin: 10mm 8mm;
+      }
+      
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      
+      .container {
+        position: relative !important;
+        min-height: 297mm !important; /* A4 height minus margins */
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      
+      .main-content {
+        padding-bottom: 60mm !important; /* Space for footer */
+      }
+      
+      .footer {
+        position: absolute !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 5mm 0 !important;
+        background: white !important;
+      }
+      
+      .disclaimer {
+        width: 100% !important;
+        box-sizing: border-box !important;
+        margin: 0 0 2mm 0 !important;
+      }
+      
+      .contact-info {
+        width: 100% !important;
+        margin: 2mm 0 0 0 !important;
+      }
+      
+      .watermark {
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="watermark">CONFIDENTIAL</div>
+  
+  <div class="container">
+    <!-- Company Header -->
+    <div class="main-content">
+      <div class="company-header">
+        <div class="header-top">
+          <div class="company-logo">
+              <img src="{{ data.logo_base64 }}" alt="Pride Trading Logo" />
+          </div>
+          <div class="company-details">
+            <div><strong>CIN:</strong> U67190GJ2022PTC130684</div>
+            <div><strong>SEBI:</strong> INH000010362</div>
+            <div><strong>GSTIN:</strong> 24AAMCP7919A1ZF</div>
+          </div>
+        </div>
+        
+        <div class="company-name">Pride Trading Consultancy Pvt. Ltd.</div>
+        <div class="company-address">410-411, Serene Centrum Sevasi Road, Vadodara, Gujarat 390021</div>
+      </div>
+
+      <!-- Main Content -->
+      <div>
+        <h1 style="text-align: center;"><span class="icon">📈</span> Stock Recommendation Report: {{ data.stock_name }}</h1>
+        
+        <table class="recommendation-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Stock Name</strong></td>
+              <td><strong>{{ data.stock_name }}</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Recommendation Type</strong></td>
+              <td>{{ data.recommendation_type }}</td>
+            </tr>
+            <tr>
+              <td><strong>Entry Price</strong></td>
+              <td class="price">₹{{ data.entry_price }}</td>
+            </tr>
+            <tr>
+              <td><strong>Stop Loss</strong></td>
+              <td class="stop-loss">₹{{ data.stop_loss }}</td>
+            </tr>
+            <tr>
+              <td><strong>Target 1</strong></td>
+              <td class="price">₹{{ data.targets }}</td>
+            </tr>
+            {% if data.targets2 and data.targets2 != 0 %}
+            <tr>
+              <td><strong>Target 2</strong></td>
+              <td class="price">₹{{ data.targets2 }}</td>
+            </tr>
+            {% endif %}
+            {% if data.targets3 and data.targets3 != 0 %}
+            <tr>
+              <td><strong>Target 3</strong></td>
+              <td class="price">₹{{ data.targets3 }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td><strong>Generated On</strong></td>
+              <td>{{ data.created_at }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Rationale Section -->
+        <div class="rationale-section">
+          <div class="rationale-title"><span class="icon">📋</span> Analysis & Rationale</div>
+          <div class="rationale-content">{{ data.rational }}</div>
+        </div>
+
+        <!-- Graph Section -->
+        {% if data.graph or data.graph_base64 or data.graph_url %}
+        <div class="graph-section">
+          <h3><span class="icon">📊</span> Technical Chart Analysis</h3>
+            <img src="{{ data.graph_base64 }}" alt="Stock Chart Analysis" loading="lazy" style="width: 100%; height: 300px;" />
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    
+    <!-- Footer moved to bottom -->
+    <div class="footer">
+      <div class="disclaimer">
+        <span class="icon">⚠️</span><strong> Disclosure:</strong>
+        <a href="https://pridecons.com/#disclosure">https://pridecons.com/#disclosure</a>
+      </div>
+      <div class="contact-info">
+        <strong>Contact:</strong> Phone: +91 9981919424 | Email: compliance@pridecons.com
+      </div>
+    </div>
+  </div>
+</body>
+</html>

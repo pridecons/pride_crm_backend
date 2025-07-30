@@ -714,6 +714,7 @@ class NARRATION(Base):
     rational   = Column(String(100),nullable=True )
     stock_name       = Column(String(100),nullable=True )
     recommendation_type = Column(String(500),nullable=True )
+    pdf  = Column(String, nullable=True)
     user_id   = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(

@@ -1,164 +1,243 @@
 # routes/recommendations.py
-import os
 import time
+import logging
 import aiofiles
+from pathlib import Path
 
 from fastapi import (
     APIRouter, Depends, HTTPException,
-    Query, UploadFile, File, Form
+    Query, UploadFile, File, Form, status
 )
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, case
-from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
-from enum import Enum
-
 from db.models import NARRATION
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
+from routes.Rational.rational_pdf_gen import generate_signed_pdf
+import io
+import pandas as pd
+from fastapi.responses import StreamingResponse
 
-router = APIRouter(
-    prefix="/recommendations",
-    tags=["Recommendations"],
-)
+from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError, RecommendationType, StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
 
-# ── Pydantic Schemas ────────────────────────────────────────────────────────────
-class RecommendationType(str, Enum):
-    BUY = "BUY"
-    SELL = "SELL"
-    HOLD = "HOLD"
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
-class StatusType(str, Enum):
-    OPEN = "OPEN"
-    TARGET1_HIT = "TARGET1_HIT"
-    TARGET2_HIT = "TARGET2_HIT"
-    TARGET3_HIT = "TARGET3_HIT"
-    STOP_LOSS_HIT = "STOP_LOSS_HIT"
-    CLOSED = "CLOSED"
-
-class NarrationCreate(BaseModel):
-    entry_price: float
-    stop_loss: Optional[float] = None
-    targets: Optional[float] = 0
-    targets2: Optional[float] = None
-    targets3: Optional[float] = None
-    rational: Optional[str] = None
-    stock_name: Optional[str] = None
-    recommendation_type: Optional[str] = None
-
-class NarrationUpdate(BaseModel):
-    entry_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    targets: Optional[float] = None
-    targets2: Optional[float] = None
-    targets3: Optional[float] = None
-    status: Optional[StatusType] = None
-    graph: Optional[str] = None
-    rational: Optional[str] = None
-    stock_name: Optional[str] = None
-    recommendation_type: Optional[str] = None
-
-class NarrationResponse(BaseModel):
-    id: int
-    entry_price: Optional[float]
-    stop_loss: Optional[float]
-    targets: Optional[float]
-    targets2: Optional[float]
-    targets3: Optional[float]
-    status: str
-    graph: Optional[str]
-    rational: Optional[str]
-    stock_name: Optional[str]
-    recommendation_type: Optional[str]
-    user_id: str
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class AnalyticsResponse(BaseModel):
-    user_id: str
-    total_recommendations: int
-    open_recommendations: int
-    target1_hit: int
-    target2_hit: int
-    target3_hit: int
-    stop_loss_hit: int
-    closed_recommendations: int
-    success_rate: float
-    avg_return: Optional[float]
-    best_recommendation: Optional[Dict]
-    worst_recommendation: Optional[Dict]
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
-# Ensure the upload folder exists
 UPLOAD_DIR = "static/graphs"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+ALLOWED_FILE_TYPES = {".jpg", ".jpeg", ".png", ".gif", ".pdf", ".svg"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 10MB
+
+def ensure_upload_directory():
+    """Ensure upload directory exists with proper permissions."""
+    try:
+        Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+        return True
+    except PermissionError:
+        logger.error(f"Permission denied creating upload directory: {UPLOAD_DIR}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to create upload directory: {e}")
+        return False
+
+def validate_file_upload(file: UploadFile) -> bool:
+    """Validate uploaded file type and size."""
+    if not file.filename:
+        raise FileUploadError("No filename provided")
+    
+    # Check file extension
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_FILE_TYPES:
+        raise FileUploadError(f"File type {file_ext} not allowed. Allowed types: {', '.join(ALLOWED_FILE_TYPES)}")
+    
+    # Check file size (if available)
+    if hasattr(file, 'size') and file.size and file.size > MAX_FILE_SIZE:
+        raise FileUploadError(f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / 1024 / 1024}MB")
+    
+    return True
+
+def get_recommendation_or_404(db: Session, recommendation_id: int) -> NARRATION:
+    """Get recommendation by ID or raise 404."""
+    try:
+        recommendation = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
+        if not recommendation:
+            raise RecommendationNotFoundError(f"Recommendation with ID {recommendation_id} not found")
+        return recommendation
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching recommendation {recommendation_id}: {e}")
+        raise DatabaseOperationError("Database error occurred while fetching recommendation")
 
 # ── 1. CREATE ───────────────────────────────────────────────────────────────────
-@router.post("/", response_model=NarrationResponse)
+@router.post("/", response_model=NarrationResponse, status_code=status.HTTP_201_CREATED)
 async def create_recommendation(
     entry_price: float                   = Form(...),
-    stop_loss: float                     = Form(None),
+    stop_loss: Optional[float]           = Form(None),
     targets: float                       = Form(0),
-    targets2: float                      = Form(None),
-    targets3: float                      = Form(None),
-    rational: str                        = Form(None),
-    stock_name: str                      = Form(None),
-    recommendation_type: str             = Form(None),
+    targets2: Optional[float]            = Form(None),
+    targets3: Optional[float]            = Form(None),
+    rational: Optional[str]              = Form(None),
+    stock_name: Optional[str]            = Form(None),
+    recommendation_type: Optional[str]   = Form(None),
     graph: UploadFile                    = File(None),
     db: Session                          = Depends(get_db),
     current_user                        = Depends(get_current_user),
 ):
-    """
-    Create a new stock recommendation with optional graph upload.
-    """
-    graph_path: Optional[str] = None
-    if graph:
-        filename    = f"{current_user.employee_code}_{int(time.time())}_{graph.filename}"
-        file_path   = os.path.join(UPLOAD_DIR, filename)
-        async with aiofiles.open(file_path, "wb") as out:
-            await out.write(await graph.read())
-        graph_path = f"/static/graphs/{filename}"
-
     try:
-        rec = NARRATION(
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            targets=targets,
-            targets2=targets2,
-            targets3=targets3,
-            rational=rational,
-            stock_name=stock_name,
-            recommendation_type=recommendation_type,
-            graph=graph_path,
-            user_id=current_user.employee_code,
-        )
-        db.add(rec)
-        db.commit()
-        db.refresh(rec)
-        return rec
+        # Validate input data
+        if entry_price <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Entry price must be greater than 0"
+            )
+        
+        if stop_loss is not None and stop_loss <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Stop loss must be greater than 0"
+            )
+        
+        if recommendation_type and recommendation_type not in [e.value for e in RecommendationType]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid recommendation type. Must be one of: {[e.value for e in RecommendationType]}"
+            )
 
-    except Exception as e:
+        # Ensure upload directory exists
+        if not ensure_upload_directory():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize file upload system"
+            )
+
+        # Handle file upload
+        graph_path: Optional[str] = None
+        if graph and graph.filename:
+            try:
+                validate_file_upload(graph)
+                
+                # Generate safe filename
+                timestamp = int(time.time())
+                safe_filename = f"{current_user.employee_code}_{timestamp}_{graph.filename}"
+                file_path = Path(UPLOAD_DIR) / safe_filename
+                
+                # Save file
+                content = await graph.read()
+                if len(content) > MAX_FILE_SIZE:
+                    raise FileUploadError(f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / 1024 / 1024}MB")
+                
+                async with aiofiles.open(file_path, "wb") as out:
+                    await out.write(content)
+                
+                graph_path = f"/static/graphs/{safe_filename}"
+                logger.info(f"File uploaded successfully: {graph_path}")
+                
+            except FileUploadError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except Exception as e:
+                logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to save uploaded file"
+                )
+
+        # Create database record
         try:
+            recommendation = NARRATION(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                targets=targets,
+                targets2=targets2,
+                targets3=targets3,
+                rational=rational,
+                stock_name=stock_name,
+                recommendation_type=recommendation_type,
+                graph=graph_path,
+                user_id=current_user.employee_code,
+            )
+            
+            db.add(recommendation)
+            db.commit()
+            db.refresh(recommendation)
+            logger.info(f"Recommendation created successfully with ID: {recommendation.id}")
+            
+        except IntegrityError as e:
             db.rollback()
-        except:
-            pass
-        raise HTTPException(status_code=400, detail=f"Error creating recommendation: {e}")
+            logger.error(f"Database integrity error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Data integrity constraint violation"
+            )
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Database error during creation: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred while creating recommendation"
+            )
+
+        # Generate PDF if rationale provided
+        if rational and rational.strip():
+            try:
+                output_path, _ = await generate_signed_pdf(recommendation)
+                recommendation.pdf = output_path
+                db.commit()
+                db.refresh(recommendation)
+                logger.info(f"PDF generated successfully for recommendation {recommendation.id}")
+                
+            except Exception as e:
+                # Don't rollback the recommendation creation, just log the PDF error
+                logger.error(f"PDF generation failed for recommendation {recommendation.id}: {e}", exc_info=True)
+                # Continue without raising exception - recommendation is still created
+
+        return recommendation
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in create_recommendation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while creating the recommendation"
+        )
+
 
 # ── 2. READ (single) ────────────────────────────────────────────────────────────
 @router.get("/{recommendation_id}", response_model=NarrationResponse)
 def get_recommendation(
     recommendation_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    rec = db.query(NARRATION).get(recommendation_id)
-    if not rec:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
-    return rec
+    try:
+        if recommendation_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recommendation ID must be a positive integer"
+            )
+        
+        recommendation = get_recommendation_or_404(db, recommendation_id)
+        return recommendation
+        
+    except RecommendationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recommendation with ID {recommendation_id} not found"
+        )
+    except DatabaseOperationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching recommendation {recommendation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching the recommendation"
+        )
+
 
 # ── 3. READ (list + filters) ───────────────────────────────────────────────────
 @router.get("/", response_model=List[NarrationResponse])
@@ -169,10 +248,688 @@ def get_recommendations(
     recommendation_type: Optional[str]   = Query(None),
     date_from: Optional[date]            = Query(None),
     date_to: Optional[date]              = Query(None),
-    limit: int                           = Query(100),
-    offset: int                          = Query(0),
+    limit: int                           = Query(100, ge=1, le=1000),
+    offset: int                          = Query(0, ge=0),
     db: Session                          = Depends(get_db),
 ):
+    try:
+        # Validate date range
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from cannot be later than date_to"
+            )
+        
+        # Validate recommendation_type
+        if recommendation_type and recommendation_type not in [e.value for e in RecommendationType]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid recommendation type. Must be one of: {[e.value for e in RecommendationType]}"
+            )
+
+        # Build query with filters
+        query = db.query(NARRATION)
+        
+        if user_id:
+            query = query.filter(NARRATION.user_id == user_id)
+        if stock_name:
+            query = query.filter(NARRATION.stock_name.ilike(f"%{stock_name.strip()}%"))
+        if status:
+            query = query.filter(NARRATION.status == status)
+        if recommendation_type:
+            query = query.filter(NARRATION.recommendation_type == recommendation_type)
+        if date_from:
+            query = query.filter(NARRATION.created_at >= date_from)
+        if date_to:
+            # Include the entire day
+            query = query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+        recommendations = (
+            query.order_by(desc(NARRATION.created_at))
+                 .offset(offset)
+                 .limit(limit)
+                 .all()
+        )
+        
+        return recommendations
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching recommendations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred while fetching recommendations"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching recommendations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching recommendations"
+        )
+
+
+# ── 4. UPDATE ───────────────────────────────────────────────────────────────────
+@router.put("/{recommendation_id}", response_model=NarrationResponse)
+async def update_recommendation(
+    recommendation_id: int,
+    payload: NarrationUpdate,
+    db: Session = Depends(get_db),
+):
+    try:
+        if recommendation_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recommendation ID must be a positive integer"
+            )
+
+        # Validate payload data
+        if payload.entry_price is not None and payload.entry_price <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Entry price must be greater than 0"
+            )
+        
+        if payload.stop_loss is not None and payload.stop_loss <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Stop loss must be greater than 0"
+            )
+
+        recommendation = get_recommendation_or_404(db, recommendation_id)
+        
+        # Update fields
+        update_data = payload.dict(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No fields provided for update"
+            )
+
+        for field, value in update_data.items():
+            if hasattr(recommendation, field):
+                setattr(recommendation, field, value)
+
+        try:
+            db.commit()
+            db.refresh(recommendation)
+            logger.info(f"Recommendation {recommendation_id} updated successfully")
+            
+        except IntegrityError as e:
+            db.rollback()
+            logger.error(f"Database integrity error during update: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Data integrity constraint violation"
+            )
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Database error during update: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred while updating recommendation"
+            )
+
+        # Regenerate PDF if rationale exists
+        if recommendation.rational and recommendation.rational.strip():
+            try:
+                output_path, _ = await generate_signed_pdf(recommendation)
+                recommendation.pdf = output_path
+                db.commit()
+                db.refresh(recommendation)
+                logger.info(f"PDF regenerated successfully for recommendation {recommendation_id}")
+                
+            except Exception as e:
+                logger.error(f"PDF regeneration failed for recommendation {recommendation_id}: {e}", exc_info=True)
+                # Don't fail the update just because PDF generation failed
+
+        return recommendation
+
+    except HTTPException:
+        raise
+    except RecommendationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recommendation with ID {recommendation_id} not found"
+        )
+    except DatabaseOperationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error updating recommendation {recommendation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating the recommendation"
+        )
+
+
+# ── 4b. STATUS-ONLY UPDATE ──────────────────────────────────────────────────────
+@router.put("/status/{recommendation_id}", response_model=NarrationResponse)
+def update_recommendation_status(
+    recommendation_id: int,
+    status_update: StatusType,
+    db: Session = Depends(get_db),
+):
+    try:
+        if recommendation_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recommendation ID must be a positive integer"
+            )
+
+        recommendation = get_recommendation_or_404(db, recommendation_id)
+        
+        # Validate status transition (optional business logic)
+        old_status = recommendation.status
+        recommendation.status = status_update
+
+        try:
+            db.commit()
+            db.refresh(recommendation)
+            logger.info(f"Recommendation {recommendation_id} status updated from {old_status} to {status_update}")
+            
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Database error during status update: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred while updating status"
+            )
+
+        return recommendation
+
+    except HTTPException:
+        raise
+    except RecommendationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recommendation with ID {recommendation_id} not found"
+        )
+    except DatabaseOperationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error updating status for recommendation {recommendation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating the status"
+        )
+
+
+# ── 5. DELETE ───────────────────────────────────────────────────────────────────
+@router.delete("/{recommendation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_recommendation(
+    recommendation_id: int,
+    db: Session = Depends(get_db),
+):
+    try:
+        if recommendation_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recommendation ID must be a positive integer"
+            )
+
+        recommendation = get_recommendation_or_404(db, recommendation_id)
+        
+        # Clean up associated files before deletion
+        if recommendation.graph:
+            try:
+                graph_file_path = Path(recommendation.graph.lstrip('/'))
+                if graph_file_path.exists():
+                    graph_file_path.unlink()
+                    logger.info(f"Deleted graph file: {graph_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete graph file {recommendation.graph}: {e}")
+
+        if recommendation.pdf:
+            try:
+                pdf_file_path = Path(recommendation.pdf.lstrip('/'))
+                if pdf_file_path.exists():
+                    pdf_file_path.unlink()
+                    logger.info(f"Deleted PDF file: {pdf_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete PDF file {recommendation.pdf}: {e}")
+
+        try:
+            db.delete(recommendation)
+            db.commit()
+            logger.info(f"Recommendation {recommendation_id} deleted successfully")
+            
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Database error during deletion: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred while deleting recommendation"
+            )
+
+    except HTTPException:
+        raise
+    except RecommendationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recommendation with ID {recommendation_id} not found"
+        )
+    except DatabaseOperationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error deleting recommendation {recommendation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while deleting the recommendation"
+        )
+
+
+# ── 6. USER ANALYTICS ───────────────────────────────────────────────────────────
+@router.get("/user/{user_id}", response_model=AnalyticsResponse)
+def get_user_analytics(
+    user_id: str,
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
+):
+    try:
+        if not user_id or not user_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User ID cannot be empty"
+            )
+
+        # Validate date range
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from cannot be later than date_to"
+            )
+
+        query = db.query(NARRATION).filter(NARRATION.user_id == user_id.strip())
+        
+        if date_from:
+            query = query.filter(NARRATION.created_at >= date_from)
+        if date_to:
+            query = query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+        recommendations = query.all()
+        
+        if not recommendations:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No recommendations found for user {user_id}"
+            )
+
+        # Calculate metrics
+        total = len(recommendations)
+        status_counts = {s.value: 0 for s in StatusType}
+        returns = []
+
+        for rec in recommendations:
+            status_counts[rec.status] += 1
+            
+            # Calculate returns for successful recommendations
+            if rec.entry_price and rec.status in {"TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"}:
+                target_mapping = {
+                    "TARGET1_HIT": "targets",
+                    "TARGET2_HIT": "targets2", 
+                    "TARGET3_HIT": "targets3"
+                }
+                target_value = getattr(rec, target_mapping[rec.status], None)
+                if target_value:
+                    return_pct = (target_value - rec.entry_price) / rec.entry_price * 100
+                    returns.append((return_pct, rec))
+                    
+            elif rec.entry_price and rec.status == "STOP_LOSS_HIT" and rec.stop_loss:
+                return_pct = (rec.stop_loss - rec.entry_price) / rec.entry_price * 100
+                returns.append((return_pct, rec))
+
+        successful = sum(status_counts[s] for s in ["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"])
+        closed = successful + status_counts["STOP_LOSS_HIT"]
+        success_rate = round(successful / closed * 100, 2) if closed else 0.0
+        avg_return = round(sum(r[0] for r in returns) / len(returns), 2) if returns else None
+
+        best_recommendation = None
+        worst_recommendation = None
+        
+        if returns:
+            best_return, best_rec = max(returns, key=lambda x: x[0])
+            worst_return, worst_rec = min(returns, key=lambda x: x[0])
+            
+            best_recommendation = {
+                "id": best_rec.id,
+                "stock_name": best_rec.stock_name,
+                "return_pct": round(best_return, 2)
+            }
+            worst_recommendation = {
+                "id": worst_rec.id,
+                "stock_name": worst_rec.stock_name,
+                "return_pct": round(worst_return, 2)
+            }
+
+        return AnalyticsResponse(
+            user_id=user_id,
+            total_recommendations=total,
+            open_recommendations=status_counts["OPEN"],
+            target1_hit=status_counts["TARGET1_HIT"],
+            target2_hit=status_counts["TARGET2_HIT"],
+            target3_hit=status_counts["TARGET3_HIT"],
+            stop_loss_hit=status_counts["STOP_LOSS_HIT"],
+            closed_recommendations=status_counts["CLOSED"],
+            success_rate=success_rate,
+            avg_return=avg_return,
+            best_recommendation=best_recommendation,
+            worst_recommendation=worst_recommendation
+        )
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching analytics for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred while fetching user analytics"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching analytics for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching user analytics"
+        )
+
+
+# ── 7. TEAM ANALYTICS ──────────────────────────────────────────────────────────
+@router.get("/analytics/team")
+def get_team_analytics(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
+):
+    try:
+        # Validate date range
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from cannot be later than date_to"
+            )
+
+        base_query = db.query(NARRATION)
+        
+        if date_from:
+            base_query = base_query.filter(NARRATION.created_at >= date_from)
+        if date_to:
+            base_query = base_query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+        stats = (
+            base_query
+            .with_entities(
+                NARRATION.user_id,
+                func.count(NARRATION.id).label("total_recs"),
+                func.sum(
+                    case(
+                        [(NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1)],
+                        else_=0
+                    )
+                ).label("successful"),
+                func.sum(
+                    case(
+                        [(NARRATION.status == "STOP_LOSS_HIT", 1)],
+                        else_=0
+                    )
+                ).label("failed"),
+            )
+            .group_by(NARRATION.user_id)
+            .all()
+        )
+
+        team_analytics = []
+        for user_id, total, successful, failed in stats:
+            closed = (successful or 0) + (failed or 0)
+            success_rate = round((successful or 0) / closed * 100, 2) if closed else 0.0
+            
+            team_analytics.append({
+                "user_id": user_id,
+                "total_recommendations": total or 0,
+                "successful_recommendations": successful or 0,
+                "failed_recommendations": failed or 0,
+                "success_rate": success_rate,
+            })
+
+        # Calculate overall summary
+        total_users = len(team_analytics)
+        total_recommendations = sum(u["total_recommendations"] for u in team_analytics)
+        overall_successful = sum(u["successful_recommendations"] for u in team_analytics)
+        overall_closed = sum(u["successful_recommendations"] + u["failed_recommendations"] for u in team_analytics)
+        overall_success_rate = round(overall_successful / overall_closed * 100, 2) if overall_closed else 0.0
+
+        return {
+            "team_analytics": team_analytics,
+            "summary": {
+                "total_users": total_users,
+                "total_recommendations": total_recommendations,
+                "overall_success_rate": overall_success_rate,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching team analytics: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred while fetching team analytics"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching team analytics: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching team analytics"
+        )
+
+
+# ── 8. TOP STOCKS ──────────────────────────────────────────────────────────────
+@router.get("/analytics/top-stocks", response_model=List[Dict[str, Any]])
+def get_top_performing_stocks(
+    limit: int                = Query(10, ge=1, le=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
+):
+    try:
+        # Validate date range
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from cannot be later than date_to"
+            )
+
+        query = db.query(
+            NARRATION.stock_name,
+            func.count(NARRATION.id).label("total"),
+            func.sum(
+                case(
+                    [(NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1)],
+                    else_=0
+                )
+            ).label("successful"),
+        ).filter(
+            NARRATION.stock_name.isnot(None),
+            NARRATION.stock_name != ""
+        )
+
+        if date_from:
+            query = query.filter(NARRATION.created_at >= date_from)
+        if date_to:
+            query = query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+        stats = query.group_by(NARRATION.stock_name).all()
+
+        if not stats:
+            return []
+
+        results = []
+        for stock_name, total, successful in stats:
+            success_rate = round((successful or 0) / (total or 1) * 100, 2) if total else 0.0
+            results.append({
+                "stock_name": stock_name,
+                "total_recommendations": total or 0,
+                "successful_recommendations": successful or 0,
+                "success_rate": success_rate,
+            })
+
+        # Sort by success rate (descending) then by total recommendations (descending)
+        results.sort(key=lambda x: (x["success_rate"], x["total_recommendations"]), reverse=True)
+        
+        return results[:limit]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching top stocks analytics: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred while fetching top stocks analytics"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching top stocks analytics: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching top stocks analytics"
+        )
+
+
+# ── ADDITIONAL HELPER ENDPOINTS ─────────────────────────────────────────────────
+@router.get("/analytics/summary")
+def get_analytics_summary(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date]   = Query(None),
+    db: Session               = Depends(get_db),
+):
+    """Get overall system analytics summary."""
+    try:
+        # Validate date range
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from cannot be later than date_to"
+            )
+
+        base_query = db.query(NARRATION)
+        
+        if date_from:
+            base_query = base_query.filter(NARRATION.created_at >= date_from)
+        if date_to:
+            base_query = base_query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+        # Get overall counts
+        total_recommendations = base_query.count()
+        
+        if total_recommendations == 0:
+            return {
+                "total_recommendations": 0,
+                "active_users": 0,
+                "success_rate": 0.0,
+                "status_distribution": {},
+                "recommendation_types": {}
+            }
+
+        # Status distribution
+        status_stats = (
+            base_query
+            .with_entities(
+                NARRATION.status,
+                func.count(NARRATION.id).label("count")
+            )
+            .group_by(NARRATION.status)
+            .all()
+        )
+
+        status_distribution = {status: count for status, count in status_stats}
+
+        # Recommendation types distribution
+        type_stats = (
+            base_query
+            .filter(NARRATION.recommendation_type.isnot(None))
+            .with_entities(
+                NARRATION.recommendation_type,
+                func.count(NARRATION.id).label("count")
+            )
+            .group_by(NARRATION.recommendation_type)
+            .all()
+        )
+
+        recommendation_types = {rec_type: count for rec_type, count in type_stats}
+
+        # Active users count
+        active_users = (
+            base_query
+            .with_entities(NARRATION.user_id)
+            .distinct()
+            .count()
+        )
+
+        # Overall success rate
+        successful_count = sum(
+            status_distribution.get(status, 0) 
+            for status in ["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]
+        )
+        closed_count = successful_count + status_distribution.get("STOP_LOSS_HIT", 0)
+        success_rate = round(successful_count / closed_count * 100, 2) if closed_count else 0.0
+
+        return {
+            "total_recommendations": total_recommendations,
+            "active_users": active_users,
+            "success_rate": success_rate,
+            "status_distribution": status_distribution,
+            "recommendation_types": recommendation_types,
+            "date_range": {
+                "from": date_from.isoformat() if date_from else None,
+                "to": date_to.isoformat() if date_to else None
+            }
+        }
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching analytics summary: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error occurred while fetching analytics summary"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error fetching analytics summary: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while fetching analytics summary"
+        )
+    
+
+@router.get(
+    "/export",
+    summary="Export recommendations (including rational) to XLSX",
+    response_class=StreamingResponse
+)
+def export_recommendations_xlsx(
+    user_id: Optional[str]               = Query(None, description="Filter by user_id"),
+    stock_name: Optional[str]            = Query(None, description="Filter by stock_name (ILIKE)"),
+    status: Optional[StatusType]         = Query(None, description="Filter by status"),
+    recommendation_type: Optional[str]   = Query(None, description="Filter by recommendation_type"),
+    date_from: Optional[date]            = Query(None, description="Filter created_at >= date_from"),
+    date_to: Optional[date]              = Query(None, description="Filter created_at <= date_to"),
+    columns: Optional[List[str]]         = Query(
+        None,
+        description="List of columns to include in the XLSX, e.g. columns=ID&columns=Rational"
+    ),
+    db: Session                          = Depends(get_db),
+):
+    """
+    Apply filters, then stream back an XLSX file containing only the requested columns.
+    """
+    # 1) Build query with filters (same as before)
     q = db.query(NARRATION)
     if user_id:
         q = q.filter(NARRATION.user_id == user_id)
@@ -187,210 +944,58 @@ def get_recommendations(
     if date_to:
         q = q.filter(NARRATION.created_at <= date_to)
 
-    return q.order_by(desc(NARRATION.created_at)).offset(offset).limit(limit).all()
+    recs = q.order_by(desc(NARRATION.created_at)).all()
 
-# ── 4. UPDATE ───────────────────────────────────────────────────────────────────
-@router.put("/{recommendation_id}", response_model=NarrationResponse)
-def update_recommendation(
-    recommendation_id: int,
-    payload: NarrationUpdate,
-    db: Session = Depends(get_db),
-):
-    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
+    # 2) Transform to list of dicts
+    data = []
+    for r in recs:
+        data.append({
+            "ID": r.id,
+            "User ID": r.user_id,
+            "Stock Name": r.stock_name or "",
+            "Entry Price": r.entry_price or "",
+            "Stop Loss": r.stop_loss or "",
+            "Target 1": r.targets or "",
+            "Target 2": r.targets2 or "",
+            "Target 3": r.targets3 or "",
+            "Status": r.status,
+            "Rational": r.rational or "",
+            "Recommendation Type": r.recommendation_type or "",
+            "Created At": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "Updated At": r.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
-    for field, val in payload.dict(exclude_unset=True).items():
-        setattr(rec, field, val)
+    # 3) Build DataFrame and filter columns if requested
+    df = pd.DataFrame(data)
+    if columns:
+        invalid = set(columns) - set(df.columns)
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid column names: {', '.join(invalid)}"
+            )
+        df = df[columns]
 
+    # 4) Write to Excel in-memory
+    output = io.BytesIO()
     try:
-        db.commit()
-        db.refresh(rec)
-        return rec
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Recommendations")
+        output.seek(0)
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error updating recommendation: {e}")
-
-
-@router.put("/status/{recommendation_id}")
-def update_recommendation(
-    recommendation_id: int,
-    status: str,
-    db: Session = Depends(get_db),
-):
-    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
-
-    rec.status = status
-
-    try:
-        db.commit()
-        db.refresh(rec)
-        return rec
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error updating recommendation: {e}")
-
-
-
-# ── 5. DELETE ───────────────────────────────────────────────────────────────────
-@router.delete("/{recommendation_id}")
-def delete_recommendation(
-    recommendation_id: int,
-    db: Session = Depends(get_db),
-):
-    rec = db.query(NARRATION).filter(NARRATION.id == recommendation_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Recommendation not found")
-    try:
-        db.delete(rec)
-        db.commit()
-        return {"message": "Recommendation deleted successfully"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Error deleting recommendation: {e}")
-
-# ── 6. USER ANALYTICS ───────────────────────────────────────────────────────────
-@router.get("/user/{user_id}", response_model=AnalyticsResponse)
-def get_user_analytics(
-    user_id: str,
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date]   = Query(None),
-    db: Session               = Depends(get_db),
-):
-    recs = db.query(NARRATION).filter(NARRATION.user_id == user_id)
-    if date_from:
-        recs = recs.filter(NARRATION.created_at >= date_from)
-    if date_to:
-        recs = recs.filter(NARRATION.created_at <= date_to)
-
-    all_recs = recs.all()
-    if not all_recs:
-        raise HTTPException(status_code=404, detail="No recommendations found")
-
-    # compute metrics…
-    total       = len(all_recs)
-    counts      = {s.value: 0 for s in StatusType}
-    returns     = []
-    for r in all_recs:
-        counts[r.status] = counts.get(r.status, 0) + 1
-        # calculate return %
-        if r.entry_price and r.status in {"TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"}:
-            target = getattr(r, {"TARGET1_HIT":"targets",
-                                 "TARGET2_HIT":"targets2",
-                                 "TARGET3_HIT":"targets3"}[r.status])
-            returns.append(((target - r.entry_price)/r.entry_price)*100)
-        elif r.entry_price and r.status=="STOP_LOSS_HIT" and r.stop_loss:
-            returns.append(((r.stop_loss - r.entry_price)/r.entry_price)*100)
-
-    successful = sum(counts[s] for s in ["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"])
-    closed     = successful + counts["STOP_LOSS_HIT"]
-    success_rate = round((successful/closed*100) if closed else 0, 2)
-    avg_return  = round(sum(returns)/len(returns),2) if returns else None
-
-    best_idx = returns.index(max(returns)) if returns else None
-    worst_idx= returns.index(min(returns)) if returns else None
-
-    best = {"id":all_recs[best_idx].id,"stock_name":all_recs[best_idx].stock_name,"return_pct":round(returns[best_idx],2)} if best_idx is not None else None
-    worst={"id":all_recs[worst_idx].id,"stock_name":all_recs[worst_idx].stock_name,"return_pct":round(returns[worst_idx],2)} if worst_idx is not None else None
-
-    return AnalyticsResponse(
-        user_id=user_id,
-        total_recommendations=total,
-        open_recommendations=counts["OPEN"],
-        target1_hit=counts["TARGET1_HIT"],
-        target2_hit=counts["TARGET2_HIT"],
-        target3_hit=counts["TARGET3_HIT"],
-        stop_loss_hit=counts["STOP_LOSS_HIT"],
-        closed_recommendations=counts["CLOSED"],
-        success_rate=success_rate,
-        avg_return=avg_return,
-        best_recommendation=best,
-        worst_recommendation=worst,
-    )
-
-# ── 7. TEAM ANALYTICS ──────────────────────────────────────────────────────────
-@router.get("/analytics/team")
-def get_team_analytics(
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date]   = Query(None),
-    db: Session               = Depends(get_db),
-):
-    base = db.query(NARRATION)
-    if date_from:
-        base = base.filter(NARRATION.created_at >= date_from)
-    if date_to:
-        base = base.filter(NARRATION.created_at <= date_to)
-
-    stats = (
-        base
-        .with_entities(
-            NARRATION.user_id,
-            func.count(NARRATION.id).label("total_recs"),
-            func.sum(case([(NARRATION.status.in_(["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"]),1)], else_=0)).label("succ"),
-            func.sum(case([(NARRATION.status=="STOP_LOSS_HIT",1)], else_=0)).label("fail"),
+        logger.error("Failed to generate XLSX: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate Excel file"
         )
-        .group_by(NARRATION.user_id)
-        .all()
+
+    # 5) Stream back to client
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"recommendations_{timestamp}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-    team = []
-    for u, total, succ, fail in stats:
-        closed = succ + fail
-        rate   = round((succ/closed*100) if closed else 0, 2)
-        team.append({
-            "user_id": u,
-            "total_recommendations": total,
-            "successful_recommendations": succ,
-            "failed_recommendations": fail,
-            "success_rate": rate,
-        })
 
-    team.sort(key=lambda x: x["success_rate"], reverse=True)
-    overall_closed = sum(u["successful_recommendations"]+u["failed_recommendations"] for u in team)
-    overall_succ   = sum(u["successful_recommendations"] for u in team)
-    overall_rate   = round((overall_succ/overall_closed*100) if overall_closed else 0, 2)
-
-    return {
-        "team_analytics": team,
-        "summary": {
-            "total_users": len(team),
-            "total_recommendations": sum(u["total_recommendations"] for u in team),
-            "overall_success_rate": overall_rate,
-        }
-    }
-
-# ── 8. TOP STOCKS ──────────────────────────────────────────────────────────────
-@router.get("/analytics/top-stocks")
-def get_top_performing_stocks(
-    limit: int               = Query(10),
-    date_from: Optional[date]= Query(None),
-    date_to: Optional[date]  = Query(None),
-    db: Session              = Depends(get_db),
-):
-    q = db.query(
-        NARRATION.stock_name,
-        func.count(NARRATION.id).label("total"),
-        func.sum(case([(NARRATION.status.in_(["TARGET1_HIT","TARGET2_HIT","TARGET3_HIT"]),1)], else_=0)).label("succ"),
-    ).filter(NARRATION.stock_name.isnot(None))
-
-    if date_from:
-        q = q.filter(NARRATION.created_at >= date_from)
-    if date_to:
-        q = q.filter(NARRATION.created_at <= date_to)
-
-    stats = q.group_by(NARRATION.stock_name).all()
-
-    results = []
-    for stock, tot, succ in stats:
-        rate = round((succ/tot*100) if tot else 0, 2)
-        results.append({
-            "stock_name": stock,
-            "total_recommendations": tot,
-            "successful_recommendations": succ,
-            "success_rate": rate,
-        })
-
-    results.sort(key=lambda x: (x["success_rate"], x["total_recommendations"]), reverse=True)
-    return results[:limit]
