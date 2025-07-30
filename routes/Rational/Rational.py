@@ -676,13 +676,13 @@ def get_team_analytics(
                 func.count(NARRATION.id).label("total_recs"),
                 func.sum(
                     case(
-                        [(NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1)],
+                        (NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1),
                         else_=0
                     )
                 ).label("successful"),
                 func.sum(
                     case(
-                        [(NARRATION.status == "STOP_LOSS_HIT", 1)],
+                        (NARRATION.status == "STOP_LOSS_HIT", 1),
                         else_=0
                     )
                 ).label("failed"),
@@ -757,7 +757,8 @@ def get_top_performing_stocks(
             func.count(NARRATION.id).label("total"),
             func.sum(
                 case(
-                    [(NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1)],
+                    # note: no surrounding list here:
+                    (NARRATION.status.in_(["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]), 1),
                     else_=0
                 )
             ).label("successful"),
@@ -765,6 +766,7 @@ def get_top_performing_stocks(
             NARRATION.stock_name.isnot(None),
             NARRATION.stock_name != ""
         )
+
 
         if date_from:
             query = query.filter(NARRATION.created_at >= date_from)
@@ -824,49 +826,42 @@ def get_analytics_summary(
             )
 
         base_query = db.query(NARRATION)
-        
         if date_from:
             base_query = base_query.filter(NARRATION.created_at >= date_from)
         if date_to:
-            base_query = base_query.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
+            base_query = base_query.filter(
+                NARRATION.created_at <= datetime.combine(date_to, datetime.max.time())
+            )
 
         # Get overall counts
         total_recommendations = base_query.count()
-        
         if total_recommendations == 0:
             return {
                 "total_recommendations": 0,
                 "active_users": 0,
                 "success_rate": 0.0,
                 "status_distribution": {},
-                "recommendation_types": {}
+                "recommendation_types": {},
+                "date_range": {"from": None, "to": None}
             }
 
         # Status distribution
         status_stats = (
             base_query
-            .with_entities(
-                NARRATION.status,
-                func.count(NARRATION.id).label("count")
-            )
+            .with_entities(NARRATION.status, func.count(NARRATION.id).label("count"))
             .group_by(NARRATION.status)
             .all()
         )
-
         status_distribution = {status: count for status, count in status_stats}
 
         # Recommendation types distribution
         type_stats = (
             base_query
             .filter(NARRATION.recommendation_type.isnot(None))
-            .with_entities(
-                NARRATION.recommendation_type,
-                func.count(NARRATION.id).label("count")
-            )
+            .with_entities(NARRATION.recommendation_type, func.count(NARRATION.id).label("count"))
             .group_by(NARRATION.recommendation_type)
             .all()
         )
-
         recommendation_types = {rec_type: count for rec_type, count in type_stats}
 
         # Active users count
@@ -879,11 +874,23 @@ def get_analytics_summary(
 
         # Overall success rate
         successful_count = sum(
-            status_distribution.get(status, 0) 
-            for status in ["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]
+            status_distribution.get(s, 0)
+            for s in ["TARGET1_HIT", "TARGET2_HIT", "TARGET3_HIT"]
         )
         closed_count = successful_count + status_distribution.get("STOP_LOSS_HIT", 0)
         success_rate = round(successful_count / closed_count * 100, 2) if closed_count else 0.0
+
+        # If no filters, fetch the actual min/max dates from the entire table
+        if not date_from and not date_to:
+            min_dt, max_dt = db.query(
+                func.min(NARRATION.created_at),
+                func.max(NARRATION.created_at)
+            ).one()
+            dr_from = min_dt.date().isoformat() if min_dt else None
+            dr_to   = max_dt.date().isoformat() if max_dt else None
+        else:
+            dr_from = date_from.isoformat() if date_from else None
+            dr_to   = date_to.isoformat()   if date_to   else None
 
         return {
             "total_recommendations": total_recommendations,
@@ -891,10 +898,7 @@ def get_analytics_summary(
             "success_rate": success_rate,
             "status_distribution": status_distribution,
             "recommendation_types": recommendation_types,
-            "date_range": {
-                "from": date_from.isoformat() if date_from else None,
-                "to": date_to.isoformat() if date_to else None
-            }
+            "date_range": {"from": dr_from, "to": dr_to}
         }
 
     except HTTPException:
@@ -911,7 +915,8 @@ def get_analytics_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while fetching analytics summary"
         )
-    
+
+
 @router.get(
     "/xlsx/export",
     summary="Export recommendations (including rational) to XLSX",
