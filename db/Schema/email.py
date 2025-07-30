@@ -36,6 +36,7 @@ class EmailLogOut(BaseModel):
     subject: str
     body: str
     sent_at: datetime
+    user_id:str
 
     class Config:
         from_attributes = True
