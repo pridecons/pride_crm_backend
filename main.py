@@ -200,6 +200,12 @@ except Exception as e:
     logger.error(f"Failed to register routes: {e}")
     raise
 
+try:
+    models.Base.metadata.create_all(engine)
+    logger.info("Tables created successfully!")
+except Exception as e:
+    logger.error(f"Error creating tables: {e}", exc_info=True)
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
