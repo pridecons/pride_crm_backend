@@ -135,8 +135,11 @@ async def create_recommendation(
                 graph_path = f"/static/graphs/{safe_filename}"
                 logger.info(f"File uploaded successfully: {graph_path}")
                 
-            except FileUploadError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except FileUploadError as e:
+                 raise HTTPException(
+                     status_code=status.HTTP_400_BAD_REQUEST,
+                     detail=str(e)
+                 )
             except Exception as e:
                 logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
                 raise HTTPException(
@@ -244,7 +247,9 @@ def get_recommendation(
 def get_recommendations(
     user_id: Optional[str]               = Query(None),
     stock_name: Optional[str]            = Query(None),
-    status: Optional[StatusType]         = Query(None),
+    recommendation_status: Optional[StatusType] = Query(
+         None, alias="status", description="Filter by status"
+     ),
     recommendation_type: Optional[str]   = Query(None),
     date_from: Optional[date]            = Query(None),
     date_to: Optional[date]              = Query(None),
@@ -274,8 +279,8 @@ def get_recommendations(
             query = query.filter(NARRATION.user_id == user_id)
         if stock_name:
             query = query.filter(NARRATION.stock_name.ilike(f"%{stock_name.strip()}%"))
-        if status:
-            query = query.filter(NARRATION.status == status)
+        if recommendation_status:
+            query = query.filter(NARRATION.status == recommendation_status)
         if recommendation_type:
             query = query.filter(NARRATION.recommendation_type == recommendation_type)
         if date_from:
