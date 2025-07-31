@@ -400,10 +400,36 @@ def create_lead(
         db.add(lead)
         db.commit()
         db.refresh(lead)
+                
+        # If lead has response (is_old = True), also set additional old lead fields
+        if is_old:
+            # Get user's config for timeout calculation
+            from routes.leads.fetch_config import load_fetch_config
+            
+            config, _ = load_fetch_config(db, current_user)
+            timeout_days = config.old_lead_remove_days or 30
+            
+            # Set conversion deadline and assignment fields
+            lead.assigned_for_conversion = True
+            lead.assigned_to_user = current_user.employee_code
+            lead.conversion_deadline = datetime.utcnow() + timedelta(days=timeout_days)
+            lead.response_changed_at = datetime.utcnow()
+        
+        # Commit assignment and any additional changes
+        db.commit()
+        db.refresh(lead)
+        # ===== END NEW CODE =====
         
         # Convert to response format
         lead_dict = safe_convert_lead_to_dict(lead)
         msg = f"Lead created by {current_user.name} ({current_user.employee_code})"
+        
+        # Add assignment info to story if lead was assigned
+        if is_old:
+            msg += " and automatically assigned for conversion"
+        else:
+            msg += " and assigned to creator"
+            
         AddLeadStory(lead.id, current_user.employee_code, msg)
         return LeadOut(**lead_dict)
         
@@ -415,7 +441,6 @@ def create_lead(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating lead: {str(e)}"
         )
-
 
 @router.get("/", response_model=List[LeadOut])
 def get_all_leads(
