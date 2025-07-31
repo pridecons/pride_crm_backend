@@ -487,6 +487,7 @@ class Lead(Base):
     conversion_deadline = Column(DateTime(timezone=True), nullable=True)
 
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
     comments          = relationship("LeadComment", back_populates="lead", cascade="all, delete-orphan")
