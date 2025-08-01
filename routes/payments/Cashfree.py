@@ -308,7 +308,7 @@ async def front_create(
             "customer_phone": data.phone,
         },
         order_meta={
-            "notify_url": "https://crm.24x7techelp.com/api/v1/payment/webhook",
+            "notify_url": "https://2edf77cfd7e2.ngrok-free.app/api/v1/payment/webhook",
             "payment_methods":  data.payment_methods
         },
     )
@@ -438,6 +438,7 @@ async def payment_webhook(
     # 2) Parse JSON
     try:
         payload = json.loads(raw)
+        print("payload : ",payload)
     except json.JSONDecodeError:
         raise HTTPException(400, "Invalid JSON")
 
@@ -446,12 +447,16 @@ async def payment_webhook(
     payment_d = data.get("payment", {})
 
     order_id  = order.get("order_id")
+    print("order_id : ",order_id)
     status_cf = payment_d.get("payment_status")
+    print("status_cf : ",status_cf)
     if not order_id or not status_cf:
         raise HTTPException(400, "Missing order_id or payment_status")
 
     # 3) Normalize to your status
     new_status = "PAID" if status_cf.upper() == "SUCCESS" else status_cf.upper()
+
+    print("new_status : ",new_status)
 
     # 4) Fetch & update your Payment record
     payment = db.query(Payment).filter(Payment.order_id == order_id).first()

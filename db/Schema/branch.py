@@ -13,6 +13,7 @@ class UserRoleEnum(str, Enum):
     TL = "TL"
     BA = "BA"
     SBA = "SBA"
+    RESEARCHER = "RESEARCHER"
 
 # Existing schemas (keeping them as they are)
 class BranchBase(BaseModel):

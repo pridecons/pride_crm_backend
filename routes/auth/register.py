@@ -49,6 +49,9 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
     if role == UserRoleEnum.SUPERADMIN:
         return None, None, None
     
+    if role == UserRoleEnum.RESEARCHER:
+        return None, None, None
+    
     # BRANCH MANAGER needs only branch_id
     if role == UserRoleEnum.BRANCH_MANAGER:
         if not branch_id:

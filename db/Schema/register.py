@@ -13,6 +13,7 @@ class UserRoleEnum(str, Enum):
     TL = "TL"
     SBA = "SBA"
     BA = "BA"
+    RESEARCHER = "RESEARCHER"
 
 class UserBase(BaseModel):
     phone_number: constr(strip_whitespace=True, min_length=10, max_length=10)

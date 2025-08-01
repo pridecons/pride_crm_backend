@@ -19,6 +19,7 @@ class UserRoleEnum(str, enum.Enum):
     TL = "TL"  # Team Leader
     SBA = "SBA"  # Senior Business Associate
     BA = "BA"  # Business Associate
+    RESEARCHER = "RESEARCHER"
      
 
 class RecommendationType(str, enum.Enum):
@@ -339,6 +340,15 @@ class PermissionDetails(Base):
                 'targets': False, 'reports': False, 'fetch_lead': True
             },
             UserRoleEnum.BA: {
+                'add_user': False, 'edit_user': False, 'delete_user': False,
+                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
+                'view_users': False, 'view_lead': True, 'view_branch': False,
+                'view_accounts': True, 'view_research': True, 'view_client': True,
+                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
+                'approval': False, 'internal_mailing': False, 'chatting': True,
+                'targets': False, 'reports': False, 'fetch_lead': True
+            },
+            UserRoleEnum.RESEARCHER: {
                 'add_user': False, 'edit_user': False, 'delete_user': False,
                 'add_lead': True, 'edit_lead': True, 'delete_lead': False,
                 'view_users': False, 'view_lead': True, 'view_branch': False,

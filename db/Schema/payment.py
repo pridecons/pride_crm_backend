@@ -32,7 +32,7 @@ class OrderMeta(BaseModel):
         alias="returnUrl",
     )
     notify_url: Optional[str] = Field(
-        default="https://crm.24x7techelp.com/api/v1/payment/webhook",
+        default="https://2edf77cfd7e2.ngrok-free.app/api/v1/payment/webhook",
         description="Webhook URL for server‐to‐server notifications",
         alias="notifyUrl",
     )
