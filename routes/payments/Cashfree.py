@@ -20,6 +20,9 @@ from routes.payments.Invoice import generate_invoices_from_payments
 
 logger = logging.getLogger(__name__)
 
+# ACTIVE: Order does not have a sucessful transaction yet
+# PAID: Order is PAID with one successful transaction
+# EXPIRED: Order was not PAID and not it has expired. No transaction can be initiated for an EXPIRED order. TERMINATED: Order terminated TERMINATION_REQUESTED: Order termination requested
 
 router = APIRouter(prefix="/payment", tags=["payment"])
 
@@ -90,7 +93,6 @@ async def get_order(order_id: str):
     status_code=status.HTTP_200_OK,
     summary="Get payment history by phone number (optional date filter)",
 )
-
 async def get_payment_history(
     phone: str,
     on_date: date | None = Query(
@@ -103,7 +105,7 @@ async def get_payment_history(
     """
     Fetch all payments for the given phone.
     - If `?date=` is provided, only payments on that date are returned.
-    - Any PENDING records will be refreshed via a one-off GET /orders/{order_id}.
+    - Any ACTIVE records will be refreshed via a one-off GET /orders/{order_id}.
     """
     # 1) Build base query
     query = db.query(Payment).filter(Payment.phone_number == phone)
@@ -115,11 +117,11 @@ async def get_payment_history(
     # 3) Fetch ordered
     records = query.order_by(Payment.created_at.desc()).all()
 
-    # 4) Refresh any PENDING statuses
+    # 4) Refresh any ACTIVE statuses
     results = []
     for r in records:
         current_status = r.status
-        if current_status.upper() == "PENDING":
+        if current_status.upper() == "ACTIVE":
             try:
                 cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
                 cf_status = cf.get("order_status")
@@ -157,7 +159,7 @@ async def get_payment_history_lead(
     """
     Fetch all payments for the given phone.
     - If `?date=` is provided, only payments on that date are returned.
-    - Any PENDING records will be refreshed via a one-off GET /orders/{order_id}.
+    - Any ACTIVE records will be refreshed via a one-off GET /orders/{order_id}.
     """
     # 1) Build base query
     query = db.query(Payment).filter(Payment.user_id == current_user.employee_code)
@@ -169,11 +171,65 @@ async def get_payment_history_lead(
     # 3) Fetch ordered
     records = query.order_by(Payment.created_at.desc()).all()
 
-    # 4) Refresh any PENDING statuses
+    # 4) Refresh any ACTIVE statuses
     results = []
     for r in records:
         current_status = r.status
-        if current_status.upper() == "PENDING":
+        if current_status.upper() == "ACTIVE":
+            try:
+                cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
+                cf_status = cf.get("order_status")
+                if cf_status:
+                    current_status = cf_status
+            except HTTPException:
+                pass
+        print("r:", r.__dict__)
+
+        data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
+
+        # If created_at/updated_at are datetime, ensure they serialize properly:
+        for dt_field in ("created_at", "updated_at"):
+            if isinstance(data.get(dt_field), datetime):
+                data[dt_field] = data[dt_field]
+
+        results.append(data)
+
+    return results
+
+
+@router.get(
+    "/all/employee/history",
+    status_code=status.HTTP_200_OK,
+    summary="Get payment history by phone number (optional date filter)",
+)
+async def get_payment_history_lead(
+    on_date: date | None = Query(
+        None,
+        alias="date",
+        description="(Optional) YYYY-MM-DD to fetch only that day's payments"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch all payments for the given phone.
+    - If `?date=` is provided, only payments on that date are returned.
+    - Any ACTIVE records will be refreshed via a one-off GET /orders/{order_id}.
+    """
+    # 1) Build base query
+    query = db.query(Payment).all()
+
+    # 2) Apply date filter only if provided
+    if on_date is not None:
+        query = query.filter(func.date(Payment.created_at) == on_date)
+
+    # 3) Fetch ordered
+    records = query.order_by(Payment.created_at.desc()).all()
+
+    # 4) Refresh any ACTIVE statuses
+    results = []
+    for r in records:
+        current_status = r.status
+        if current_status.upper() == "ACTIVE":
             try:
                 cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
                 cf_status = cf.get("order_status")
@@ -368,25 +424,6 @@ async def front_create(
 
 LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
 
-
-import json
-import logging
-from datetime import datetime
-from fastapi import (
-    APIRouter,
-    Request,
-    HTTPException,
-    status,
-    Depends,
-    BackgroundTasks,
-)
-from sqlalchemy.orm import Session
-
-from db.connection import get_db
-from db.models import Payment
-from routes.notification.notification_service import notification_service
-from utils.AddLeadStory import AddLeadStory
-from routes.payments.Invoice import generate_invoices_from_payments
 
 
 async def _safe_notify(user_id: str, title: str, message: str):

@@ -962,6 +962,12 @@ def export_recommendations_xlsx(
         recs = q.order_by(NARRATION.created_at.asc()).all()
     else:
         recs = q.order_by(NARRATION.created_at.desc()).all()
+    
+    if not recs:
+        raise HTTPException(
+            status_code=404,
+            detail="No recommendations found for the given filters."
+        )
 
     # 3) Transform to list of dicts
     data = []
@@ -1090,6 +1096,12 @@ def export_pdfs_zip(
         q = q.filter(NARRATION.created_at <= datetime.combine(date_to, datetime.max.time()))
 
     recs = q.all()
+
+    if not recs:
+        raise HTTPException(
+            status_code=404,
+            detail="No recommendations found for the given filters."
+        )
 
     # 2) Collect valid PDF paths
     pdf_items: List[Path] = []
