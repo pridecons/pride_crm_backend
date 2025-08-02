@@ -15,6 +15,7 @@ from db.models import (
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
+from routes.notification.notification_scheduler import schedule_callback
 
 
 router = APIRouter(
@@ -216,11 +217,6 @@ class LeadOut(BaseModel):
     
     class Config:
         from_attributes = True
-
-class ChangeResponse(BaseModel):
-    lead_response_id: int
-    ft_to_date: Optional[str] = None
-    ft_from_date: Optional[str] = None
 
 class CommentOut(BaseModel):
     id: int
@@ -976,12 +972,21 @@ def load_fetch_config(db: Session, user: UserDetails):
 
     return cfg, source
 
+
+from routes.notification.notification_service import notification_service
+
+class ChangeResponse(BaseModel):
+    lead_response_id: int
+    ft_to_date: Optional[str] = None
+    ft_from_date: Optional[str] = None
+    call_back_date: Optional[datetime] = None
+
 @router.patch(
     "/{lead_id}/response",
     response_model=LeadOut,
     summary="Change the LeadResponse on a lead with retention logic"
 )
-def change_lead_response(
+async def change_lead_response(
     lead_id: int,
     payload: ChangeResponse,
     db: Session = Depends(get_db),
@@ -1034,6 +1039,34 @@ def change_lead_response(
                 fetched_at=datetime.utcnow()
             )
             db.add(new_assignment)
+
+    if payload.call_back_date:
+        try:
+            # If incoming is naive string, assume ISO and parse; adapt if format differs
+            if isinstance(payload.call_back_date, str):
+                cb_dt = datetime.fromisoformat(payload.call_back_date)
+            else:
+                cb_dt = payload.call_back_date  # if already datetime
+
+            if cb_dt <= datetime.utcnow():
+                # अगर past date है तो तुरंत notify कर दो
+                await notification_service.notify(
+                    user_id=current_user.employee_code,
+                    title="Call Back Reminder (Immediate)",
+                    message=f"Lead {lead.mobile} का call back समय पहले का है ({cb_dt.isoformat()}); तुरंत संपर्क करें।"
+                )
+            else:
+                # future में reminder schedule करो
+                schedule_callback(
+                    user_id=current_user.employee_code,
+                    lead_id=lead_id,
+                    callback_dt=cb_dt,
+                    mobile=lead.mobile,
+                )
+            lead.call_back_date = cb_dt
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid call_back_date: {e}")
+
 
     # 4) Update ft dates if provided
     if payload.ft_to_date:

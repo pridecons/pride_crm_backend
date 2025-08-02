@@ -33,6 +33,7 @@ from routes.attendance import attendance
 from routes.Rational import Rational
 from routes.notification import notifiaction_websocket, send_notification
 from routes.Send_client_message import Client_mail_service, sms_templates
+from routes.notification.notification_scheduler import start_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def on_startup():
+    start_scheduler()
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
