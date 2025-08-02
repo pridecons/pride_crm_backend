@@ -646,6 +646,7 @@ async def payment_webhook(
         "email":        payment.email,
         "name":         payment.name,
         "mode":         payment.mode,
+        "employee_code":payment.user_id,
     }
 
     # 6) Schedule background tasks (won’t block the response)

@@ -26,18 +26,6 @@ from sqlalchemy import event
 import asyncio
 from services.mail_with_file import send_mail_by_client_with_file
 
-
-@event.listens_for(Invoice, "before_insert")
-def generate_invoice_no(mapper, connection, target):
-    """
-    Generate an invoice number of the form:
-      INV-YYYYMMDD-<6‑char random>
-    """
-    if not target.invoice_no:
-        date_part = datetime.utcnow().strftime("%Y%m%d")
-        random_part = uuid.uuid4().hex[:6].upper()
-        target.invoice_no = f"INV-{date_part}-{random_part}"
-
 async def sign_pdf(pdf_bytes: bytes) -> bytes:
     """
     Sign the PDF bytes using the certificate and return the signed PDF bytes.
@@ -630,81 +618,24 @@ async def generate_invoices_from_payments(
         payment_obj = db.query(Payment).filter(Payment.order_id == order_id).first()
         if payment_obj:
             payment_obj.is_send_invoice = True
+            payment_obj.invoice = output_dir
             db.commit()
             db.refresh(payment_obj)
 
-# ─── USAGE ──────────────────────────────────────────────────────────────────────
+        phone_number  = pay['phone_number']
+        employee_code  = pay['employee_code']
+        user = db.query(Lead).filter(Lead.mobile == phone_number).first()
 
-# if __name__ == "__main__":
-#     payments = [
-#         {
-#             "Service": "CASH",
-#             "description": "hello",
-#             "paid_amount": 2.1,
-#             "transaction_id": None,
-#             "call": 0,
-#             "user_id": "Admin001",
-#             "name": "Dheeraj Malviya",
-#             "duration_day": None,
-#             "branch_id": None,
-#             "id": 2,
-#             "plan": [
-#                 {
-#                     "id": 2,
-#                     "name": "monthly",
-#                     "price": 10,
-#                     "description": "jjkkk",
-#                     "service_type": None,
-#                     "billing_cycle": "MONTHLY",
-#                     "discount_percent": 9,
-#                     "discounted_price": 9.1
-#                 }
-#             ],
-#             "created_at": "2025-07-24T10:06:09.441566+00:00",
-#             "email": "rajmalviya545@gmail.com",
-#             "status": "PAID",
-#             "updated_at": "2025-07-24T10:07:11.193833+00:00",
-#             "phone_number": "7869615290",
-#             "mode": "CASHFREE",
-#             "lead_id": None,
-#             "order_id": "order_76311130JhQs0gTgZTB1nWFnbelQ7oWvX",
-#             "is_send_invoice": False
-#         },
-        # {
-        #     "Service": "CASH",
-        #     "description": "hello",
-        #     "paid_amount": 1,
-        #     "transaction_id": None,
-        #     "call": 2,
-        #     "user_id": "Admin001",
-        #     "name": "Dheeraj Malviya",
-        #     "duration_day": None,
-        #     "branch_id": None,
-        #     "id": 1,
-        #     "plan": [
-        #         {
-        #             "id": 1,
-        #             "name": "Lead Validation",
-        #             "price": 250,
-        #             "description": "Validate lead data integrity",
-        #             "service_type": "premium",
-        #             "billing_cycle": "CALL",
-        #             "discount_percent": 10,
-        #             "discounted_price": 225
-        #         }
-        #     ],
-        #     "created_at": "2025-07-23T19:01:03.683064+00:00",
-        #     "email": "rajmalviya545@gmail.com",
-        #     "status": "PENDING",
-        #     "updated_at": "2025-07-23T19:01:03.683064+00:00",
-        #     "phone_number": "7869615290",
-        #     "mode": "CASHFREE",
-        #     "lead_id": None,
-        #     "order_id": "order_76311130HvMLmADECyCPAqK9poLqSdbji",
-        #     "is_send_invoice": False
-        # }
-    # ]
-    
-    # Generate invoices with header and watermark
-    # asyncio.run(generate_invoices_from_payments(payments))
-    
+        kwargs = {
+            "invoice_no": invoice_no,
+            "lead_id": user.id,
+            "employee_code": employee_code,
+            "path": output_dir,
+            "order_id": order_id,
+        }
+
+        templateInvoice = Invoice(**kwargs)
+        db.add(templateInvoice)
+        db.commit()
+        db.refresh(templateInvoice)
+        

@@ -532,6 +532,7 @@ class Invoice(Base):
         nullable=True
     )
     path = Column(String(255), nullable=False)
+    order_id = Column(String(100), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -540,6 +541,49 @@ class Invoice(Base):
 
     lead     = relationship("Lead", back_populates="invoices")
     employee = relationship("UserDetails", backref="invoices")
+
+class Payment(Base):
+    __tablename__ = "crm_payment"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    name             = Column(String(100), nullable=False)
+    email            = Column(String(100), nullable=False)
+    phone_number     = Column(Text, nullable=False)
+    order_id         = Column(String(100), nullable=True, index=True)
+
+    Service          = Column(String(50), nullable=True)
+    paid_amount      = Column(Float, nullable=False)
+    call             = Column(Integer, nullable=True)
+    duration_day     = Column(Integer, nullable=True)
+    plan             = Column(
+                            JSONB, 
+                            nullable=True, 
+                            server_default="[]",       # default to empty list in DB
+                        )
+    status           = Column(String(50), nullable=True)
+    mode             = Column(String(50), nullable=False)
+    is_send_invoice  = Column(Boolean, nullable=False, default=False)
+    invoice          = Column(Boolean, nullable=False, default=False)
+    description      = Column(Text, nullable=True)
+    transaction_id   = Column(String(100), nullable=True)
+    user_id          = Column(String(50), nullable=True)
+    branch_id        = Column(String(50), nullable=True)
+
+    created_at       = Column(
+                         DateTime(timezone=True),
+                         server_default=func.now(),
+                         nullable=False
+                      )
+    updated_at       = Column(
+                         DateTime(timezone=True),
+                         server_default=func.now(),
+                         onupdate=func.now(),
+                         nullable=False
+                       )
+
+    # foreign key to Lead, many payments per lead
+    lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
+    lead             = relationship("Lead", back_populates="payments")
 
 
 class LeadRecording(Base):
@@ -567,50 +611,6 @@ class LeadRecording(Base):
 
     lead = relationship("Lead", back_populates="recordings")
     employee = relationship("UserDetails", backref="recordings")
-
-
-
-class Payment(Base):
-    __tablename__ = "crm_payment"
-
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    name             = Column(String(100), nullable=False)
-    email            = Column(String(100), nullable=False)
-    phone_number     = Column(Text, nullable=False)
-    order_id         = Column(String(100), nullable=True, index=True)
-
-    Service          = Column(String(50), nullable=True)
-    paid_amount      = Column(Float, nullable=False)
-    call             = Column(Integer, nullable=True)
-    duration_day     = Column(Integer, nullable=True)
-    plan             = Column(
-                            JSONB, 
-                            nullable=True, 
-                            server_default="[]",       # default to empty list in DB
-                        )
-    status           = Column(String(50), nullable=True)
-    mode             = Column(String(50), nullable=False)
-    is_send_invoice  = Column(Boolean, nullable=False, default=False)
-    description      = Column(Text, nullable=True)
-    transaction_id   = Column(String(100), nullable=True)
-    user_id          = Column(String(50), nullable=True)
-    branch_id        = Column(String(50), nullable=True)
-
-    created_at       = Column(
-                         DateTime(timezone=True),
-                         server_default=func.now(),
-                         nullable=False
-                      )
-    updated_at       = Column(
-                         DateTime(timezone=True),
-                         server_default=func.now(),
-                         onupdate=func.now(),
-                         nullable=False
-                       )
-
-    # foreign key to Lead, many payments per lead
-    lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
-    lead             = relationship("Lead", back_populates="payments")
 
 
 class BillingCycleEnum(str, enum.Enum):

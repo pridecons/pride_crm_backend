@@ -100,6 +100,7 @@ class PaymentOut(BaseModel):
     raised_by_role: str | None
     raised_by_phone: str | None
     raised_by_email: str | None
+    invoice: str = None
 
     class Config:
         from_attributes = True
