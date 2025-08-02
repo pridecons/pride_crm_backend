@@ -216,7 +216,7 @@ class PaginatedPayments(BaseModel):
 )
 async def get_payment_history_lead(
     service: str | None = Query(None, description="Service name (partial, case-insensitive)"),
-    plan: str | None = Query(None, description="Plan filter: JSON for containment or plain string for substring match"),
+    plan_id: str | None = Query(None, description="Plan filter: JSON for containment or plain string for substring match"),
     name: str | None = Query(None, description="Payer name (partial, case-insensitive)"),
     email: str | None = Query(None, description="Email (partial, case-insensitive)"),
     phone_number: str | None = Query(None, description="Phone number to filter (exact match)"),
@@ -240,13 +240,9 @@ async def get_payment_history_lead(
 
         if service:
             q = q.filter(Payment.Service.ilike(f"%{service}%"))
-        if plan:
-            try:
-                parsed = json.loads(plan)
-                q = q.filter(Payment.plan.contains(parsed))
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("Invalid JSON for plan filter, falling back to substring match: %s", plan)
-                q = q.filter(func.cast(Payment.plan, func.text).ilike(f"%{plan}%"))
+        if plan_id is not None:
+            # JSONB array contains object with "id": plan_id
+            q = q.filter(Payment.plan.contains([{"id": plan_id}]))
         if name:
             q = q.filter(Payment.name.ilike(f"%{name}%"))
         if email:

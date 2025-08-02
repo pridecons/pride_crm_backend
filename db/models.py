@@ -2,7 +2,7 @@
 
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
-    JSON, ARRAY, ForeignKey, func, Enum, Enum as SAEnum
+    JSON, ARRAY, ForeignKey, func, Enum, Enum as SAEnum, text
 )
 from sqlalchemy.orm import relationship
 from db.connection import Base
@@ -10,6 +10,7 @@ import uuid
 import enum
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
+
 
 class UserRoleEnum(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
@@ -754,6 +755,16 @@ class SMSTemplate(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(200), nullable=False)
+    dlt_template_id = Column(String(200), nullable=False, index=True)
+    message_type = Column(String(200), nullable=False)
+    source_address = Column(ARRAY(String), nullable=False)  # array of strings
+    allowed_roles = Column(
+        ARRAY(String),
+        nullable=False,
+        server_default=text("ARRAY['HR','TL','SBA','BA','RESEARCHER']::text[]"),
+        comment="Which user roles are permitted to use this template",
+    )
+
     template = Column(Text, nullable=False)
 
     logs = relationship("SMSLog", back_populates="template")
@@ -765,6 +776,7 @@ class SMSLog(Base):
     template_id = Column(Integer, ForeignKey("crm_sms_templates.id"), nullable=False)
     recipient_phone_number = Column(String(320), nullable=False, index=True)
     body = Column(Text, nullable=False)
+    status = Column(String(50), nullable=True)
     sent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     user_id = Column(String(50), nullable=False, index=True)
 
