@@ -17,6 +17,10 @@ from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_service import notification_service
 from utils.AddLeadStory import AddLeadStory
 from routes.payments.Invoice import generate_invoices_from_payments
+from sqlalchemy.exc import SQLAlchemyError
+from typing import Any, Optional, List
+
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -196,25 +200,6 @@ async def get_payment_history_lead(
 
     return results
 
-
-from fastapi import APIRouter, Query, Depends, status, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from sqlalchemy.exc import SQLAlchemyError
-from datetime import datetime, date
-from typing import Any, Optional, List
-import json
-import logging
-
-from pydantic import BaseModel
-
-# assume these are available / imported appropriately in your module:
-# get_db, _call_cashfree, Payment
-
-router = APIRouter()
-logger = logging.getLogger(__name__)  # fallback logger; replace/use your existing logger if available
-
-# Response model
 
 class PaginatedPayments(BaseModel):
     limit: int
