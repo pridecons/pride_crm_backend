@@ -96,6 +96,10 @@ class PaymentOut(BaseModel):
     lead_id: int | None
     created_at: datetime
     updated_at: datetime
+    raised_by: str | None
+    raised_by_role: str | None
+    raised_by_phone: str | None
+    raised_by_email: str | None
 
     class Config:
         from_attributes = True

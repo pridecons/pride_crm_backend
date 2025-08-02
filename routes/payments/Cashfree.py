@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
 from db.connection import get_db
-from db.models import Payment, Lead, Service, LeadAssignment
+from db.models import Payment, Lead, Service, LeadAssignment, UserDetails
 from db.Schema.payment import CreateOrderRequest, FrontUserCreate, PaymentOut
 from routes.mail_service.payment_link_mail import payment_link_mail
 from sqlalchemy import func
@@ -232,10 +232,6 @@ async def get_payment_history_lead(
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
 ):
-    """
-    Fetch payment history with optional rich filters.
-    ACTIVE statuses are refreshed via one-off call to Cashfree `/orders/{order_id}`.
-    """
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=400, detail="date_from cannot be after date_to")
 
@@ -281,22 +277,29 @@ async def get_payment_history_lead(
             q = q.filter(func.date(Payment.created_at) <= date_to)
 
         total = q.count()
+
         records = (
             q.order_by(Payment.created_at.desc())
              .limit(limit)
              .offset(offset)
              .all()
         )
+
+        # Prefetch employee/user details for all user_ids in these payments to avoid N+1
+        user_ids = {r.user_id for r in records if r.user_id}
+        employee_map: dict[str, UserDetails] = {}
+        if user_ids:
+            users = db.query(UserDetails).filter(UserDetails.employee_code.in_(list(user_ids))).all()
+            employee_map = {u.employee_code: u for u in users}
+
     except SQLAlchemyError as e:
         logger.error("Database query failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch payment history from database")
 
-    payments_out = []
+    payments_out: list[PaymentOut] = []
     for r in records:
-        # Default to original status
         current_status = (r.status or "").upper()
 
-        # Refresh if ACTIVE and order_id exists
         if current_status == "ACTIVE" and r.order_id:
             try:
                 cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
@@ -306,21 +309,38 @@ async def get_payment_history_lead(
             except Exception as e:
                 logger.warning("Cashfree refresh failed for order %s: %s", r.order_id, e)
 
-        # Build serializable dict (Pydantic will handle most via orm_mode)
         data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
         data["status"] = current_status
 
-        # Ensure datetime fields are ISO strings (Pydantic can also handle but keeping explicit)
+        # Normalize datetime fields
         for dt_field in ("created_at", "updated_at"):
             val = getattr(r, dt_field, None)
             if isinstance(val, datetime):
                 data[dt_field] = val.isoformat()
 
+        # Attach employee data (who is the user_id on the payment)
+        employee = employee_map.get(r.user_id) if r.user_id else None
+        if employee:
+            # adjust attribute names based on your UserDetails model
+            data["raised_by"] = getattr(employee, "name", getattr(employee, "full_name", None))
+            data["raised_by_role"] = getattr(employee, "role", None)
+            data["raised_by_phone"] = getattr(employee, "phone_number", None)
+            data["raised_by_email"] = getattr(employee, "email", None)
+        else:
+            # ensure keys exist even if no employee found
+            data.setdefault("raised_by", None)
+            data.setdefault("raised_by_role", None)
+            data.setdefault("raised_by_phone", None)
+            data.setdefault("raised_by_email", None)
+
         try:
             payment_obj = PaymentOut(**data)
         except Exception as e:
-            logger.error("Serialization of payment record failed (id=%s): %s", getattr(r, "id", "<unknown>"), e)
-            # skip malformed record
+            logger.error(
+                "Serialization of payment record failed (id=%s): %s",
+                getattr(r, "id", "<unknown>"),
+                e,
+            )
             continue
 
         payments_out.append(payment_obj)
@@ -331,7 +351,6 @@ async def get_payment_history_lead(
         total=total,
         payments=payments_out,
     )
-
 
 @router.post(
     "/generate-qr-code/{order_id}",
