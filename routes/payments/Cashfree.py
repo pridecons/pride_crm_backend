@@ -197,58 +197,155 @@ async def get_payment_history_lead(
     return results
 
 
+from fastapi import APIRouter, Query, Depends, status, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
+from datetime import datetime, date
+from typing import Any, Optional, List
+import json
+import logging
+
+from pydantic import BaseModel
+
+# assume these are available / imported appropriately in your module:
+# get_db, _call_cashfree, Payment
+
+router = APIRouter()
+logger = logging.getLogger(__name__)  # fallback logger; replace/use your existing logger if available
+
+# Response model
+
+class PaginatedPayments(BaseModel):
+    limit: int
+    offset: int
+    total: int
+    payments: List[PaymentOut]
+
+
 @router.get(
     "/all/employee/history",
     status_code=status.HTTP_200_OK,
-    summary="Get payment history by phone number (optional date filter)",
+    summary="Get payment history with rich filters (service, plan, name, email, phone, status, mode, user, branch, lead, order)",
+    response_model=PaginatedPayments,
 )
 async def get_payment_history_lead(
-    on_date: date | None = Query(
-        None,
-        alias="date",
-        description="(Optional) YYYY-MM-DD to fetch only that day's payments"
-    ),
+    service: str | None = Query(None, description="Service name (partial, case-insensitive)"),
+    plan: str | None = Query(None, description="Plan filter: JSON for containment or plain string for substring match"),
+    name: str | None = Query(None, description="Payer name (partial, case-insensitive)"),
+    email: str | None = Query(None, description="Email (partial, case-insensitive)"),
+    phone_number: str | None = Query(None, description="Phone number to filter (exact match)"),
+    status: str | None = Query(None, description="Payment status filter (case-insensitive)"),
+    mode: str | None = Query(None, description="Mode filter"),
+    user_id: str | None = Query(None, description="User ID filter"),
+    branch_id: str | None = Query(None, description="Branch ID filter"),
+    lead_id: int | None = Query(None, description="Lead ID filter"),
+    order_id: str | None = Query(None, description="Order ID to filter"),
+    date_from: date | None = Query(None, description="YYYY-MM-DD start date (inclusive)"),
+    date_to: date | None = Query(None, description="YYYY-MM-DD end date (inclusive)"),
+    limit: int = Query(100, ge=1, le=500, description="Max records to return (capped at 500)"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
 ):
     """
-    Fetch all payments for the given phone.
-    - If `?date=` is provided, only payments on that date are returned.
-    - Any ACTIVE records will be refreshed via a one-off GET /orders/{order_id}.
+    Fetch payment history with optional rich filters.
+    ACTIVE statuses are refreshed via one-off call to Cashfree `/orders/{order_id}`.
     """
-    # 1) Build base query
-    query = db.query(Payment).all()
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from cannot be after date_to")
 
-    # 2) Apply date filter only if provided
-    if on_date is not None:
-        query = query.filter(func.date(Payment.created_at) == on_date)
+    try:
+        q = db.query(Payment)
 
-    # 3) Fetch ordered
-    records = query.order_by(Payment.created_at.desc()).all()
+        if service:
+            q = q.filter(Payment.Service.ilike(f"%{service}%"))
+        if plan:
+            try:
+                parsed = json.loads(plan)
+                q = q.filter(Payment.plan.contains(parsed))
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Invalid JSON for plan filter, falling back to substring match: %s", plan)
+                q = q.filter(func.cast(Payment.plan, func.text).ilike(f"%{plan}%"))
+        if name:
+            q = q.filter(Payment.name.ilike(f"%{name}%"))
+        if email:
+            q = q.filter(Payment.email.ilike(f"%{email}%"))
+        if phone_number:
+            q = q.filter(Payment.phone_number == phone_number)
+        if status:
+            q = q.filter(func.upper(Payment.status) == status.upper())
+        if mode:
+            q = q.filter(Payment.mode == mode)
+        if user_id:
+            q = q.filter(Payment.user_id == user_id)
+        if branch_id:
+            q = q.filter(Payment.branch_id == branch_id)
+        if lead_id is not None:
+            q = q.filter(Payment.lead_id == lead_id)
+        if order_id:
+            q = q.filter(Payment.order_id == order_id)
 
-    # 4) Refresh any ACTIVE statuses
-    results = []
+        if date_from and date_to:
+            q = q.filter(
+                func.date(Payment.created_at) >= date_from,
+                func.date(Payment.created_at) <= date_to,
+            )
+        elif date_from:
+            q = q.filter(func.date(Payment.created_at) >= date_from)
+        elif date_to:
+            q = q.filter(func.date(Payment.created_at) <= date_to)
+
+        total = q.count()
+        records = (
+            q.order_by(Payment.created_at.desc())
+             .limit(limit)
+             .offset(offset)
+             .all()
+        )
+    except SQLAlchemyError as e:
+        logger.error("Database query failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch payment history from database")
+
+    payments_out = []
     for r in records:
-        current_status = r.status
-        if current_status.upper() == "ACTIVE":
+        # Default to original status
+        current_status = (r.status or "").upper()
+
+        # Refresh if ACTIVE and order_id exists
+        if current_status == "ACTIVE" and r.order_id:
             try:
                 cf = await _call_cashfree("GET", f"/orders/{r.order_id}")
                 cf_status = cf.get("order_status")
                 if cf_status:
                     current_status = cf_status
-            except HTTPException:
-                pass
-        print("r:", r.__dict__)
+            except Exception as e:
+                logger.warning("Cashfree refresh failed for order %s: %s", r.order_id, e)
 
+        # Build serializable dict (Pydantic will handle most via orm_mode)
         data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
+        data["status"] = current_status
 
-        # If created_at/updated_at are datetime, ensure they serialize properly:
+        # Ensure datetime fields are ISO strings (Pydantic can also handle but keeping explicit)
         for dt_field in ("created_at", "updated_at"):
-            if isinstance(data.get(dt_field), datetime):
-                data[dt_field] = data[dt_field]
+            val = getattr(r, dt_field, None)
+            if isinstance(val, datetime):
+                data[dt_field] = val.isoformat()
 
-        results.append(data)
+        try:
+            payment_obj = PaymentOut(**data)
+        except Exception as e:
+            logger.error("Serialization of payment record failed (id=%s): %s", getattr(r, "id", "<unknown>"), e)
+            # skip malformed record
+            continue
 
-    return results
+        payments_out.append(payment_obj)
+
+    return PaginatedPayments(
+        limit=limit,
+        offset=offset,
+        total=total,
+        payments=payments_out,
+    )
 
 
 @router.post(
