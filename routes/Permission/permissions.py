@@ -6,7 +6,7 @@ from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
 from db.models import PermissionDetails, UserDetails, UserRoleEnum
-from db.Schema.permissions import PermissionBase, PermissionCreate, PermissionUpdate, PermissionOut, BulkPermissionUpdate
+from db.Schema.permissions import PermissionUpdate
 
 router = APIRouter(
     prefix="/permissions",
@@ -16,7 +16,7 @@ router = APIRouter(
 
 # API Endpoints
 
-@router.get("/", response_model=list[PermissionOut])
+@router.get("/")
 def get_all_permissions(
     skip: int = 0,
     limit: int = 100,
@@ -38,7 +38,7 @@ def get_all_permissions(
         )
 
 
-@router.get("/user/{employee_code}", response_model=PermissionOut)
+@router.get("/user/{employee_code}")
 def get_user_permissions(
     employee_code: str,
     db: Session = Depends(get_db),
@@ -66,7 +66,7 @@ def get_user_permissions(
         )
 
 
-@router.put("/user/{employee_code}", response_model=PermissionOut)
+@router.put("/user/{employee_code}")
 def update_user_permissions(
     employee_code: str,
     permission_in: PermissionUpdate,

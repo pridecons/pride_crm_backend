@@ -280,6 +280,41 @@ class PermissionDetails(Base):
     reports         = Column(Boolean, default=False)
     fetch_lead      = Column(Boolean, default=False)
 
+    # Manage Leads :-
+    manage_add_lead      = Column(Boolean, default=False)
+    manage_source_lead      = Column(Boolean, default=False)
+    manage_response_lead      = Column(Boolean, default=False)
+    manage_fetch_limit      = Column(Boolean, default=False)
+    manage_bulk_upload      = Column(Boolean, default=False)
+
+
+    # Lead[id] :- 
+    lead_recording_view      = Column(Boolean, default=False)
+    lead_recording_upload      = Column(Boolean, default=False)
+    lead_transfer      = Column(Boolean, default=False)
+
+    # Users :-
+    user_add      = Column(Boolean, default=False)
+    user_branch_filter      = Column(Boolean, default=False)
+
+
+    # Rational :-
+    rational_export_pdf      = Column(Boolean, default=False)
+    rational_export_xls      = Column(Boolean, default=False)
+    rational_add_rational      = Column(Boolean, default=False)
+
+
+    # Services :-
+    service_create      = Column(Boolean, default=False)
+    service_edit      = Column(Boolean, default=False)
+    service_delete      = Column(Boolean, default=False)
+
+    # Email :-
+    email_add_temp      = Column(Boolean, default=False)
+    email_view_temp      = Column(Boolean, default=False)
+    email_edit_temp      = Column(Boolean, default=False)
+    email_delete_temp      = Column(Boolean, default=False)
+
     user            = relationship("UserDetails", back_populates="permission")
 
     @classmethod
@@ -583,6 +618,55 @@ class Payment(Base):
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
     lead             = relationship("Lead", back_populates="payments")
 
+
+class ServiceDispatchHistory(Base):
+    __tablename__ = "crm_service_dispatch_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, index=True)
+    recommendation_id = Column(Integer, ForeignKey("crm_narration.id"), nullable=True, index=True)
+    payment_id = Column(Integer, ForeignKey("crm_payment.id"), nullable=True, index=True)
+
+    service_name = Column(String(150), nullable=False, index=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    lead = relationship("Lead", backref="dispatch_histories")
+    recommendation = relationship("NARRATION", backref="dispatch_histories")
+    payment = relationship("Payment", backref="dispatch_histories")
+    platform_statuses = relationship(
+        "ServiceDispatchPlatformStatus",
+        back_populates="dispatch_history",
+        cascade="all, delete-orphan"
+    )
+
+
+class ServiceDispatchPlatformStatus(Base):
+    __tablename__ = "crm_service_dispatch_platform_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dispatch_history_id = Column(
+        Integer,
+        ForeignKey("crm_service_dispatch_history.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    platform = Column(String(100), nullable=False, index=True)  # e.g., "sms", "whatsapp", "mail", etc.
+    status = Column(String(30), nullable=False, default="PENDING")  # PENDING / SENT / FAILED / RETRY etc.
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    details = Column(JSON, nullable=True)  # provider response, error, metadata
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    dispatch_history = relationship(
+        "ServiceDispatchHistory",
+        back_populates="platform_statuses"
+    )
 
 class LeadRecording(Base):
     __tablename__ = "crm_lead_recordings"
