@@ -623,8 +623,10 @@ async def payment_webhook(
     payment.status = new_status
 
     try:
-        db.commit()
+        db.commit(lead)
         db.refresh(payment)
+        if lead:
+            db.refresh(lead)
     except Exception as e:
         db.rollback()
         logger.exception("DB update error for payment %s: %s", payment.id, e)
