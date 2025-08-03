@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile,
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 from pydantic import BaseModel
-
+from routes.auth.auth_dependency import get_current_user
 from db.connection import get_db
 from db.models import Lead, LeadSource, UserDetails
 
@@ -56,7 +56,6 @@ def process_segment(text: str) -> List[str]:
 @router.post("/upload", response_model=BulkUploadResponse)
 async def upload_bulk_leads(
     lead_source_id: int = Form(...),
-    employee_code: str = Form(...),
     branch_id: int = Form(...),
     mobile_column: int = Form(...),
     name_column: int = Form(...),
@@ -68,6 +67,7 @@ async def upload_bulk_leads(
     investment_column: int = Form(...),
     csv_file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """
     Upload bulk leads from CSV.
@@ -90,13 +90,6 @@ async def upload_bulk_leads(
                 detail=f"Lead source {lead_source_id} not found"
             )
 
-        # 3) Lookup employee
-        employee = db.query(UserDetails).filter_by(employee_code=employee_code).first()
-        if not employee:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Employee {employee_code} not found"
-            )
 
         # 4) Read & parse CSV
         content = await csv_file.read()
@@ -169,8 +162,8 @@ async def upload_bulk_leads(
                     "investment": investment,
                     "segment": segments_json,
                     "lead_source_id": lead_source_id,
-                    "created_by": getattr(employee.role, "value", str(employee.role)),
-                    "created_by_name": employee.employee_code,
+                    "created_by": getattr(current_user.role, "value", str(current_user.role)),
+                    "created_by_name": current_user.employee_code,
                     "branch_id": branch_id,
                 }
                 # remove None fields
