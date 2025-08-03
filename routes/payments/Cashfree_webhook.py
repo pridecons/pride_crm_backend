@@ -12,6 +12,7 @@ from fastapi import (
     BackgroundTasks,
 )
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from db.connection import get_db
 from db.models import Payment, Lead, LeadAssignment
 from routes.notification.notification_service import notification_service
@@ -93,30 +94,41 @@ async def payment_webhook(
     lead = None
     if payment.lead_id:
         lead = db.query(Lead).filter_by(id=payment.lead_id).first()
-    else:
+    if not lead and payment.phone_number:
         lead = db.query(Lead).filter(Lead.mobile == payment.phone_number).first()
 
-    # 4) If conversion condition met
-    if lead and payment.lead_id and status_cf.upper() == "SUCCESS":
-        lead.is_client = True
+    # 4) Conversion logic
+    conversion_happened = False
+    if lead and status_cf.upper() == "SUCCESS":
+        if not lead.is_client:
+            lead.is_client = True
+            conversion_happened = True
 
         assignment = db.query(LeadAssignment).filter_by(lead_id=lead.id).first()
         if assignment:
+            # record story before deleting assignment
             AddLeadStory(
                 lead.id,
                 assignment.user_id,
                 f"Lead converted to client via payment {order_id}. Amount: ₹{payment.paid_amount}",
             )
             db.delete(assignment)
+            conversion_happened = True
 
-    old_status = payment.status or ""
-    if old_status.upper() == new_status:
+    old_status = (payment.status or "").upper()
+    status_changed = old_status != new_status
+
+    # If nothing changed, shortcut
+    if not status_changed and not conversion_happened:
         return {"message": "processed", "new_status": new_status}
 
-    payment.status = new_status
+    # 5) Apply updates
+    if status_changed:
+        payment.status = new_status
 
+    # 6) Persist
     try:
-        db.commit(lead)
+        db.commit()
         db.refresh(payment)
         if lead:
             db.refresh(lead)
@@ -125,12 +137,12 @@ async def payment_webhook(
         logger.exception("DB update error for payment %s: %s", payment.id, e)
         raise HTTPException(500, "DB update error")
 
-    # 5) Build auxiliary payloads
+    # 7) Build auxiliary payloads
     notify_msg = f"Order {order_id} status updated to {new_status}"
     story_msg = f"Payment for order {order_id} updated to {new_status}"
     invoice_payload = {
         "order_id": payment.order_id,
-        "paid_amount": float(payment.paid_amount),
+        "paid_amount": float(payment.paid_amount) if payment.paid_amount is not None else 0.0,
         "plan": payment.plan,
         "call": payment.call or 0,
         "created_at": payment.created_at.isoformat() if isinstance(payment.created_at, datetime) else None,
@@ -141,9 +153,14 @@ async def payment_webhook(
         "employee_code": payment.user_id,
     }
 
-    # 6) Schedule background tasks
+    # 8) Schedule background tasks (use actual lead.id if available)
     background_tasks.add_task(_safe_notify, payment.user_id, "Payment Update", notify_msg)
-    background_tasks.add_task(_safe_add_lead_story, payment.lead_id, payment.user_id, story_msg)
+    background_tasks.add_task(
+        _safe_add_lead_story,
+        lead.id if lead else None,
+        payment.user_id,
+        story_msg,
+    )
     background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
 
     return {"message": "processed", "new_status": new_status}
