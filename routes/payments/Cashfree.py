@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from datetime import datetime, date
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Union, Dict
 
 from fastapi import (
     APIRouter,
@@ -17,11 +17,12 @@ from fastapi import (
 from httpx import AsyncClient
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
+
 from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
 from db.connection import get_db
 from db.models import Payment, Lead, Service, LeadAssignment, UserDetails
-from db.Schema.payment import CreateOrderRequest, FrontUserCreate, PaymentOut
+from db.Schema.payment import CreateOrderRequest, FrontUserCreate, PaymentOut  # keep using your existing request types
 from routes.mail_service.payment_link_mail import payment_link_mail
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 from routes.auth.auth_dependency import get_current_user
@@ -102,7 +103,19 @@ async def refresh_active_status(payment: Payment) -> str:
     return current_status
 
 
-# ── Endpoints ───────────────────────────────────────────────────────────────
+# ---------------------- Schemas ----------------------
+
+
+class PaginatedPayments(BaseModel):
+    limit: int
+    offset: int
+    total: int
+    payments: List[PaymentOut]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Endpoints ───────────────────────────────────────────────
 
 @router.get(
     "/orders/{order_id}",
@@ -159,11 +172,9 @@ async def get_payment_history_by_phone(
         current_status = await refresh_active_status(r)
         logger.debug("Payment record: %s, status after refresh: %s", r.id, current_status)
 
-        # Build serializable dict
         data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
         data["status"] = current_status
 
-        # Normalize datetimes to isoformat for consistent JSON
         for dt_field in ("created_at", "updated_at"):
             val = getattr(r, dt_field, None)
             if isinstance(val, datetime):
@@ -222,13 +233,6 @@ async def get_employee_payment_history(
     return results
 
 
-class PaginatedPayments(BaseModel):
-    limit: int
-    offset: int
-    total: int
-    payments: List[PaymentOut]
-
-
 @router.get(
     "/all/employee/history",
     status_code=status.HTTP_200_OK,
@@ -260,7 +264,6 @@ async def get_payment_history_rich(
         q = db.query(Payment)
 
         if service:
-            # Search inside the array of services: flatten to string and ilike
             q = q.filter(func.array_to_string(Payment.Service, " ").ilike(f"%{service}%"))
 
         if plan_id is not None:
@@ -310,7 +313,7 @@ async def get_payment_history_rich(
 
         # Prefetch employee/user details to avoid N+1
         user_ids = {r.user_id for r in records if r.user_id}
-        employee_map: dict[str, UserDetails] = {}
+        employee_map: Dict[str, UserDetails] = {}
         if user_ids:
             users = db.query(UserDetails).filter(UserDetails.employee_code.in_(list(user_ids))).all()
             employee_map = {u.employee_code: u for u in users}
@@ -496,11 +499,15 @@ async def front_create(
     }
 
     # 3) Seed the Payment record
+    service_field = data.service
+    if isinstance(service_field, str):
+        service_field = [service_field]
+
     payment = Payment(
         name=data.name,
         email=data.email,
         phone_number=data.phone,
-        Service=data.service,  # legacy field if still required
+        Service=service_field,
         order_id=cf_order_id,
         paid_amount=data.amount,
         status="ACTIVE",
@@ -527,5 +534,3 @@ async def front_create(
         "plan": payment.plan,
         "cashfreeResponse": cf_resp,
     }
-
-

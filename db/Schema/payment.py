@@ -1,9 +1,9 @@
 # db/Schema/payment.py - Fixed for Pydantic V2
 
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from typing import Optional, Dict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 
 def to_camel(string: str) -> str:
@@ -81,27 +81,56 @@ class PaymentOut(BaseModel):
     email: str
     phone_number: str
     order_id: str
-    Service: str
+    Service: str  # final output as a string ("Cash" or "A, B" if list)
     paid_amount: float
     call: int
-    duration_day: int | None
+    duration_day: Optional[int]
     plan: List[Dict[str, Any]]
     status: str
     mode: str
     is_send_invoice: bool
-    description: str | None
-    transaction_id: str | None
-    user_id: str | None
-    branch_id: str | None
-    lead_id: int | None
+    description: Optional[str]
+    transaction_id: Optional[str]
+    user_id: Optional[str]
+    branch_id: Optional[str]
+    lead_id: Optional[int]
     created_at: datetime
     updated_at: datetime
-    raised_by: str | None
-    raised_by_role: str | None
-    raised_by_phone: str | None
-    raised_by_email: str | None
-    invoice: str = None
+    raised_by: Optional[str]
+    raised_by_role: Optional[str]
+    raised_by_phone: Optional[str]
+    raised_by_email: Optional[str]
+    invoice: Optional[str] = None  # keep as string after normalization
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("Service", mode="before")
+    def normalize_service(cls, v):
+        if v is None:
+            return v
+        # If it came in as list of single characters like ['C','a','s','h']
+        if isinstance(v, list):
+            if all(isinstance(c, str) and len(c) == 1 for c in v):
+                return "".join(v)
+            # If list of strings, join with comma+space
+            return ", ".join(str(item) for item in v)
+        # If it's already a string
+        if isinstance(v, str):
+            return v
+        # Fallback coercion
+        return str(v)
+
+    @field_validator("invoice", mode="before")
+    def normalize_invoice(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return str(v)
+
+    @field_validator("status", mode="before")
+    def uppercase_status(cls, v):
+        if isinstance(v, str):
+            return v.upper()
+        return v
 
