@@ -416,7 +416,6 @@ class LeadResponse(Base):
 
     leads      = relationship("Lead", back_populates="lead_response")
 
-
 class LeadStory(Base):
     __tablename__ = "crm_lead_story"
 
@@ -511,7 +510,6 @@ class Lead(Base):
     recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
     invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
     assigned_user = relationship("UserDetails", foreign_keys=[assigned_to_user])
-
 
 class Invoice(Base):
     __tablename__ = "crm_invoice"
@@ -612,12 +610,10 @@ class LeadRecording(Base):
     lead = relationship("Lead", back_populates="recordings")
     employee = relationship("UserDetails", backref="recordings")
 
-
 class BillingCycleEnum(str, enum.Enum):
     MONTHLY = "MONTHLY"
     YEARLY  = "YEARLY"
     CALL = "CALL"
-
 
 class Service(Base):
     __tablename__ = "crm_services"
@@ -646,8 +642,6 @@ class Service(Base):
         """Compute price after discount"""
         return round(self.price * (1 - self.discount_percent / 100), 2)
     
-
-
 class AuditLog(Base):
     __tablename__ = "crm_audit_logs"
 
@@ -660,8 +654,6 @@ class AuditLog(Base):
     details   = Column(JSON, nullable=True)
 
     user      = relationship("UserDetails", back_populates="audit_logs")
-
-
 
 class Attendance(Base):
     __tablename__ = "crm_attendance"
@@ -725,7 +717,7 @@ class NARRATION(Base):
     graph    = Column(String, nullable=True)
     rational   = Column(String(100),nullable=True )
     stock_name       = Column(String(100),nullable=True )
-    recommendation_type = Column(String(500),nullable=True )
+    recommendation_type = Column(ARRAY(String),nullable=True )
     pdf  = Column(String, nullable=True)
     user_id   = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

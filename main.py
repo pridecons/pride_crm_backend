@@ -159,6 +159,7 @@ def get_scheduler_status(
 
 # Register all your existing routes
 try:
+    app.include_router(Rational.router, prefix="/api/v1")
     app.include_router(old_leads_fetch.router, prefix="/api/v1")
     app.include_router(client_management.router, prefix="/api/v1")
     app.include_router(sms_templates.router, prefix="/api/v1")
@@ -195,7 +196,6 @@ try:
     app.include_router(PanVerification.router, prefix="/api/v1")
     app.include_router(kyc_verification.router, prefix="/api/v1")
     app.include_router(redirect.router, prefix="/api/v1")
-    app.include_router(Rational.router, prefix="/api/v1")
     app.include_router(attendance.router, prefix="/api/v1")
     logger.info("✅ Lead management routes registered")
     

@@ -25,7 +25,7 @@ from fastapi import BackgroundTasks
 import asyncio
 from db.connection import SessionLocal
 from typing import Literal
-
+from typing import Union
 from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError,  StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ async def create_recommendation(
     targets3: Optional[float]            = Form(None),
     rational: Optional[str]              = Form(None),
     stock_name: Optional[str]            = Form(None),
-    recommendation_type: Optional[str]   = Form(None),
+    recommendation_type: Optional[Union[List[str], str]] = Form(None),
     graph: UploadFile                    = File(None),
     db: Session                          = Depends(get_db),
     current_user                        = Depends(get_current_user),
@@ -170,6 +170,11 @@ async def create_recommendation(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to save uploaded file"
                 )
+            
+        if isinstance(recommendation_type, str):
+         # accept comma-separated single field too
+           recommendation_type = [s.strip() for s in recommendation_type.split(",") if s.strip()]
+
 
         # Create database record
         try:
@@ -229,7 +234,7 @@ def get_recommendations(
     recommendation_status: Optional[StatusType] = Query(
          None, alias="status", description="Filter by status"
      ),
-    recommendation_type: Optional[str]   = Query(None),
+    recommendation_type: Optional[List[str]]   = Query(None),
     date_from: Optional[date]            = Query(None),
     date_to: Optional[date]              = Query(None),
     limit: int                           = Query(100, ge=1, le=1000),
@@ -255,7 +260,7 @@ def get_recommendations(
         if recommendation_status:
             query = query.filter(NARRATION.status == recommendation_status)
         if recommendation_type:
-            query = query.filter(NARRATION.recommendation_type == recommendation_type)
+            query = query.filter(NARRATION.recommendation_type.overlap(recommendation_type))
         if date_from:
             query = query.filter(NARRATION.created_at >= date_from)
         if date_to:
@@ -613,7 +618,7 @@ def export_recommendations_xlsx(
     user_id: Optional[str]               = Query(None, description="Filter by user_id"),
     stock_name: Optional[str]            = Query(None, description="Filter by stock_name (ILIKE)"),
     status: Optional[StatusType]         = Query(None, description="Filter by status"),
-    recommendation_type: Optional[str]   = Query(None, description="Filter by recommendation_type"),
+    recommendation_type: Optional[List[str]]   = Query(None, description="Filter by recommendation_type"),
     date_from: Optional[date]            = Query(None, description="Filter created_at >= date_from"),
     date_to: Optional[date]              = Query(None, description="Filter created_at <= date_to"),
     columns: Optional[List[str]]         = Query(
@@ -638,7 +643,7 @@ def export_recommendations_xlsx(
     if status:
         q = q.filter(NARRATION.status == status)
     if recommendation_type:
-        q = q.filter(NARRATION.recommendation_type == recommendation_type)
+        q = q.filter(NARRATION.recommendation_type.overlap(recommendation_type))
     if date_from:
         q = q.filter(NARRATION.created_at >= date_from)
     if date_to:
@@ -670,7 +675,7 @@ def export_recommendations_xlsx(
             "Target 3": r.targets3 or "",
             "Status": r.status,
             "Rational": r.rational or "",
-            "Recommendation Type": r.recommendation_type or "",
+            "Recommendation Type": ",".join(r.recommendation_type) if r.recommendation_type else "",
             "Created At": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             "Updated At": r.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
         })

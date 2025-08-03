@@ -35,7 +35,7 @@ class NarrationCreate(BaseModel):
     targets3: Optional[float] = None
     rational: Optional[str] = None
     stock_name: Optional[str] = None
-    recommendation_type: Optional[str] = None
+    recommendation_type: Optional[List[str]] = None
 
     class Config:
         validate_assignment = True
@@ -50,7 +50,7 @@ class NarrationUpdate(BaseModel):
     graph: Optional[str] = None
     rational: Optional[str] = None
     stock_name: Optional[str] = None
-    recommendation_type: Optional[str] = None
+    recommendation_type: Optional[List[str]] = None
 
     class Config:
         validate_assignment = True
@@ -67,7 +67,7 @@ class NarrationResponse(BaseModel):
     pdf: Optional[str]
     rational: Optional[str]
     stock_name: Optional[str]
-    recommendation_type: Optional[str]
+    recommendation_type: Optional[List[str]]
     user_id: str
     created_at: datetime
     updated_at: datetime

@@ -29,6 +29,7 @@ from routes.notification.notification_service import notification_service
 from utils.AddLeadStory import AddLeadStory
 from routes.payments.Invoice import generate_invoices_from_payments
 from sqlalchemy.exc import SQLAlchemyError
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -516,7 +517,8 @@ async def front_create(
     db.refresh(payment)
 
     # 4) Send notifications
-    await cashfree_payment_link(data.phone, data.name, data.amount, link)
+    newLink = urlparse(link).path.lstrip("/")
+    await cashfree_payment_link(data.phone, data.name, data.amount, newLink)
     await payment_link_mail(data.email, data.name, link)
 
     return {
