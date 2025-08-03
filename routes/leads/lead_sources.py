@@ -201,40 +201,6 @@ def update_lead_source(
             detail=f"Error updating lead source: {str(e)}"
         )
 
-
-# Combined endpoint for dropdown data
-
-@router.get("/dropdown-data")
-def get_dropdown_data(db: Session = Depends(get_db)):
-    """Get all sources and responses for dropdown menus"""
-    try:
-        sources = db.query(LeadSource).all()
-        responses = db.query(LeadResponse).all()
-        
-        return {
-            "sources": [
-                {"id": s.id, "name": s.name, "description": s.description}
-                for s in sources
-            ],
-            "responses": [
-                {"id": r.id, "name": r.name}
-                for r in responses
-            ]
-        }
-        
-    except (OperationalError, DisconnectionError):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection lost. Please try again."
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching dropdown data: {str(e)}"
-        )
-
-
-
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_lead_source(
     source_id: int,

@@ -36,6 +36,13 @@ class ClientStats(BaseModel):
     revenue_this_month: float
     avg_client_value: float
 
+def flatten_unique_services(payments):
+    services_set = set()
+    for p in payments:
+        if getattr(p, "Service", None):
+            services_set.update(p.Service)
+    return list(services_set)
+
 @router.get("/my-clients", response_model=List[ClientResponse])
 def get_my_clients(
     db: Session = Depends(get_db),
@@ -66,34 +73,37 @@ def get_my_clients(
     client_responses = []
     
     for client in clients:
-        # Get payment details
         payments = db.query(Payment).filter(
             and_(
                 Payment.lead_id == client.id,
                 Payment.paid_amount > 0
             )
         ).all()
-        
+
         total_paid = sum(p.paid_amount for p in payments)
         payment_count = len(payments)
         last_payment = max([p.created_at for p in payments]) if payments else None
-        services = list(set([p.Service for p in payments if p.Service]))
-        
-        # Find who converted this client
-        converting_payment = db.query(Payment).filter(
-            and_(
-                Payment.lead_id == client.id,
-                Payment.status == "SUCCESS"
+        services = flatten_unique_services(payments)
+
+        # Who converted: latest SUCCESS payment
+        converting_payment = (
+            db.query(Payment)
+            .filter(
+                and_(
+                    Payment.lead_id == client.id,
+                    Payment.status == "SUCCESS"
+                )
             )
-        ).first()
-        
+            .order_by(Payment.created_at.desc())
+            .first()
+        )
+
         converted_by = converting_payment.user_id if converting_payment else None
         converted_by_name = None
-        
         if converted_by:
             user = db.query(UserDetails).filter_by(employee_code=converted_by).first()
             converted_by_name = user.name if user else "Unknown"
-        
+
         client_responses.append(ClientResponse(
             id=client.id,
             full_name=client.full_name,
@@ -110,7 +120,7 @@ def get_my_clients(
             last_payment=last_payment,
             services=services
         ))
-    
+
     return client_responses
 
 
@@ -294,10 +304,11 @@ def get_client_details(
         "summary": {
             "total_paid": sum(p.paid_amount for p in payments),
             "payment_count": len(payments),
-            "services_used": list(set([p.Service for p in payments if p.Service])),
+            "services_used": flatten_unique_services(payments),
             "first_payment": min([p.created_at for p in payments]) if payments else None,
             "last_payment": max([p.created_at for p in payments]) if payments else None
         }
+
     }
 
 

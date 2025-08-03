@@ -540,48 +540,6 @@ def delete_user(employee_code: str, db: Session = Depends(get_db)):
         )
 
 
-# TOGGLE USER STATUS
-@router.patch("/{employee_code}/status")
-def toggle_user_status(employee_code: str, status_data: dict, db: Session = Depends(get_db)):
-    """Toggle user active status"""
-    try:
-        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        is_active = status_data.get('is_active')
-        if is_active is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="is_active field is required"
-            )
-        
-        user.is_active = bool(is_active)
-        user.updated_at = datetime.utcnow()
-        
-        db.commit()
-        
-        status_text = "activated" if is_active else "deactivated"
-        return {
-            "message": f"User {employee_code} has been {status_text} successfully",
-            "employee_code": employee_code,
-            "is_active": user.is_active,
-            "updated_at": user.updated_at
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating user status: {str(e)}"
-        )
-
-
 # RESET PASSWORD
 @router.post("/{employee_code}/reset-password")
 def reset_user_password(employee_code: str, password_data: dict, db: Session = Depends(get_db)):
@@ -626,61 +584,4 @@ def reset_user_password(employee_code: str, password_data: dict, db: Session = D
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting password: {str(e)}"
         )
-
-# USER SEARCH
-@router.post("/search")
-def search_users(search_params: dict, db: Session = Depends(get_db)):
-    """Advanced user search with multiple filters"""
-    try:
-        query = db.query(UserDetails)
-        
-        # Apply filters
-        if search_params.get('search_term'):
-            term = search_params['search_term']
-            query = query.filter(
-                UserDetails.name.ilike(f"%{term}%") |
-                UserDetails.email.ilike(f"%{term}%") |
-                UserDetails.phone_number.ilike(f"%{term}%") |
-                UserDetails.employee_code.ilike(f"%{term}%")
-            )
-        
-        if search_params.get('roles'):
-            roles = [UserRoleEnum(role) for role in search_params['roles']]
-            query = query.filter(UserDetails.role.in_(roles))
-        
-        if search_params.get('branch_ids'):
-            query = query.filter(UserDetails.branch_id.in_(search_params['branch_ids']))
-        
-        if search_params.get('is_active') is not None:
-            query = query.filter(UserDetails.is_active == search_params['is_active'])
-        
-        if search_params.get('date_from'):
-            query = query.filter(UserDetails.created_at >= search_params['date_from'])
-        
-        if search_params.get('date_to'):
-            query = query.filter(UserDetails.created_at <= search_params['date_to'])
-        
-        # Pagination
-        skip = search_params.get('skip', 0)
-        limit = search_params.get('limit', 50)
-        
-        total_count = query.count()
-        users = query.offset(skip).limit(limit).all()
-        
-        return {
-            "data": [serialize_user(user) for user in users],
-            "pagination": {
-                "total": total_count,
-                "skip": skip,
-                "limit": limit,
-                "pages": (total_count + limit - 1) // limit
-            }
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error searching users: {str(e)}"
-        )
-
 

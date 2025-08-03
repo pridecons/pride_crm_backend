@@ -551,7 +551,7 @@ class Payment(Base):
     phone_number     = Column(Text, nullable=False)
     order_id         = Column(String(100), nullable=True, index=True)
 
-    Service          = Column(String(50), nullable=True)
+    Service          = Column(ARRAY(String), nullable=True)
     paid_amount      = Column(Float, nullable=False)
     call             = Column(Integer, nullable=True)
     duration_day     = Column(Integer, nullable=True)
@@ -587,7 +587,7 @@ class Payment(Base):
 
 
 class LeadRecording(Base):
-    __tablename__ = "lead_recordings"
+    __tablename__ = "crm_lead_recordings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -625,7 +625,7 @@ class Service(Base):
     id               = Column(Integer, primary_key=True, autoincrement=True)
     name             = Column(String(100), nullable=False, unique=True, index=True)
     description      = Column(Text, nullable=True)
-    service_type      = Column(String(100), nullable=True)
+    service_type      = Column(ARRAY(String), nullable=True)
 
     # Base price before discount
     price            = Column(Float, nullable=False)
@@ -742,7 +742,7 @@ class TemplateTypeEnum(str, enum.Enum):
     EMPLOYEE = "employee"
 
 class EmailTemplate(Base):
-    __tablename__ = "email_templates"
+    __tablename__ = "crm_email_templates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
@@ -783,10 +783,10 @@ class SMSLog(Base):
     template = relationship("SMSTemplate", back_populates="logs")
 
 class EmailLog(Base):
-    __tablename__ = "email_logs"
+    __tablename__ = "crm_email_logs"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    template_id     = Column(Integer, ForeignKey("email_templates.id"), nullable=False)
+    template_id     = Column(Integer, ForeignKey("crm_email_templates.id"), nullable=False)
     recipient_email = Column(String(320), nullable=False, index=True)
     subject         = Column(String(200), nullable=False)
     body            = Column(Text, nullable=False)

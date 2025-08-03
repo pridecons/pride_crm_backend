@@ -16,6 +16,7 @@ from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
+from routes.leads.leads_fetch import load_fetch_config
 
 
 router = APIRouter(
@@ -400,7 +401,6 @@ def create_lead(
         # If lead has response (is_old = True), also set additional old lead fields
         if is_old:
             # Get user's config for timeout calculation
-            from routes.leads.fetch_config import load_fetch_config
             
             config, _ = load_fetch_config(db, current_user)
             timeout_days = config.old_lead_remove_days or 30

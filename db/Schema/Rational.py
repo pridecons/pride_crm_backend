@@ -73,7 +73,8 @@ class NarrationResponse(BaseModel):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
 
 class AnalyticsResponse(BaseModel):
     user_id: str
