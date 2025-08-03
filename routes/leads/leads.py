@@ -16,6 +16,7 @@ from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
+from routes.leads.leads_fetch import load_fetch_config
 
 
 router = APIRouter(
@@ -400,7 +401,6 @@ def create_lead(
         # If lead has response (is_old = True), also set additional old lead fields
         if is_old:
             # Get user's config for timeout calculation
-            from routes.leads.fetch_config import load_fetch_config
             
             config, _ = load_fetch_config(db, current_user)
             timeout_days = config.old_lead_remove_days or 30
@@ -981,6 +981,8 @@ class ChangeResponse(BaseModel):
     ft_from_date: Optional[str] = None
     call_back_date: Optional[datetime] = None
 
+from datetime import datetime, timedelta, timezone
+
 @router.patch(
     "/{lead_id}/response",
     response_model=LeadOut,
@@ -1012,51 +1014,66 @@ async def change_lead_response(
         old_resp = db.query(LeadResponse).filter_by(id=old_response_id).first()
         old_response_name = old_resp.name if old_resp else "Unknown"
 
-    # 2) Check if response is actually changing
+    # 3) Response change + retention logic
+    timeout_days = None
+    now = datetime.now(timezone.utc)
     if old_response_id != payload.lead_response_id:
-        # Response changed - implement retention logic (Point 8)
         lead.lead_response_id = payload.lead_response_id
-        lead.is_old_lead = True  # Point 11: Mark as old lead
-        lead.response_changed_at = datetime.utcnow()
+        lead.is_old_lead = True  # mark as old lead
+        lead.response_changed_at = now
         lead.assigned_for_conversion = True
         lead.assigned_to_user = current_user.employee_code
-        
-        # Get timeout from config (Point 9)
+
+        # Get timeout from config
         config, _ = load_fetch_config(db, current_user)
-        timeout_days = config.old_lead_remove_days or 30
-        lead.conversion_deadline = datetime.utcnow() + timedelta(days=timeout_days)
-        
-        # Ensure lead stays with current user (Point 8)
+        timeout_days = getattr(config, "old_lead_remove_days", None) or 30
+        lead.conversion_deadline = now + timedelta(days=timeout_days)
+
+        # Ensure lead stays with current user
         assignment = db.query(LeadAssignment).filter_by(lead_id=lead_id).first()
         if assignment:
             assignment.user_id = current_user.employee_code
-            assignment.fetched_at = datetime.utcnow()
+            assignment.fetched_at = now
         else:
-            # Create exclusive assignment
             new_assignment = LeadAssignment(
                 lead_id=lead_id,
                 user_id=current_user.employee_code,
-                fetched_at=datetime.utcnow()
+                fetched_at=now
             )
             db.add(new_assignment)
 
+    # 4) Handle call_back_date with timezone normalization
     if payload.call_back_date:
         try:
-            # If incoming is naive string, assume ISO and parse; adapt if format differs
             if isinstance(payload.call_back_date, str):
-                cb_dt = datetime.fromisoformat(payload.call_back_date)
+                # Accept ISO with Z or offset
+                iso_str = payload.call_back_date
+                if iso_str.endswith("Z"):
+                    cb_dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+                else:
+                    cb_dt = datetime.fromisoformat(iso_str)
+            elif isinstance(payload.call_back_date, datetime):
+                cb_dt = payload.call_back_date
             else:
-                cb_dt = payload.call_back_date  # if already datetime
+                raise ValueError("Unsupported type for call_back_date")
 
-            if cb_dt <= datetime.utcnow():
-                # अगर past date है तो तुरंत notify कर दो
+            # Normalize to aware UTC
+            if cb_dt.tzinfo is None:
+                cb_dt = cb_dt.replace(tzinfo=timezone.utc)
+            else:
+                cb_dt = cb_dt.astimezone(timezone.utc)
+
+            # Immediate vs scheduled
+            if cb_dt <= now:
                 await notification_service.notify(
                     user_id=current_user.employee_code,
                     title="Call Back Reminder (Immediate)",
-                    message=f"Lead {lead.mobile} का call back समय पहले का है ({cb_dt.isoformat()}); तुरंत संपर्क करें।"
+                    message=(
+                        f"Lead {lead.mobile} का call back समय पहले का है "
+                        f"({cb_dt.isoformat()}); तुरंत संपर्क करें।"
+                    )
                 )
             else:
-                # future में reminder schedule करो
                 schedule_callback(
                     user_id=current_user.employee_code,
                     lead_id=lead_id,
@@ -1067,11 +1084,9 @@ async def change_lead_response(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid call_back_date: {e}")
 
-
-    # 4) Update ft dates if provided
+    # 5) Update ft dates if provided
     if payload.ft_to_date:
         lead.ft_to_date = payload.ft_to_date
-
     if payload.ft_from_date:
         lead.ft_from_date = payload.ft_from_date
 
@@ -1084,16 +1099,14 @@ async def change_lead_response(
         f"Response changed by {current_user.name} ({current_user.employee_code}): "
         f"'{old_response_name}' ➔ '{new_response.name}'. "
     )
-    
     if old_response_id != payload.lead_response_id:
         story_msg += (
             f"Lead assigned for conversion with {timeout_days} days deadline "
             f"(expires: {lead.conversion_deadline.strftime('%Y-%m-%d %H:%M')}). "
             f"Marked as old lead."
         )
-    
     AddLeadStory(lead.id, current_user.employee_code, story_msg)
-    
+
     return LeadOut(**safe_convert_lead_to_dict(lead))
 
 

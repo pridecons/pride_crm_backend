@@ -108,3 +108,5 @@ def create_admin():
     except Exception as e:
         print(f"❌ Database connection error: {str(e)}")
         print("Make sure your database is running and connection settings are correct")
+
+create_admin()

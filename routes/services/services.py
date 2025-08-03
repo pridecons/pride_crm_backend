@@ -36,14 +36,6 @@ def list_services(db: Session = Depends(get_db)):
     return db.query(Service).all()
 
 
-@router.get("/{service_id}", response_model=ServiceOut)
-def get_service(service_id: int, db: Session = Depends(get_db)):
-    svc = db.query(Service).get(service_id)
-    if not svc:
-        raise HTTPException(status_code=404, detail="Service not found")
-    return svc
-
-
 @router.patch("/{service_id}", response_model=ServiceOut)
 def update_service(
     service_id: int,

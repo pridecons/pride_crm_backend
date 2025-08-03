@@ -416,7 +416,6 @@ class LeadResponse(Base):
 
     leads      = relationship("Lead", back_populates="lead_response")
 
-
 class LeadStory(Base):
     __tablename__ = "crm_lead_story"
 
@@ -512,7 +511,6 @@ class Lead(Base):
     invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
     assigned_user = relationship("UserDetails", foreign_keys=[assigned_to_user])
 
-
 class Invoice(Base):
     __tablename__ = "crm_invoice"
 
@@ -551,7 +549,7 @@ class Payment(Base):
     phone_number     = Column(Text, nullable=False)
     order_id         = Column(String(100), nullable=True, index=True)
 
-    Service          = Column(String(50), nullable=True)
+    Service          = Column(ARRAY(String), nullable=True)
     paid_amount      = Column(Float, nullable=False)
     call             = Column(Integer, nullable=True)
     duration_day     = Column(Integer, nullable=True)
@@ -587,7 +585,7 @@ class Payment(Base):
 
 
 class LeadRecording(Base):
-    __tablename__ = "lead_recordings"
+    __tablename__ = "crm_lead_recordings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -612,12 +610,10 @@ class LeadRecording(Base):
     lead = relationship("Lead", back_populates="recordings")
     employee = relationship("UserDetails", backref="recordings")
 
-
 class BillingCycleEnum(str, enum.Enum):
     MONTHLY = "MONTHLY"
     YEARLY  = "YEARLY"
     CALL = "CALL"
-
 
 class Service(Base):
     __tablename__ = "crm_services"
@@ -625,7 +621,7 @@ class Service(Base):
     id               = Column(Integer, primary_key=True, autoincrement=True)
     name             = Column(String(100), nullable=False, unique=True, index=True)
     description      = Column(Text, nullable=True)
-    service_type      = Column(String(100), nullable=True)
+    service_type      = Column(ARRAY(String), nullable=True)
 
     # Base price before discount
     price            = Column(Float, nullable=False)
@@ -646,8 +642,6 @@ class Service(Base):
         """Compute price after discount"""
         return round(self.price * (1 - self.discount_percent / 100), 2)
     
-
-
 class AuditLog(Base):
     __tablename__ = "crm_audit_logs"
 
@@ -660,8 +654,6 @@ class AuditLog(Base):
     details   = Column(JSON, nullable=True)
 
     user      = relationship("UserDetails", back_populates="audit_logs")
-
-
 
 class Attendance(Base):
     __tablename__ = "crm_attendance"
@@ -725,7 +717,7 @@ class NARRATION(Base):
     graph    = Column(String, nullable=True)
     rational   = Column(String(100),nullable=True )
     stock_name       = Column(String(100),nullable=True )
-    recommendation_type = Column(String(500),nullable=True )
+    recommendation_type = Column(ARRAY(String),nullable=True )
     pdf  = Column(String, nullable=True)
     user_id   = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -742,7 +734,7 @@ class TemplateTypeEnum(str, enum.Enum):
     EMPLOYEE = "employee"
 
 class EmailTemplate(Base):
-    __tablename__ = "email_templates"
+    __tablename__ = "crm_email_templates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
@@ -783,10 +775,10 @@ class SMSLog(Base):
     template = relationship("SMSTemplate", back_populates="logs")
 
 class EmailLog(Base):
-    __tablename__ = "email_logs"
+    __tablename__ = "crm_email_logs"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    template_id     = Column(Integer, ForeignKey("email_templates.id"), nullable=False)
+    template_id     = Column(Integer, ForeignKey("crm_email_templates.id"), nullable=False)
     recipient_email = Column(String(320), nullable=False, index=True)
     subject         = Column(String(200), nullable=False)
     body            = Column(Text, nullable=False)
