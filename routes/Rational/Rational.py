@@ -550,8 +550,11 @@ def get_analytics_summary(
         type_stats = (
             base_query
             .filter(NARRATION.recommendation_type.isnot(None))
-            .with_entities(NARRATION.recommendation_type, func.count(NARRATION.id).label("count"))
-            .group_by(NARRATION.recommendation_type)
+            .with_entities(
+                func.unnest(NARRATION.recommendation_type).label("rec_type"),
+                func.count(NARRATION.id).label("count")
+            )
+            .group_by("rec_type")
             .all()
         )
         recommendation_types = {rec_type: count for rec_type, count in type_stats}
