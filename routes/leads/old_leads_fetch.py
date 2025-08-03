@@ -442,173 +442,23 @@ def get_my_assigned_old_leads(
 ):
     """Get old leads currently assigned to user"""
     
-    try:
-        # Load config to get TTL
-        config, _ = load_fetch_config(db, current_user)
-        
-        # Get active assignments for old leads
-        now = datetime.utcnow()
-        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
-        
-        assigned_leads = db.query(Lead).join(LeadAssignment).filter(
+    try:       
+        assigned_leads = db.query(Lead).filter(
             and_(
                 Lead.is_old_lead == True,
                 Lead.is_delete == False,
                 Lead.is_client == False,
-                LeadAssignment.user_id == current_user.employee_code,
-                LeadAssignment.fetched_at >= expiry_cutoff
+                Lead.assigned_to_user == current_user.employee_code
             )
         ).all()
         
-        response_leads = []
-        for lead in assigned_leads:
-            days_remaining = None
-            if lead.conversion_deadline:
-                delta = lead.conversion_deadline - now
-                days_remaining = max(0, delta.days)
-            
-            response_leads.append({
-                "id": lead.id,
-                "full_name": lead.full_name,
-                "mobile": lead.mobile,
-                "email": lead.email,
-                "response_changed_at": lead.response_changed_at,
-                "conversion_deadline": lead.conversion_deadline,
-                "days_remaining": days_remaining,
-                "assigned_for_conversion": lead.assigned_for_conversion,
-                "assigned_at": db.query(LeadAssignment).filter_by(
-                    lead_id=lead.id, 
-                    user_id=current_user.employee_code
-                ).first().fetched_at
-            })
-        
         return {
-            "assigned_old_leads": response_leads,
-            "count": len(response_leads),
-            "assignment_ttl_hours": config.assignment_ttl_hours
+            "assigned_old_leads": assigned_leads,
+            "count": len(assigned_leads)
         }
         
     except Exception as e:
         logger.error(f"Error getting assigned old leads: {e}")
         raise HTTPException(500, f"Error getting assigned leads: {str(e)}")
 
-
-@router.get("/stats")
-def get_old_leads_stats(
-    db: Session = Depends(get_db), 
-    current_user: UserDetails = Depends(require_permission("fetch_lead"))
-):
-    """Get statistics about old leads with config-based limits"""
-    
-    try:
-        # Load user config
-        config, cfg_source = load_fetch_config(db, current_user)
-        
-        now = datetime.utcnow()
-        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
-        
-        # Total old leads available for this user
-        available_query = db.query(Lead).outerjoin(LeadAssignment).filter(
-            and_(
-                Lead.is_old_lead == True,
-                Lead.is_delete == False,
-                Lead.is_client == False,
-                or_(
-                    LeadAssignment.id == None,
-                    LeadAssignment.fetched_at < expiry_cutoff
-                )
-            )
-        )
-        
-        if current_user.branch_id:
-            available_query = available_query.filter(Lead.branch_id == current_user.branch_id)
-        
-        total_available = available_query.count()
-        
-        # User's assigned old leads
-        user_assigned = db.query(Lead).join(LeadAssignment).filter(
-            and_(
-                Lead.is_old_lead == True,
-                Lead.is_delete == False,
-                Lead.is_client == False,
-                LeadAssignment.user_id == current_user.employee_code,
-                LeadAssignment.fetched_at >= expiry_cutoff
-            )
-        ).count()
-        
-        # Conversion deadline approaching (next 3 days)
-        deadline_approaching = db.query(Lead).filter(
-            and_(
-                Lead.is_old_lead == True,
-                Lead.assigned_to_user == current_user.employee_code,
-                Lead.conversion_deadline.between(now, now + timedelta(days=3)),
-                Lead.is_client == False
-            )
-        ).count()
-        
-        # Daily call limit status
-        today = datetime.utcnow().date()
-        today_calls = 0
-        hist = db.query(LeadFetchHistory).filter_by(
-            user_id=current_user.employee_code,
-            date=today
-        ).first()
-        if hist:
-            today_calls = hist.call_count
-        
-        can_fetch_more = (
-            user_assigned < config.last_fetch_limit and 
-            today_calls < config.daily_call_limit
-        )
-        
-        return {
-            "total_available_old_leads": total_available,
-            "my_assigned_old_leads": user_assigned,
-            "deadline_approaching": deadline_approaching,
-            "can_fetch_more": can_fetch_more,
-            "daily_stats": {
-                "calls_made_today": today_calls,
-                "daily_limit": config.daily_call_limit,
-                "calls_remaining": max(0, config.daily_call_limit - today_calls)
-            },
-            "limits": {
-                "per_request_limit": config.per_request_limit,
-                "last_fetch_limit": config.last_fetch_limit,
-                "assignment_ttl_hours": config.assignment_ttl_hours,
-                "config_source": cfg_source
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting old leads stats: {e}")
-        raise HTTPException(500, f"Error getting stats: {str(e)}")
-
-
-@router.get("/config")
-def get_user_fetch_config(
-    db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(require_permission("fetch_lead"))
-):
-    """Get current user's fetch configuration"""
-    
-    try:
-        config, source = load_fetch_config(db, current_user)
-        
-        return {
-            "user_role": current_user.role,
-            "user_branch_id": current_user.branch_id,
-            "config": {
-                "per_request_limit": config.per_request_limit,
-                "daily_call_limit": config.daily_call_limit,
-                "last_fetch_limit": config.last_fetch_limit,
-                "assignment_ttl_hours": config.assignment_ttl_hours,
-                "old_lead_remove_days": getattr(config, 'old_lead_remove_days', 30)
-            },
-            "config_source": source
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting fetch config: {e}")
-        raise HTTPException(500, f"Error getting config: {str(e)}")
-    
 
