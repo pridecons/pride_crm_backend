@@ -22,8 +22,6 @@ from db.models import Lead
 from typing import Any, Dict, Optional
 from config import PAN_API_ID, PAN_API_KEY
 
-router = APIRouter(tags=["Agreement KYC"])
-
 async def request_with_retry(
     method: str,
     url: str,
