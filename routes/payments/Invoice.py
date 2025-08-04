@@ -631,16 +631,8 @@ async def generate_invoices_from_payments(
         body_content = """
   <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
     <tr>
-      <td align="center" style="padding: 20px;">
+      <td align="center" style="padding: 2px;">
         <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-          <!-- Header -->
-          <tr>
-            <td style="padding: 20px; text-align: center; background-color: #0d47a1; color: #ffffff;">
-              <h1 style="margin:0; font-size: 24px;">Pride Trading Consultancy Pvt. Ltd.</h1>
-              <p style="margin:5px 0 0; font-size: 14px;">SEBI Registered Research Analyst: INH000010362</p>
-            </td>
-          </tr>
-
           <!-- Greeting & Intro -->
           <tr>
             <td style="padding: 25px 30px;">
@@ -648,31 +640,6 @@ async def generate_invoices_from_payments(
               <p style="margin:0 0 15px;">
                 Greetings from <strong>Pride Trading Consultancy Pvt. Ltd.</strong>! Thank you for subscribing to our services. Please review your registered subscription details below and keep us informed of any changes in writing via email within 3 days of receiving this message.
               </p>
-
-              <!-- Subscription Details Placeholder -->
-              <table width="100%" cellpadding="6" cellspacing="0" role="presentation" style="border:1px solid #e0e0e0; border-radius:4px; margin-bottom:20px;">
-                <tr style="background:#f0f4f8;">
-                  <th align="left" style="border-bottom:1px solid #ddd; font-weight:600;">Detail</th>
-                  <th align="left" style="border-bottom:1px solid #ddd; font-weight:600;">Value</th>
-                </tr>
-                <!-- Replace these rows with actual values -->
-                <tr>
-                  <td style="border-bottom:1px solid #eee;">Name</td>
-                  <td style="border-bottom:1px solid #eee;">[Client Name]</td>
-                </tr>
-                <tr>
-                  <td style="border-bottom:1px solid #eee;">Mobile</td>
-                  <td style="border-bottom:1px solid #eee;">[Registered Mobile]</td>
-                </tr>
-                <tr>
-                  <td style="border-bottom:1px solid #eee;">Email</td>
-                  <td style="border-bottom:1px solid #eee;">[Registered Email]</td>
-                </tr>
-                <tr>
-                  <td style="border-bottom:1px solid #eee;">Subscribed Services</td>
-                  <td style="border-bottom:1px solid #eee;">[Equity / Commodity / F&O / Daily Reports]</td>
-                </tr>
-              </table>
 
               <!-- About Section -->
               <h2 style="font-size:18px; margin:15px 0 8px;">About Us</h2>
