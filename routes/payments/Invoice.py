@@ -522,7 +522,14 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
         cust_code  = state_code.get(cust_state, "")
 
 
-        gateway_charges,net_service_charges,igst, cgst,sgst,total_tax = calculate_tax_breakdown(paid_amount, cust_state)
+        taxes = calculate_tax_breakdown(paid_amount, cust_state)
+        service_charges = taxes["service_charges"]
+        gateway_charges = taxes["gateway_charges"]
+        net_service_charges = taxes["net_service_charges"]
+        igst = taxes["igst"]
+        cgst = taxes["cgst"]
+        sgst = taxes["sgst"]
+        total_tax = taxes["total_tax"]
         
         # 7) Generate proper invoice number (will be set by the SQLAlchemy event listener)
         date_part = datetime.utcnow().strftime("%Y%m%d")
