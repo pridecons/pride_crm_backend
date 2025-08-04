@@ -328,7 +328,16 @@ class PermissionDetails(Base):
                 'view_accounts': True, 'view_research': True, 'view_client': True,
                 'view_payment': True, 'view_invoice': True, 'view_kyc': True,
                 'approval': True, 'internal_mailing': True, 'chatting': True,
-                'targets': True, 'reports': True, 'fetch_lead': True
+                'targets': True, 'reports': True, 'fetch_lead': True,
+                'manage_add_lead': True, 'manage_source_lead': True,
+                'manage_response_lead': True, 'manage_fetch_limit': True,
+                'manage_bulk_upload': True, 'lead_recording_view': True,
+                'lead_recording_upload': True, 'lead_transfer': True,
+                'user_add': True, 'user_branch_filter': True, 'rational_export_pdf': True,
+                'rational_export_xls': True, 'rational_add_rational': True,
+                'service_create': True, 'service_edit': True,
+                'service_delete': True, 'email_add_temp': True,
+                'email_view_temp': True, 'email_edit_temp': True, 'email_delete_temp': True,
             },
             UserRoleEnum.BRANCH_MANAGER: {
                 'add_user': True, 'edit_user': True, 'delete_user': False,
@@ -502,6 +511,7 @@ class Lead(Base):
     dob               = Column(Date, nullable=True)
     occupation        = Column(String(100), nullable=True)
     segment           = Column(Text, nullable=True)  # Store as JSON string
+    ft_service_type   = Column(String(50), nullable=True) #call or sms
     experience        = Column(String(50), nullable=True)
     investment        = Column(String(50), nullable=True)
 
@@ -521,7 +531,6 @@ class Lead(Base):
     is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
     lead_status       = Column(String(50), nullable=True)
-    profile           = Column(String(50), nullable=True)
     is_delete         = Column(Boolean, default=False, nullable=True)
     ft_to_date        = Column(String(50), nullable=True)
     ft_from_date      = Column(String(50), nullable=True)
@@ -637,36 +646,21 @@ class ServiceDispatchHistory(Base):
     lead = relationship("Lead", backref="dispatch_histories")
     recommendation = relationship("NARRATION", backref="dispatch_histories")
     payment = relationship("Payment", backref="dispatch_histories")
-    platform_statuses = relationship(
-        "ServiceDispatchPlatformStatus",
-        back_populates="dispatch_history",
-        cascade="all, delete-orphan"
-    )
+    platform_statuses = relationship("ServiceDispatchPlatformStatus", back_populates="dispatch_history", cascade="all, delete-orphan")
 
 
 class ServiceDispatchPlatformStatus(Base):
     __tablename__ = "crm_service_dispatch_platform_status"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    dispatch_history_id = Column(
-        Integer,
-        ForeignKey("crm_service_dispatch_history.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
+    history_id = Column(Integer, ForeignKey("crm_service_dispatch_history.id"), nullable=False)
 
-    platform = Column(String(100), nullable=False, index=True)  # e.g., "sms", "whatsapp", "mail", etc.
-    status = Column(String(30), nullable=False, default="PENDING")  # PENDING / SENT / FAILED / RETRY etc.
-    scheduled_for = Column(DateTime(timezone=True), nullable=False)
-    sent_at = Column(DateTime(timezone=True), nullable=True)
-    details = Column(JSON, nullable=True)  # provider response, error, metadata
+    platform = Column(String(30), nullable=False)  # SMS, WHATSAPP, CALL, EMAIL, APPLICATION
+    platform_identifier = Column(String(100), nullable=True)  # Twilio ID, WhatsApp Msg ID, etc.
+    status = Column(String(30), nullable=False, default="PENDING")  # SENT / FAILED / etc.
+    delivered_at = Column(String(100), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    dispatch_history = relationship(
-        "ServiceDispatchHistory",
-        back_populates="platform_statuses"
-    )
+    dispatch_history = relationship("ServiceDispatchHistory", back_populates="platform_statuses")
 
 class LeadRecording(Base):
     __tablename__ = "crm_lead_recordings"

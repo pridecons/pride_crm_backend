@@ -58,7 +58,7 @@ class LeadBase(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -111,7 +111,7 @@ class LeadUpdate(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -165,7 +165,7 @@ class LeadOut(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -318,7 +318,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "occupation": getattr(lead, 'occupation', None),
             "experience": getattr(lead, 'experience', None),
             "investment": getattr(lead, 'investment', None),
-            "profile": getattr(lead, 'profile', None),
+            "ft_service_type": getattr(lead, 'ft_service_type', None),
             "created_at": getattr(lead, 'created_at', datetime.now()),
             "lead_status": getattr(lead, 'lead_status', None),
             "kyc": getattr(lead, 'kyc', False),
@@ -980,6 +980,8 @@ class ChangeResponse(BaseModel):
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
     call_back_date: Optional[datetime] = None
+    segment: Optional[datetime] = None
+    ft_service_type: Optional[datetime] = None
 
 from datetime import datetime, timedelta, timezone
 
@@ -1013,6 +1015,7 @@ async def change_lead_response(
     if old_response_id:
         old_resp = db.query(LeadResponse).filter_by(id=old_response_id).first()
         old_response_name = old_resp.name if old_resp else "Unknown"
+        
 
     # 3) Response change + retention logic
     timeout_days = None
@@ -1089,6 +1092,10 @@ async def change_lead_response(
         lead.ft_to_date = payload.ft_to_date
     if payload.ft_from_date:
         lead.ft_from_date = payload.ft_from_date
+    if payload.segment:
+        lead.segment = payload.segment
+    if payload.ft_service_type:
+        lead.ft_service_type = payload.ft_service_type
 
     # 6) Commit changes
     db.commit()

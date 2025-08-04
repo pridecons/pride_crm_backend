@@ -44,7 +44,7 @@ class LeadOut(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
     branch_id: Optional[int] = None

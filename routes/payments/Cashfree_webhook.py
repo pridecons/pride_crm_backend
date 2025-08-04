@@ -161,6 +161,8 @@ async def payment_webhook(
         payment.user_id,
         story_msg,
     )
-    background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
+
+    if lead.kyc:
+        background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
 
     return {"message": "processed", "new_status": new_status}

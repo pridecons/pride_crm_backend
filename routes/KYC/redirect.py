@@ -1,16 +1,20 @@
 from fastapi.responses import RedirectResponse
-from fastapi import APIRouter, Request, HTTPException, Depends, Response
+from fastapi import APIRouter, Request, HTTPException, Depends, Response, BackgroundTasks
 import json
 from sqlalchemy.orm import Session
 from db.connection import get_db
 import httpx
-from db.models import Lead
+from db.models import Lead, Payment
 from routes.mail_service.kyc_agreement_mail import send_agreement
 import base64
 from routes.notification.notification_service import notification_service
 from datetime import datetime, timezone, timedelta
 from utils.AddLeadStory import AddLeadStory
+from sqlalchemy import and_
+from routes.payments.Invoice import generate_invoices_from_payments
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Agreement KYC Redirect"])
 
 # Middleware-like functionality for each endpoint
@@ -34,8 +38,17 @@ async def redirect_route(response: Response,platform: str, mobile: str):
         status_code=302
     )
 
+async def _safe_generate_invoices(payloads: list[dict]):
+    try:
+        await generate_invoices_from_payments(payloads)
+    except HTTPException as he:
+        logger.error("Invoice gen HTTPException: %s", he.detail)
+    except Exception as e:
+        logger.error("Background invoice gen failed: %s", e)
+
+
 @router.post("/response_url/{mobile}/{employee_code}")
-async def response_url_endpoint(request: Request,response: Response,mobile: str,employee_code:str, db: Session = Depends(get_db)):
+async def response_url_endpoint(request: Request,response: Response,mobile: str,employee_code:str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     set_cors_allow_all(response)
     payload = await request.json()
     result = payload.get("result")
@@ -61,7 +74,7 @@ async def response_url_endpoint(request: Request,response: Response,mobile: str,
     db.commit()
     
     ist = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
-
+    
     # 2) Build your HTML message
     msg_html = (
         "<div style='font-family:Arial,sans-serif; line-height:1.4;'>"
@@ -77,6 +90,34 @@ async def response_url_endpoint(request: Request,response: Response,mobile: str,
         title= "Agreement Done",
         message= msg_html,
     )
+
+    payment = (
+        db.query(Payment)
+        .filter(
+            and_(
+                Payment.lead_id == kyc_user.id,
+                Payment.is_send_invoice.is_(False),  # या == False
+                Payment.status == "PAID",
+            )
+        )
+        .first()
+    )
+
+    if payment:
+        invoice_payload = {
+            "order_id": payment.order_id,
+            "paid_amount": float(payment.paid_amount) if payment.paid_amount is not None else 0.0,
+            "plan": payment.plan,
+            "call": payment.call or 0,
+            "created_at": payment.created_at.isoformat() if isinstance(payment.created_at, datetime) else None,
+            "phone_number": payment.phone_number,
+            "email": payment.email,
+            "name": kyc_user.name,
+            "mode": payment.mode,
+            "employee_code": payment.user_id
+        }
+
+        background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
 
     msg = (
         f"📝 Agreement completed for lead “{kyc_user.full_name}” "
