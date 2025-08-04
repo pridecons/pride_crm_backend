@@ -442,6 +442,55 @@ def service_quantity(billing_cycle: str, call_count: int = 0, duration_day: int 
     else:
         return billing_cycle
 
+import math
+
+def truncate_to_2(x: float) -> float:
+    """Floor/truncate to 2 decimal places (not round)."""
+    return math.floor(x * 100) / 100
+
+def calculate_tax_breakdown(total_payment: float, state: str) -> dict:
+    """
+    Given total payment (which includes tax) and state, returns:
+    service_charges (pre-tax), gateway_charges (2% truncated), net_service_charges,
+    and IGST or CGST+SGST with rounding as in example.
+    """
+    if total_payment < 0:
+        raise ValueError("total_payment must be non-negative")
+
+    # Derive base service charges by removing 18% tax (since total = service + 18% tax)
+    service_charges_raw = total_payment / 1.18
+    service_charges = round(service_charges_raw + 1e-9, 2)  # standard rounding
+
+    # Gateway charges: 2% of service, but truncated (floor) to 2 decimals
+    gateway_charges_raw = service_charges_raw * 0.02
+    gateway_charges = truncate_to_2(gateway_charges_raw)
+
+    net_service_charges = service_charges - gateway_charges
+
+    state_up = state.strip().upper()
+    if state_up == "GUJARAT":
+        igst = round(service_charges_raw * 0.18 + 1e-9, 2)
+        cgst = sgst = 0.0
+    else:
+        igst = 0.0
+        # each 9%, rounding normally
+        cgst = round(service_charges_raw * 0.09 + 1e-9, 2)
+        sgst = round(service_charges_raw * 0.09 + 1e-9, 2)
+
+    total_tax = round(igst + cgst + sgst + 1e-9, 2)
+    reconstructed_total = round(service_charges + total_tax + 1e-9, 2)
+
+    return {
+        "service_charges": service_charges,
+        "gateway_charges": gateway_charges,
+        "net_service_charges": round(net_service_charges + 1e-9, 2),
+        "igst": igst,
+        "cgst": cgst,
+        "sgst": sgst,
+        "total_tax": total_tax,
+        "reconstructed_total": reconstructed_total,
+    }
+
 def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
     """
     Pull details from Lead, calculate GST & txn charges INCLUSIVELY,
@@ -472,36 +521,8 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
         cust_state = (user.state or "").upper()
         cust_code  = state_code.get(cust_state, "")
 
-        # 3) GST rates based on state
-        if cust_state == "GUJARAT":
-            total_gst_rate = 0.18  # IGST 18%
-            cgst_rate = sgst_rate = 0.0
-        else:
-            total_gst_rate = 0.18  # CGST 9% + SGST 9% = 18%
-            cgst_rate = sgst_rate = 0.09
 
-        # 4) Transaction charge rate
-        txn_rate = 0.02  # 2%
-        
-        # 5) INCLUSIVE CALCULATION
-        # Total = Base Amount + GST + Transaction Charges
-        # paid_amount = base_amount * (1 + total_gst_rate + txn_rate)
-        # Therefore: base_amount = paid_amount / (1 + total_gst_rate + txn_rate)
-        
-        total_multiplier = 1 + total_gst_rate + txn_rate
-        base_amount = paid_amount / total_multiplier
-        
-        # 6) Calculate individual components
-        gst_amount = base_amount * total_gst_rate
-        txn_amount = base_amount * txn_rate
-        
-        # Split GST based on state
-        if cust_state == "GUJARAT":
-            igst_amt = gst_amount
-            cgst_amt = sgst_amt = 0
-        else:
-            igst_amt = 0
-            cgst_amt = sgst_amt = gst_amount / 2
+        gateway_charges,net_service_charges,igst, cgst,sgst,total_tax = calculate_tax_breakdown(paid_amount, cust_state)
         
         # 7) Generate proper invoice number (will be set by the SQLAlchemy event listener)
         date_part = datetime.utcnow().strftime("%Y%m%d")
@@ -543,11 +564,11 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
             }],
 
             "totals": {
-                "service_charges": f"{base_amount:,.2f}",
-                "igst":            f"{igst_amt:,.2f}" if igst_amt else "",
-                "cgst":            f"{cgst_amt:,.2f}" if cgst_amt else "",
-                "sgst":            f"{sgst_amt:,.2f}" if sgst_amt else "",
-                "txn_charges":     f"{txn_amount:,.2f}",
+                "service_charges": f"{net_service_charges:,.2f}",
+                "igst":            f"{igst:,.2f}" if igst else "",
+                "cgst":            f"{cgst:,.2f}" if cgst else "",
+                "sgst":            f"{sgst:,.2f}" if sgst else "",
+                "txn_charges":     f"{gateway_charges:,.2f}",
                 "total":           f"{paid_amount:,.2f}",  # This matches the paid amount
                 "in_words":        in_words
             },
