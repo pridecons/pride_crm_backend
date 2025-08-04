@@ -677,7 +677,7 @@ async def generate_invoices_from_payments(
     Beware of Any Fishing calls if you receive on the name of assigned executive & Kindly refuse to pay in any personal A / c apart from the company's Bank details.<br/>
     Securities investments are subject to market risks and there is no assurance or guarantee that the targets of investment advices will be achieved.<br/>
     As with any investment in securities, the value of securities can go up or down depending on various factors and forces , affecting the capital markets . Investors are requested to trade on our advice on his discretion and should understand specific relevant details & risk factors of securities market.<br/>
-    The Product name does not in any manner indicate either its quality or its prospects返品s.<br/>
+    The Product name does not in any manner indicate either its quality or its prospects&returns.<br/>
     Past performance of the Service Product is not indicative of the future performance of the Service Product (s).<br/>
     <b>Investments are subject to market risks.</b>
     </p>
