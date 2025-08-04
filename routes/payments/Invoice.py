@@ -628,18 +628,93 @@ async def generate_invoices_from_payments(
             f.write(signPdf)
         print(f"Generated {path}")
         to_addr = pay.get("email")
+        body_content = """
+<p>Dear Client,
+Greetings from Pride Trading Consultancy Pvt. Ltd.!!!
+Thank you for subscribing our services.
+Please go through your registered details of your subscription as mentioned below,
+"Pride Trading Consultancy Pvt. Ltd." is an Research Analyst having a team consists of highly qualified analysts who are skilled and impeccable in their analysis .In These analysts, using their experience and latest software tools , which are able to predict the movements in share market on time and with high accuracy . As a result, using our tips, our clients gain the most out of the share market . We provides recommendations for Stocks - Cash and F & O traded in NSE & Commodities including Bullions, Metals , Energy and Argo - commodities traded in MCX , NCDEX . We also provide daily and weekly reports having overview of commodity market which helps the investors to understand the trends of the market and helps in taking wise decisions.
+In case of any change in the above-mentioned details, please inform us about the same in writing through e - mail within 3 days of the receipt of this e - mail.
+
+<b>Always trade in the calls given only through SMS
+It is mandatory to trade in all the provided calls and always trade as per the level provided in the call
+Always trade with equal investment in all the call.
+Always trade with uniform number of lots in all the calls for example if you are trading in Derivative Market (Future , Option & Commodity Trader , then each call can be with same quantity , initially for at least one month you should trade with 1 lots & then increase the number of lots as per your investment and risk taking capacity .
+Please keep enough space in your message inbox to get trading message on timely basis comfortably.
+Always maintain stop loss while trading in all calls even if anyone asks to eradicate SL while trading.
+Always avoid trading without stop loss.
+Keep booking partial profits at 1st and 2nd target as messages received from research team.
+Revise your SL once you start booking profit as per company's follow up message</b>
+
+Don't enter in the trade if prices are quite greater than given price, Please call us for assistance . Also, the medium of our services is only SMS thus Please do trade only on SMS provided by Money Bells - Research Analyst . Please do not trade on Verbal calls. Telephonic support provided, if any, will only be to confirm the calls / tips provided through SMS . No separate calls / tips are being provided through telephone.
+
+We provide advice only through our registered SMS Channel. Kindly insist for SMS or Messenger services from your business analyst.
+
+<b>DO NOT Trade on Telephonic calls.Also, we would request you to read our Refund Policy , Disclaimer , Disclosures , Terms & Conditions etc mentioned on our website www.pridecons.com before proceeding for the services , as further company will not be responsible for any confusion or inconvenience caused to client .</b>
+
+Pride Trading Consultancy Pvt. Ltd. provides only advises service NOT any Brokerage or Demat.
+
+By taking our services you are agreeing that you will get our SMS and Telephone call on your DND numbers too.
+�
+For more detail of company and your invoice please find the attachment. You are our valued client and we look forward to a long association with you. In case of any complaints / queries / clarifications please feel free to call us at +91-9981919424 and mail us at compliance@pridecons.com to ensure prompt revert.
+
+We wish you to get best services from our side and expecting long term relationship with us.
+
+Happy Investing!!
+
+Terms &Conditions: As per the SEBI norms, in order to serve you better we would require following documents from you to maintain the records which includes the mandatory requirement from SEBI,
+
+
+PAN NO and DOB (To fetch KYC from KRA)
+
+
+Above details are mandatory requirement from SEBI. In case client fails to provide above details, company has all the required rights to discontinue the services until such details are obtained from the client .
+
+We offer tips in Equity, Commodity and Derivatives Market , we take cautious measures in designing the services & utmost care is being taken in providing advice to clients , but we do not guarantee any assured profits , as " Investments in Market are subject to market risk " hence company will not be liable for any loss incurred to the client .
+Beware of Any Fishing calls if you receive on the name of assigned executive & Kindly refuse to pay in any personal A / c apart from the company's Bank details.
+Securities investments are subject to market risks and there is no assurance or guarantee that the targets of investment advices will be achieved.
+As with any investment in securities, the value of securities can go up or down depending on various factors and forces , affecting the capital markets . Investors are requested to trade on our advice on his discretion and should understand specific relevant details & risk factors of securities market.
+The Product name does not in any manner indicate either its quality or its prospects&returns.
+Past performance of the Service Product is not indicative of the future performance of the Service Product (s).
+<b>Investments are subject to market risks.</b>
+
+Kindly trade only on SMS given by the PRRIDE on your registered mobile number.
+
+By subscribing & using our services you agree to all our Terms & Conditions and Policies mentioned in the e - mail & on our website. compliance@pridecons.com
+
+If you have any query and grievances so, kindly revert immediate on same mail.
+
+Regards
+
+Team Support
+
+Pride Trading Consultancy Pvt. Ltd.
+
+SEBI Registered Number INH000010362
+
+www.pridecons.com
+
+compliance@pridecons.com
+
+*Investment in market is subject to market risk.
+
+*Accuracy mentioned is as per past record. Vary as per market conditions.
+
+*Please read all disclaimer, disclosure, and terms & conditions prior to subscribing to services.
+
+KINDLY REVERT BACK WITH YOUR ACCEPTANCE REGARDING SERVICES  compliance@pridecons.com        
+
+Thanks  & Regards,
+Research Analyst: INH000010362
+Contact: +91-9981919424
+Website: www.pridecons.com </p>
+"""
         subject = f"Your Invoice #{invoice_no}"
-        html_body = (
-            f"<p>Dear {details['customer']['name']},</p>"
-            f"<p>Thank you for your payment of ₹{pay['paid_amount']:.2f}. "
-            f"Please find attached your invoice <strong>{invoice_no}</strong>.</p>"
-            "<p>Regards,<br/>Pride Trading Consultancy</p>"
-        )
 
         send_mail_by_client_with_file(
             to_email=to_addr,
             subject=subject,
-            html_content=html_body,
+            html_content=body_content,
             pdf_file_path=path
         )
 
