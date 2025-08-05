@@ -560,17 +560,17 @@ async def get_admin_analytics(
             Payment.paid_amount > 0
         ).distinct().count()
         
-        emp_revenue = db.query(func.sum(Payment.paid_amount)).join(
-            Lead, Payment.lead_id == Lead.id
-        ).join(
-            LeadAssignment, Lead.id == LeadAssignment.lead_id
-        ).filter(
-            and_(
-                LeadAssignment.user_id == employee.employee_code,
-                Payment.created_at >= start_date,
-                Payment.created_at <= end_date
-            )
-        ).scalar() or 0
+        emp_revenue = (
+            db.query(func.sum(Payment.paid_amount))
+              .filter(
+                  Payment.user_id == employee.employee_code,
+                  Payment.created_at >= start_date,
+                  Payment.created_at <= end_date,
+                  Payment.status == "PAID"
+              )
+              .scalar()
+            or 0
+        )
         
         employee_performance.append(EmployeePerformanceModel(
             employee_code=employee.employee_code,

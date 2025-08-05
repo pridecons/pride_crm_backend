@@ -499,7 +499,7 @@ class Lead(Base):
     alternate_mobile  = Column(String(20), nullable=True)
     aadhaar           = Column(String(12), nullable=True)
     pan               = Column(String(10), nullable=True)
-    gstin             = Column(String(15), nullable=True)
+    gstin             = Column(String(15), nullable=True, default="URP")
 
     state             = Column(String(100), nullable=True)
     city              = Column(String(100), nullable=True)
