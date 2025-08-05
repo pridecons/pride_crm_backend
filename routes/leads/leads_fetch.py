@@ -1,5 +1,5 @@
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -22,7 +22,6 @@ router = APIRouter(
     tags=["leads fetch"],
 )
 
-
 class LeadFetchResponse(BaseModel):
     id: int
     full_name: Optional[str] = None
@@ -39,7 +38,6 @@ class LeadFetchResponse(BaseModel):
 def get_user_active_assignments_count(
     db: Session, user_id: str, assignment_ttl_hours: int
 ) -> int:
-    """Count active (non‐expired) assignments for a user."""
     now = datetime.utcnow()
     cutoff = now - timedelta(hours=assignment_ttl_hours)
     return (
@@ -56,22 +54,14 @@ def get_user_active_assignments_count(
 
 def can_user_fetch_leads(
     db: Session, user_id: str, config: LeadFetchConfig
-) -> tuple[bool, int]:
-    """
-    Check last_fetch_limit. Returns (can_fetch, current_active_assignments).
-    """
+) -> Tuple[bool, int]:
     current = get_user_active_assignments_count(
         db, user_id, config.assignment_ttl_hours
     )
     return (current <= config.last_fetch_limit, current)
 
 
-def load_fetch_config(db: Session, user: UserDetails) -> tuple[LeadFetchConfig, str]:
-    """
-    Load LeadFetchConfig in order:
-    1) role+branch, 2) role global, 3) branch global, 4) defaults.
-    Returns (config, source_string).
-    """
+def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, str]:
     cfg = None
     source = "default"
 
@@ -105,9 +95,8 @@ def load_fetch_config(db: Session, user: UserDetails) -> tuple[LeadFetchConfig, 
         if cfg:
             source = "branch_global"
 
-    # 4️⃣ default mapping
+    # 4️⃣ defaults
     if not cfg:
-        # fallback defaults per role
         defaults = {
             "SUPERADMIN": dict(per_request_limit=100, daily_call_limit=50, last_fetch_limit=10, assignment_ttl_hours=24),
             "BRANCH_MANAGER": dict(per_request_limit=50, daily_call_limit=30, last_fetch_limit=8, assignment_ttl_hours=48),
@@ -118,12 +107,10 @@ def load_fetch_config(db: Session, user: UserDetails) -> tuple[LeadFetchConfig, 
         }
         role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
         cfg_values = defaults.get(role_str, defaults["BA"])
-
         class TempConfig:
             def __init__(self, **kw):
                 for k, v in kw.items():
                     setattr(self, k, v)
-
         cfg = TempConfig(**cfg_values)
 
     return cfg, source
@@ -134,12 +121,8 @@ def fetch_leads(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(require_permission("fetch_lead")),
 ):
-    """
-    Fetch leads for the current user based on their role/branch.
-    Respects limits, assigns unassigned leads, logs each assignment via AddLeadStory.
-    """
     try:
-        # ─── Load config & check last_fetch_limit ─────────────────────────────────
+        # Load config and check per‐user active assignments
         config, cfg_source = load_fetch_config(db, current_user)
         can_fetch, active_count = can_user_fetch_leads(
             db, current_user.employee_code, config
@@ -157,7 +140,7 @@ def fetch_leads(
                 },
             }
 
-        # ─── Enforce daily_call_limit ───────────────────────────────────────────
+        # Enforce daily limit
         today = date.today()
         hist = (
             db.query(LeadFetchHistory)
@@ -177,15 +160,12 @@ def fetch_leads(
                 },
             }
 
-        # ─── Find unassigned or expired leads ────────────────────────────────────
+        # Query unassigned or expired leads
         expiry_cutoff = datetime.utcnow() - timedelta(hours=config.assignment_ttl_hours)
-        query = db.query(Lead).outerjoin(LeadAssignment)
-        query = query.filter(Lead.is_delete == False)
-        
+        query = db.query(Lead).outerjoin(LeadAssignment).filter(Lead.is_delete == False)
         if current_user.branch_id:
             query = query.filter(Lead.branch_id == current_user.branch_id)
 
-        to_fetch = config.per_request_limit
         leads = (
             query.filter(
                 or_(
@@ -193,7 +173,7 @@ def fetch_leads(
                     LeadAssignment.fetched_at < expiry_cutoff,
                 )
             )
-            .limit(to_fetch)
+            .limit(config.per_request_limit)
             .all()
         )
         if not leads:
@@ -209,7 +189,7 @@ def fetch_leads(
                 },
             }
 
-        # ─── Remove expired & assign new ─────────────────────────────────────────
+        # Assign leads and update Lead fields
         for lead in leads:
             expired = (
                 db.query(LeadAssignment)
@@ -222,19 +202,28 @@ def fetch_leads(
             if expired:
                 db.delete(expired)
 
-            # assign if still unassigned
             if not db.query(LeadAssignment).filter_by(lead_id=lead.id).first():
-                db.add(LeadAssignment(lead_id=lead.id, user_id=current_user.employee_code))
+                db.add(LeadAssignment(
+                    lead_id=lead.id,
+                    user_id=current_user.employee_code
+                ))
+                # also stamp the Lead record
+                lead.assigned_to_user = current_user.employee_code
+                lead.conversion_deadline = datetime.utcnow() + timedelta(hours=config.assignment_ttl_hours)
 
-        # ─── Update daily history ────────────────────────────────────────────────
+        # Update daily history and commit all changes
         if not hist:
-            db.add(LeadFetchHistory(user_id=current_user.employee_code, date=today, call_count=1))
+            db.add(LeadFetchHistory(
+                user_id=current_user.employee_code,
+                date=today,
+                call_count=1
+            ))
         else:
             hist.call_count += 1
 
         db.commit()
 
-        # ─── Audit each assignment in crm_lead_story ──────────────────────────────
+        # Audit story entries
         for lead in leads:
             AddLeadStory(
                 lead.id,
@@ -242,7 +231,7 @@ def fetch_leads(
                 f"{current_user.name} ({current_user.employee_code}) fetched this lead"
             )
 
-        # ─── Build response ──────────────────────────────────────────────────────
+        # Build response payload
         response_leads = [
             LeadFetchResponse(
                 id=ld.id,
