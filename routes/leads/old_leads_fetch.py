@@ -12,6 +12,9 @@ from db.models import Lead, LeadAssignment, UserDetails, LeadFetchConfig, LeadFe
 from routes.auth.auth_dependency import require_permission
 from utils.AddLeadStory import AddLeadStory
 from pydantic import BaseModel
+from datetime import date
+
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/old-leads", tags=["Old Lead Management"])
@@ -434,31 +437,71 @@ def fetch_old_leads(
         db.rollback()
         raise HTTPException(500, f"Error fetching old leads: {str(e)}")
 
-
 @router.get("/my-assigned")
 def get_my_assigned_old_leads(
+    # Filters
+    from_date: Optional[date] = Query(None, alias="fromdate", description="Start date YYYY-MM-DD"),
+    to_date:   Optional[date] = Query(None, alias="todate",   description="End   date YYYY-MM-DD"),
+    search:    Optional[str]  = Query(None, description="Global search on name/email/mobile"),
+    response_id: Optional[int] = Query(None, description="Filter by lead_response_id"),
+    source_id:   Optional[int] = Query(None, description="Filter by lead_source_id"),
+
+    # Pagination
+    skip:  int = Query(0, ge=0,   description="Number of records to skip"),
+    limit: int = Query(100, gt=0, description="Max number of records to return"),
+
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(require_permission("fetch_lead"))
 ):
-    """Get old leads currently assigned to user"""
-    
-    try:       
-        assigned_leads = db.query(Lead).filter(
-            and_(
-                Lead.is_old_lead == True,
-                Lead.is_delete == False,
-                Lead.is_client == False,
-                Lead.assigned_to_user == current_user.employee_code
+    """
+    Get old leads assigned to the current user,
+    with optional filters and pagination.
+    """
+    try:
+        base_q = db.query(Lead).filter(
+            Lead.is_old_lead.is_(True),
+            Lead.is_delete.is_(False),
+            Lead.is_client.is_(False),
+            Lead.assigned_to_user == current_user.employee_code
+        )
+
+        if from_date:
+            base_q = base_q.filter(Lead.created_at.cast(date) >= from_date)
+        if to_date:
+            base_q = base_q.filter(Lead.created_at.cast(date) <= to_date)
+
+        if search:
+            term = f"%{search.strip()}%"
+            base_q = base_q.filter(
+                or_(
+                    Lead.full_name.ilike(term),
+                    Lead.email.ilike(term),
+                    Lead.mobile.ilike(term)
+                )
             )
-        ).all()
-        
+
+        if response_id is not None:
+            base_q = base_q.filter(Lead.lead_response_id == response_id)
+        if source_id is not None:
+            base_q = base_q.filter(Lead.lead_source_id == source_id)
+
+        total_count = base_q.count()
+
+        items = (
+            base_q
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
         return {
-            "assigned_old_leads": assigned_leads,
-            "count": len(assigned_leads)
+            "assigned_old_leads": items,
+            "count": total_count
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting assigned old leads: {e}")
         raise HTTPException(500, f"Error getting assigned leads: {str(e)}")
+
 
 
