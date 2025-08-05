@@ -10,13 +10,15 @@ from pydantic import BaseModel, constr, validator
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
+    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig, UserRoleEnum
 )
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
+from sqlalchemy import or_
+
 
 
 router = APIRouter(
@@ -337,6 +339,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
         }
 
 
+
 # API Endpoints
 
 @router.post("/", response_model=LeadOut, status_code=status.HTTP_201_CREATED)
@@ -440,68 +443,116 @@ def create_lead(
 
 @router.get("/", response_model=List[LeadOut])
 def get_all_leads(
-    skip: int = 0,
-    limit: int = 100,
-    branch_id: Optional[int] = None,
-    lead_status: Optional[str] = None,
-    lead_source_id: Optional[int] = None,
-    created_by: Optional[str] = None,
-    kyc_only: bool = False,
-    gender: Optional[str] = None,
-    city: Optional[str] = None,
-    state: Optional[str] = None,
+    # Pagination
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, gt=0, description="Max number of records to return"),
+
+    # Existing filters
+    branch_id:      Optional[int]  = Query(None),
+    lead_status:    Optional[str]  = Query(None, description="old, new, client"), # old, new, client
+    lead_source_id: Optional[int]  = Query(None),
+    created_by:     Optional[str]  = Query(None),
+    kyc_only:       bool           = Query(False, description="Only leads with kyc=True"),
+    gender:         Optional[str]  = Query(None),
+    city:           Optional[str]  = Query(None),
+    state:          Optional[str]  = Query(None),
+
+    # New filters
+    from_date:           Optional[date]          = Query(None, description="created_at ≥ this date (YYYY-MM-DD)"),
+    to_date:             Optional[date]          = Query(None, description="created_at ≤ this date (YYYY-MM-DD)"),
+    search:              Optional[str]           = Query(None, description="global search on name/email/mobile"),
+    response_id:         Optional[int]           = Query(None, description="Filter by lead_response_id"),
+    assigned_to_user:    Optional[str]           = Query(None, description="Filter by assigned_to_user"),
+    assigned_roles:      Optional[List[UserRoleEnum]] = Query(
+                             None,
+                             description="Filter by role(s) of assigned_to_user; e.g. ['TL','BA']"
+                         ),
+
     db: Session = Depends(get_db),
 ):
-    """Get all leads with filtering options"""
+    """Get all leads with extended filtering options."""
     try:
         query = db.query(Lead)
-        
+
+        # core filters
+        query = query.filter(Lead.is_delete == False)
         if branch_id:
             query = query.filter(Lead.branch_id == branch_id)
+
+        if lead_status=="client":
+            query = query.filter(Lead.is_client == True)
+
+        if lead_status=="old":
+            query = query.filter(Lead.is_old_lead == True, Lead.is_client == False)
         
-        if lead_status:
-            query = query.filter(Lead.lead_status == lead_status)
-        
+        if lead_status=="new":
+            query = query.filter(Lead.is_old_lead == False, Lead.is_client == False)
+
+
         if lead_source_id:
             query = query.filter(Lead.lead_source_id == lead_source_id)
-        
         if created_by:
             query = query.filter(Lead.created_by == created_by)
-        
         if kyc_only:
-            query = query.filter(Lead.kyc == True)
-        
+            query = query.filter(Lead.kyc.is_(True))
         if gender:
             query = query.filter(Lead.gender == gender)
-        
         if city:
             query = query.filter(Lead.city.ilike(f"%{city}%"))
-        
         if state:
             query = query.filter(Lead.state.ilike(f"%{state}%"))
 
-        query = query.filter(Lead.is_delete == False)
-        
-        leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
-        
-        # Convert to list with proper error handling
+        # date range
+        if from_date:
+            query = query.filter(Lead.created_at.cast(date) >= from_date)
+        if to_date:
+            query = query.filter(Lead.created_at.cast(date) <= to_date)
+
+        # global search
+        if search:
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Lead.full_name.ilike(term),
+                    Lead.email.ilike(term),
+                    Lead.mobile.ilike(term)
+                )
+            )
+
+        # response-wise
+        if response_id is not None:
+            query = query.filter(Lead.lead_response_id == response_id)
+
+        # employee-wise
+        if assigned_to_user:
+            query = query.filter(Lead.assigned_to_user == assigned_to_user)
+
+        # role-wise (join to UserDetails)
+        if assigned_roles:
+            query = query.join(
+                UserDetails,
+                Lead.assigned_to_user == UserDetails.employee_code
+            ).filter(
+                UserDetails.role.in_(assigned_roles)
+            )
+
+        # pagination & ordering
+        leads = (
+            query
+            .order_by(Lead.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        # convert to Pydantic
         result = []
         for lead in leads:
-            try:
-                lead_dict = safe_convert_lead_to_dict(lead)
-                lead_out = LeadOut(**lead_dict)
-                result.append(lead_out)
-            except Exception as e:
-                print(f"Failed to convert lead {lead.id}: {str(e)}")
-                continue
-        
+            lead_dict = safe_convert_lead_to_dict(lead)
+            result.append(LeadOut(**lead_dict))
+
         return result
-        
-    except (OperationalError, DisconnectionError):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection lost. Please try again."
-        )
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

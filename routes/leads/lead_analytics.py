@@ -793,4 +793,83 @@ async def get_admin_analytics(
         top_performers=top_performers
     )
 
-      
+
+@router.get("/admin/dashboard-card")
+async def get_admin_dashboard_card(
+    days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
+    branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
+    current_user: UserDetails = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    A lightweight “card” summary for admin:
+      - overall: total_leads, total_clients, old_leads, new_leads
+      - source_wise: same metrics, grouped by lead source
+    """
+    # --- permission check ---
+    if current_user.role not in {
+        UserRoleEnum.SUPERADMIN,
+        UserRoleEnum.BRANCH_MANAGER,
+        UserRoleEnum.SALES_MANAGER,
+        UserRoleEnum.TL
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this endpoint"
+        )
+
+    # date bounds
+    start_date, end_date = get_date_range_filter(days)
+
+    # base lead query (applies date_range and role/branch filtering)
+    base_q = get_admin_leads_query(db, current_user, start_date, end_date)
+    if branch_id:
+        base_q = base_q.filter(Lead.branch_id == branch_id)
+
+    # --- overall metrics ---
+    total_leads   = base_q.count()
+    total_clients = base_q.filter(Lead.is_client.is_(True)).count()
+    old_leads     = base_q.filter(Lead.is_old_lead.is_(True)).count()
+    new_leads     = base_q.filter(Lead.is_old_lead.is_(False)).count()
+
+    # --- source-wise metrics ---
+    # turn base_q into a subquery so we can group against it
+    leads_subq = base_q.subquery()
+
+    src_stats = (
+        db.query(
+            leads_subq.c.lead_source_id,
+            LeadSource.name.label("source_name"),
+            func.count(leads_subq.c.id).label("total_leads"),
+            func.sum(case((leads_subq.c.is_client.is_(True), 1), else_=0)).label("total_clients"),
+            func.sum(case((leads_subq.c.is_old_lead.is_(True), 1), else_=0)).label("old_leads"),
+            func.sum(case((leads_subq.c.is_old_lead.is_(False), 1), else_=0)).label("new_leads"),
+        )
+        .join(LeadSource, leads_subq.c.lead_source_id == LeadSource.id)
+        .group_by(LeadSource.id, LeadSource.name)
+        .all()
+    )
+
+    source_wise = [
+        {
+            "source_id":       src_id,
+            "source_name":     src_name or "Unknown",
+            "total_leads":     int(tl),
+            "total_clients":   int(tc),
+            "old_leads":       int(ol),
+            "new_leads":       int(nl),
+        }
+        for src_id, src_name, tl, tc, ol, nl in src_stats
+    ]
+
+    return {
+        "overall": {
+            "total_leads":   total_leads,
+            "total_clients": total_clients,
+            "old_leads":     old_leads,
+            "new_leads":     new_leads,
+        },
+        "source_wise": source_wise
+    }
+
+

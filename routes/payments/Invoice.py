@@ -727,23 +727,8 @@ async def generate_invoices_from_payments(
         if payment_obj:
             payment_obj.is_send_invoice = True
             payment_obj.invoice = output_dir
+            payment_obj.invoice_no = invoice_no
             db.commit()
             db.refresh(payment_obj)
 
-        phone_number  = pay['phone_number']
-        employee_code  = pay['employee_code']
-        user = db.query(Lead).filter(Lead.mobile == phone_number).first()
 
-        kwargs = {
-            "invoice_no": invoice_no,
-            "lead_id": user.id,
-            "employee_code": employee_code,
-            "path": output_dir,
-            "order_id": order_id,
-        }
-
-        templateInvoice = Invoice(**kwargs)
-        db.add(templateInvoice)
-        db.commit()
-        db.refresh(templateInvoice)
-        

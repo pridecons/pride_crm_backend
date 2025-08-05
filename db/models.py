@@ -552,37 +552,7 @@ class Lead(Base):
     lead_response     = relationship("LeadResponse", back_populates="leads")
     assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
     recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
-    invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
     assigned_user = relationship("UserDetails", foreign_keys=[assigned_to_user])
-
-class Invoice(Base):
-    __tablename__ = "crm_invoice"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-
-    # ← NEW: a unique, non‑nullable invoice number
-    invoice_no = Column(
-        String(50),
-        unique=True,
-        nullable=False,
-    )
-
-    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
-    employee_code = Column(
-        String(100),
-        ForeignKey("crm_user_details.employee_code"),
-        nullable=True
-    )
-    path = Column(String(255), nullable=False)
-    order_id = Column(String(100), nullable=True)
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False
-    )
-
-    lead     = relationship("Lead", back_populates="invoices")
-    employee = relationship("UserDetails", backref="invoices")
 
 class Payment(Base):
     __tablename__ = "crm_payment"
@@ -605,7 +575,8 @@ class Payment(Base):
     status           = Column(String(50), nullable=True)
     mode             = Column(String(50), nullable=False)
     is_send_invoice  = Column(Boolean, nullable=False, default=False)
-    invoice          = Column(Boolean, nullable=False, default=False)
+    invoice          = Column(String(255), nullable=True)
+    invoice_no       = Column(String(300), nullable=True)
     description      = Column(Text, nullable=True)
     transaction_id   = Column(String(100), nullable=True)
     user_id          = Column(String(50), nullable=True)
