@@ -11,7 +11,7 @@ from num2words import num2words
 from io import BytesIO
 
 from db.connection import get_db
-from db.models import Lead, Invoice, Payment
+from db.models import Lead, Payment
 
 from reportlab.pdfgen import canvas
 from reportlab.pdfgen import canvas as rl_canvas
