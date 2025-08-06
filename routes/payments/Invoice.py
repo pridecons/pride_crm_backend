@@ -726,7 +726,7 @@ async def generate_invoices_from_payments(
         payment_obj = db.query(Payment).filter(Payment.order_id == order_id).first()
         if payment_obj:
             payment_obj.is_send_invoice = True
-            payment_obj.invoice = output_dir
+            payment_obj.invoice = path
             payment_obj.invoice_no = invoice_no
             db.commit()
             db.refresh(payment_obj)
