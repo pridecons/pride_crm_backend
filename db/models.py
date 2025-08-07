@@ -787,7 +787,7 @@ class EmailTemplate(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
-    template_type = Column(SAEnum(TemplateTypeEnum), nullable=False)
+    template_type = Column(ARRAY(String), nullable=False)
     subject = Column(String(200), nullable=False)
     body = Column(Text, nullable=False)
 

@@ -1,11 +1,11 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, EmailStr
 from db.models import TemplateTypeEnum
 from datetime import datetime
 
 class TemplateBase(BaseModel):
     name: str
-    template_type: TemplateTypeEnum
+    template_type: Optional[List[str]] = None
     subject: str
     body: str     # can contain Jinja2 placeholders, e.g. "Hello {{ user_name }}!"
 
@@ -14,7 +14,7 @@ class TemplateCreate(TemplateBase):
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
-    template_type: Optional[TemplateTypeEnum] = None
+    template_type: Optional[List[str]] = None
     subject: Optional[str] = None
     body: Optional[str] = None
 
