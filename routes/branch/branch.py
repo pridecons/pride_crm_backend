@@ -623,7 +623,7 @@ async def create_branch_with_manager(
         return len(pan) == 10
     
     def validate_aadhaar(aadhaar: str):
-        return len(aadhaar) == 12 and aadhaar.isdigit()
+        return len(aadhaar) == 12
     
     def validate_pincode(pincode: str):
         return len(pincode) == 6 and pincode.isdigit()

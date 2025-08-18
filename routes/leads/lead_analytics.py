@@ -833,31 +833,39 @@ async def get_admin_dashboard_card(
     new_leads     = base_q.filter(Lead.is_old_lead.is_(False)).count()
 
     # --- source-wise metrics ---
-    # turn base_q into a subquery so we can group against it
-    leads_subq = base_q.subquery()
+    # Build a slim subquery with only the fields needed for aggregation.
+    leads_subq = (
+        base_q.with_entities(
+            Lead.id.label("id"),
+            Lead.lead_source_id.label("lead_source_id"),
+            Lead.is_client.label("is_client"),
+            Lead.is_old_lead.label("is_old_lead"),
+        )
+    ).subquery()
 
+    # OUTER JOIN so leads with NULL source are counted (as "Unknown")
     src_stats = (
         db.query(
-            leads_subq.c.lead_source_id,
+            LeadSource.id.label("source_id"),
             LeadSource.name.label("source_name"),
             func.count(leads_subq.c.id).label("total_leads"),
             func.sum(case((leads_subq.c.is_client.is_(True), 1), else_=0)).label("total_clients"),
             func.sum(case((leads_subq.c.is_old_lead.is_(True), 1), else_=0)).label("old_leads"),
             func.sum(case((leads_subq.c.is_old_lead.is_(False), 1), else_=0)).label("new_leads"),
         )
-        .join(LeadSource, leads_subq.c.lead_source_id == LeadSource.id)
+        .outerjoin(LeadSource, leads_subq.c.lead_source_id == LeadSource.id)
         .group_by(LeadSource.id, LeadSource.name)
         .all()
     )
 
     source_wise = [
         {
-            "source_id":       src_id,
-            "source_name":     src_name or "Unknown",
-            "total_leads":     int(tl),
-            "total_clients":   int(tc),
-            "old_leads":       int(ol),
-            "new_leads":       int(nl),
+            "source_id":       (src_id if src_id is not None else 0),
+            "source_name":     (src_name if src_name is not None else "Unknown"),
+            "total_leads":     int(tl or 0),
+            "total_clients":   int(tc or 0),
+            "old_leads":       int(ol or 0),
+            "new_leads":       int(nl or 0),
         }
         for src_id, src_name, tl, tc, ol, nl in src_stats
     ]
