@@ -1031,8 +1031,8 @@ class ChangeResponse(BaseModel):
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
     call_back_date: Optional[datetime] = None
-    segment: Optional[datetime] = None
-    ft_service_type: Optional[datetime] = None
+    segment: Optional[str] = None
+    ft_service_type: Optional[str] = None
 
 from datetime import datetime, timedelta, timezone
 
