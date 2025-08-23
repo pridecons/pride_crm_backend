@@ -348,15 +348,16 @@ async def get_employee_analytics(
     ).group_by(LeadResponse.name).all()
     
     response_breakdown = []
-    total_for_percentage = sum(count for _, count in response_analytics)
-    
+    total_for_percentage = sum(int(count or 0) for _, count in response_analytics) or 0
+
     for response_name, count in response_analytics:
-        percentage = (count / total_for_percentage * 100) if total_for_percentage > 0 else 0
-        response_breakdown.append(ResponseAnalyticsModel(
-            response_name=response_name or "No Response",
-            total_leads=count,
-            percentage=round(percentage, 2)
-        ))
+        pct = (float(count or 0) / total_for_percentage * 100.0) if total_for_percentage > 0 else 0.0
+        response_breakdown.append({
+            "response_name": response_name or "No Response",
+            "total_leads": int(count or 0),
+            "percentage": round(pct, 2),
+        })
+
     
     # Recent Activities
     recent_activities = []
