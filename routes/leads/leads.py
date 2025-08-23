@@ -610,7 +610,7 @@ def update_lead(
         update_data = prepare_lead_data_for_db(lead_in.dict(exclude_unset=True))
         
         # Validate references if being updated
-        if "lead_source_id" in update_data:
+        if update_data['lead_source_id']:
             lead_source = db.query(LeadSource).filter_by(id=update_data["lead_source_id"]).first()
             if not lead_source:
                 raise HTTPException(
@@ -618,7 +618,7 @@ def update_lead(
                     detail=f"Lead source with ID {update_data['lead_source_id']} not found"
                 )
         is_old = False
-        if "lead_response_id" in update_data:
+        if update_data['lead_response_id']:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
             is_old = True
             if not lead_response:
