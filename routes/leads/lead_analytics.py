@@ -3,10 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, desc, func, text, case, extract
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, date, timedelta
 from pydantic import BaseModel
-
 from db.connection import get_db
 from db.models import (
     Lead, Payment, UserDetails, UserRoleEnum, LeadAssignment, 
@@ -86,7 +85,6 @@ class AdminAnalyticsResponse(BaseModel):
     employee_performance: List[EmployeePerformanceModel]
     daily_trends: List[DailyActivityModel]
     source_analytics: List[SourceAnalyticsModel]
-    response_analytics: List[ResponseAnalyticsModel]
     branch_performance: List[Dict[str, Any]]
     top_performers: List[EmployeePerformanceModel]
 
@@ -715,19 +713,6 @@ async def get_admin_analytics(
             LeadAssignment, Lead.id == LeadAssignment.lead_id
         ).filter(LeadAssignment.user_id.in_(team_members))
     
-    response_analytics_data = response_analytics_query.group_by(LeadResponse.name).all()
-    
-    response_analytics = []
-    total_for_percentage = sum(count for _, count in response_analytics_data)
-    
-    for response_name, count in response_analytics_data:
-        percentage = (count / total_for_percentage * 100) if total_for_percentage > 0 else 0
-        response_analytics.append(ResponseAnalyticsModel(
-            response_name=response_name or "No Response",
-            total_leads=count,
-            percentage=round(percentage, 2)
-        ))
-    
     # Branch Performance (only for SUPERADMIN)
     branch_performance = []
     if current_user.role == UserRoleEnum.SUPERADMIN:
@@ -788,7 +773,6 @@ async def get_admin_analytics(
         employee_performance=employee_performance,
         daily_trends=daily_trends,
         source_analytics=source_analytics,
-        response_analytics=response_analytics,
         branch_performance=branch_performance,
         top_performers=top_performers
     )
@@ -879,5 +863,176 @@ async def get_admin_dashboard_card(
         },
         "source_wise": source_wise
     }
+
+# ===============================
+# SEPARATE RESPONSE ANALYTICS APIs
+# ===============================
+
+# ---------- Common helper ----------
+
+# -------------------------------
+# Models
+# -------------------------------
+class ResponseAnalyticsModel(BaseModel):
+    response_name: str
+    total_leads: int
+    percentage: float
+
+class ResponseAnalyticsSummary(BaseModel):
+    total_leads: int
+    breakdown: List[ResponseAnalyticsModel]
+
+# -------------------------------
+# Helper: compute total + breakdown
+# -------------------------------
+def _compute_response_analytics_from_leads_query(
+    db: Session,
+    leads_base_q,
+) -> Tuple[int, List[ResponseAnalyticsModel]]:
+    """
+    Given a base Lead query (already filtered for role/date/branch),
+    return (overall_total_leads, breakdown_by_response)
+    """
+    leads_subq = (
+        leads_base_q.with_entities(
+            Lead.id.label("id"),
+            Lead.lead_response_id.label("lead_response_id"),
+        )
+    ).subquery()
+
+    rows = (
+        db.query(
+            LeadResponse.name.label("response_name"),
+            func.count(leads_subq.c.id).label("total_leads"),
+        )
+        .outerjoin(LeadResponse, leads_subq.c.lead_response_id == LeadResponse.id)
+        .group_by(LeadResponse.name)
+        .all()
+    )
+
+    overall_total = sum(int(r.total_leads or 0) for r in rows) or 0
+
+    breakdown: List[ResponseAnalyticsModel] = []
+    for rname, total in rows:
+        pct = (float(total) / overall_total * 100.0) if overall_total > 0 else 0.0
+        breakdown.append(
+            ResponseAnalyticsModel(
+                response_name=rname or "No Response",
+                total_leads=int(total or 0),
+                percentage=round(pct, 2),
+            )
+        )
+    return overall_total, breakdown
+
+# ----------------------------------
+# /analytics/leads/employee/response-analytics
+# ----------------------------------
+@router.get("/employee/response-analytics", response_model=ResponseAnalyticsSummary)
+async def get_employee_response_analytics(
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
+    current_user: UserDetails = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Response-wise breakdown ONLY for the current employee, plus overall total leads.
+    """
+    start_date, end_date = get_date_range_filter(days)
+
+    leads_q = get_employee_leads_query(
+        db=db,
+        employee_code=current_user.employee_code,
+        date_from=start_date,
+        date_to=end_date,
+    ).filter(Lead.is_delete.is_(False))
+
+    total, breakdown = _compute_response_analytics_from_leads_query(db, leads_q)
+    return ResponseAnalyticsSummary(total_leads=total, breakdown=breakdown)
+
+# ----------------------------------
+# /analytics/leads/admin/response-analytics
+# ----------------------------------
+@router.get("/admin/response-analytics", response_model=ResponseAnalyticsSummary)
+async def get_admin_response_analytics(
+    # existing
+    days: int = Query(30, ge=1, le=365, description="Default window if from/to not given"),
+    branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
+    # NEW filters
+    employee_role: Optional[UserRoleEnum] = Query(
+        None, description="Filter user-wise by role (e.g., BA, SBA, TL, SALES_MANAGER)"
+    ),
+    from_date: Optional[date] = Query(None, description="Start date (YYYY-MM-DD)"),
+    to_date: Optional[date] = Query(None, description="End date (YYYY-MM-DD)"),
+    source_id: Optional[int] = Query(None, description="Filter by Lead Source ID"),
+    user_id: Optional[str] = Query(None, description="Filter by specific employee_code"),
+    current_user: UserDetails = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Response-wise breakdown for admin views with extra filters (and overall total):
+      - branch_id, employee_role, from_date, to_date, source_id, user_id
+    """
+    if current_user.role not in {
+        UserRoleEnum.SUPERADMIN,
+        UserRoleEnum.BRANCH_MANAGER,
+        UserRoleEnum.SALES_MANAGER,
+        UserRoleEnum.TL,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this endpoint",
+        )
+
+    # resolve date range
+    if from_date and to_date and from_date > to_date:
+        from_date, to_date = to_date, from_date
+
+    if from_date or to_date:
+        start_date = from_date or (datetime.now().date() - timedelta(days=days))
+        end_date = to_date or datetime.now().date()
+    else:
+        start_date, end_date = get_date_range_filter(days)
+
+    # base admin-accessible leads
+    leads_q = get_admin_leads_query(
+        db=db,
+        current_user=current_user,
+        date_from=start_date,
+        date_to=end_date,
+    ).filter(Lead.is_delete.is_(False))
+
+    if branch_id:
+        leads_q = leads_q.filter(Lead.branch_id == branch_id)
+
+    if source_id:
+        leads_q = leads_q.filter(Lead.lead_source_id == source_id)
+
+    # user/role scoping
+    if user_id or employee_role:
+        emp_q = db.query(UserDetails.employee_code)
+
+        if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+            emp_q = emp_q.filter(UserDetails.branch_id == current_user.manages_branch.id)
+        elif current_user.role == UserRoleEnum.SALES_MANAGER:
+            emp_q = emp_q.filter(UserDetails.sales_manager_id == current_user.employee_code)
+        elif current_user.role == UserRoleEnum.TL:
+            emp_q = emp_q.filter(UserDetails.tl_id == current_user.employee_code)
+
+        emp_q = emp_q.filter(UserDetails.is_active.is_(True))
+
+        if employee_role:
+            emp_q = emp_q.filter(UserDetails.role == employee_role)
+
+        if user_id:
+            emp_q = emp_q.filter(UserDetails.employee_code == user_id)
+
+        accessible_users_subq = emp_q.subquery()
+
+        leads_q = (
+            leads_q.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
+                   .filter(LeadAssignment.user_id.in_(accessible_users_subq))
+        )
+
+    total, breakdown = _compute_response_analytics_from_leads_query(db, leads_q)
+    return ResponseAnalyticsSummary(total_leads=total, breakdown=breakdown)
 
 
