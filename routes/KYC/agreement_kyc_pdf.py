@@ -99,7 +99,7 @@ async def sign_pdf(pdf_bytes: bytes) -> bytes:
                 sig_field_spec = SigFieldSpec(
                     'Signature1',
                     on_page=-1,
-                    box=(340, 360, 490, 300)
+                    box=(340, 480, 490, 420)
                 )
 
                 # (left, bottom, right, top)
@@ -1107,7 +1107,7 @@ async def generate_kyc_pdf(data,mobile:str,employee_code:str , db:Session = Depe
             {
                 "page_num": 13,
                 "x_coord": 380,
-                "y_coord": 20
+                "y_coord": 100
             }
         ]
     }
