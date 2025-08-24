@@ -2,7 +2,7 @@ import requests
 import json
 from config import WHATSAPP_ACCESS_TOKEN, PHONE_NUMBER_ID
 
-async def cashfree_payment_link(number, name, payment_amount, payment_url):
+async def cashfree_payment_link(number, name, payment_amount, payment_url, kyc=False):
     # API endpoint
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
 
@@ -18,7 +18,7 @@ async def cashfree_payment_link(number, name, payment_amount, payment_url):
         "to": f"91{number}",  # Customer's WhatsApp number
         "type": "template",
         "template": {
-            "name": "cashfree_payment_req",  # Your approved template name
+            "name": "cashfree_payment_req" if kyc else "web_consent_message",  # ✅ corrected ternary
             "language": {"code": "en"},
             "components": [
                 {
@@ -49,7 +49,7 @@ async def cashfree_payment_link(number, name, payment_amount, payment_url):
                         {
                             "type": "text",
                             "parameter_name": "payment_link",
-                            "text": payment_url
+                            "text": payment_url if kyc else f"/payment/consent/{payment_url}"  # ✅ corrected ternary
                         }
                     ]
                 }

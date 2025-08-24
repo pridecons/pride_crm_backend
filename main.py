@@ -34,7 +34,7 @@ from routes.Rational import Rational
 from routes.notification import notifiaction_websocket, send_notification
 from routes.Send_client_message import Client_mail_service, sms_templates
 from routes.notification.notification_scheduler import start_scheduler
-from routes.payments import Get_Invoice
+from routes.payments import Get_Invoice, payment
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,7 @@ def get_scheduler_status(
 
 # Register all your existing routes
 try:
+    app.include_router(payment.router, prefix="/api/v1")
     app.include_router(Get_Invoice.router, prefix="/api/v1")
     app.include_router(Rational.router, prefix="/api/v1")
     app.include_router(old_leads_fetch.router, prefix="/api/v1")
