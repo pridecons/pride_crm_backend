@@ -257,6 +257,7 @@ class PermissionDetails(Base):
     lead_recording_upload   = Column(Boolean, default=False)
     lead_story_view = Column(Boolean, default=False)
     lead_transfer = Column(Boolean, default=False)
+    lead_branch_view = Column(Boolean, default=False)
 
     # LEAD SOURCE
     create_lead = Column(Boolean, default=False)
@@ -325,10 +326,10 @@ class PermissionDetails(Base):
     rational_add_recommadation = Column(Boolean, default=False)
 
     # EMAIL
-    email_add = Column(Boolean, default=False)
-    email_edit = Column(Boolean, default=False)
-    email_delete = Column(Boolean, default=False)
-    email_preview_template = Column(Boolean, default=False)
+    email_add_temp = Column(Boolean, default=False)
+    email_view_temp = Column(Boolean, default=False)
+    email_edit_temp = Column(Boolean, default=False)
+    email_delete_temp = Column(Boolean, default=False)
 
     # SMS
     sms_add = Column(Boolean, default=False)
@@ -341,6 +342,9 @@ class PermissionDetails(Base):
     branch_details = Column(Boolean, default=False)
     branch_agreement_view = Column(Boolean, default=False)
 
+    # header 
+    header_global_search = Column(Boolean, default=False)
+
     user            = relationship("UserDetails", back_populates="permission")
 
     @classmethod
@@ -352,6 +356,10 @@ class PermissionDetails(Base):
                 'lead_recording_upload': True,
                 'lead_story_view' : True,
                 'lead_transfer' : True,
+                'lead_branch_view': True,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True,
@@ -419,10 +427,10 @@ class PermissionDetails(Base):
                 'rational_add_recommadation' : True,
 
                 # EMAIL
-                'email_add' : True,
-                'email_edit' : True,
-                'email_delete' : True,
-                'email_preview_template' : True,
+                'email_add_temp' : True,
+                'email_edit_temp' : True,
+                'email_delete_temp' : True,
+                'email_view_temp' : True,
 
                 # SMS
                 'sms_add' : True,
@@ -439,7 +447,10 @@ class PermissionDetails(Base):
             UserRoleEnum.BRANCH_MANAGER: {
                 # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': False,
-                'lead_story_view' : True, 'lead_transfer' : False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+                
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
@@ -473,7 +484,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -484,7 +495,10 @@ class PermissionDetails(Base):
             UserRoleEnum.SALES_MANAGER: {
                 # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': False,
-                'lead_story_view' : True, 'lead_transfer' : False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
@@ -518,7 +532,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -529,7 +543,10 @@ class PermissionDetails(Base):
             UserRoleEnum.HR: {
                 # LEAD/[id]
                 'lead_recording_view' : False, 'lead_recording_upload': False,
-                'lead_story_view' : False, 'lead_transfer' : False,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
@@ -563,7 +580,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -574,7 +591,10 @@ class PermissionDetails(Base):
             UserRoleEnum.TL: {
                  # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': False,
-                'lead_story_view' : True, 'lead_transfer' : False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
@@ -608,7 +628,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -619,7 +639,10 @@ class PermissionDetails(Base):
             UserRoleEnum.SBA: {
                  # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': False,
-                'lead_story_view' : True, 'lead_transfer' : False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
@@ -653,7 +676,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -664,7 +687,10 @@ class PermissionDetails(Base):
             UserRoleEnum.BA: {
                  # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': False,
-                'lead_story_view' : True, 'lead_transfer' : False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
 
                 # LEAD SOURCE
                 'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
@@ -698,7 +724,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -709,7 +735,10 @@ class PermissionDetails(Base):
             UserRoleEnum.RESEARCHER: {
                 # LEAD/[id]
                 'lead_recording_view' : False, 'lead_recording_upload': False,
-                'lead_story_view' : False, 'lead_transfer' : False,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': False,
 
                 # LEAD SOURCE
                 'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
@@ -743,7 +772,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : True, 'rational_status' : True, 'rational_edit' : True, 'rational_add_recommadation' : True,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
@@ -754,7 +783,10 @@ class PermissionDetails(Base):
             UserRoleEnum.COMPLIANCE: {
                 # LEAD/[id]
                 'lead_recording_view' : True, 'lead_recording_upload': True,
-                'lead_story_view' : False, 'lead_transfer' : False,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': False,
 
                 # LEAD SOURCE
                 'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
@@ -788,7 +820,7 @@ class PermissionDetails(Base):
                 'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
 
                 # EMAIL
-                'email_add' : False, 'email_edit' : False, 'email_delete' : False, 'email_preview_template' : False,
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
 
                 # SMS
                 'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
