@@ -469,13 +469,13 @@ def calculate_tax_breakdown(total_payment: float, state: str) -> dict:
 
     state_up = state.strip().upper()
     if state_up == "GUJARAT":
-        igst = round(service_charges_raw * 0.18 + 1e-9, 2)
-        cgst = sgst = 0.0
-    else:
         igst = 0.0
         # each 9%, rounding normally
         cgst = round(service_charges_raw * 0.09 + 1e-9, 2)
         sgst = round(service_charges_raw * 0.09 + 1e-9, 2)
+    else:
+        igst = round(service_charges_raw * 0.18 + 1e-9, 2)
+        cgst = sgst = 0.0
 
     total_tax = round(igst + cgst + sgst + 1e-9, 2)
     reconstructed_total = round(service_charges + total_tax + 1e-9, 2)
