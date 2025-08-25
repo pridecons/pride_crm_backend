@@ -314,7 +314,7 @@ class PermissionDetails(Base):
     email_page = Column(Boolean, default=False)
     branch_page = Column(Boolean, default=False)
     old_lead_page = Column(Boolean, default=False)
-    new_lead_pate = Column(Boolean, default=False)
+    new_lead_page = Column(Boolean, default=False)
 
     # MESSANGER
     rational_download = Column(Boolean, default=False)
@@ -415,7 +415,7 @@ class PermissionDetails(Base):
                 'email_page' : True,
                 'branch_page' : True,
                 'old_lead_page' : True,
-                'new_lead_pate' : True,
+                'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : True,
@@ -477,7 +477,7 @@ class PermissionDetails(Base):
                 'user_page' : True, 'permission_page' : False, 'lead_upload_page' : True, 'fetch_limit_page' : False,
 
                 'add_lead_page' : True, 'payment_page' : True, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_pate' : True,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -525,7 +525,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_pate' : True,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -573,7 +573,7 @@ class PermissionDetails(Base):
                 'user_page' : True, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_pate' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -621,7 +621,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_pate' : True,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -669,7 +669,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_pate' : True,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -717,7 +717,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_pate' : True,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -765,7 +765,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : True, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_pate' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
@@ -813,7 +813,7 @@ class PermissionDetails(Base):
                 'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
 
                 'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
-                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_pate' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
 
                 # MESSANGER
                 'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,

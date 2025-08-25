@@ -146,7 +146,7 @@ def toggle_single_permission(
                 'user_page' , 'permission_page' , 'lead_upload_page' , 'fetch_limit_page' ,
 
                 'add_lead_page' , 'payment_page' , 'messanger_page' , 'template' ,
-                'sms_page' , 'email_page' , 'branch_page' , 'old_lead_page' , 'new_lead_pate' ,
+                'sms_page' , 'email_page' , 'branch_page' , 'old_lead_page' , 'new_lead_page' ,
 
                 # MESSANGER
                 'rational_download' , 'rational_pdf_model_download' , 'rational_pdf_model_view' ,
