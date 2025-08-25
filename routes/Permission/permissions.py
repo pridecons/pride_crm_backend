@@ -119,7 +119,7 @@ def toggle_single_permission(
         valid_permissions = {
              # LEAD/[id]
                 'lead_recording_view' , 'lead_recording_upload',
-                'lead_story_view' , 'lead_transfer' ,
+                'lead_story_view' , 'lead_transfer' ,"lead_branch_view"
 
                 # LEAD SOURCE
                 'create_lead' , 'edit_lead' , 'delete_lead'  ,
@@ -153,7 +153,7 @@ def toggle_single_permission(
                 'rational_graf_model_view' , 'rational_status' , 'rational_edit' , 'rational_add_recommadation' ,
 
                 # EMAIL
-                'email_add' , 'email_edit' , 'email_delete' , 'email_preview_template' ,
+                'email_add_temp' , 'email_view_temp' , 'email_edit_temp' , 'email_delete_temp' ,
 
                 # SMS
                 'sms_add' , 'sms_edit' , 'sms_delete' ,
