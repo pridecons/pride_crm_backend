@@ -584,8 +584,8 @@ async def create_branch_with_manager(
     branch_name: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
     branch_address: str = Form(...),
     authorized_person: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
-    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(...),
-    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12) = Form(...),
+    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(None),
+    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12) = Form(None),
     branch_active: bool = Form(True),
     agreement_pdf: UploadFile = File(...),
     
