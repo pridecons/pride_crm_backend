@@ -18,9 +18,9 @@ class UserRoleEnum(str, enum.Enum):
     BRANCH_MANAGER = "BRANCH MANAGER"
     HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
-    TL = "TL"  # Team Leader
-    SBA = "SBA"  # Senior Business Associate
-    BA = "BA"  # Business Associate
+    TL = "TL" 
+    SBA = "SBA"  
+    BA = "BA" 
     RESEARCHER = "RESEARCHER"
      
 
@@ -41,6 +41,48 @@ class OTP(Base):
     mobile    = Column(String(20), nullable=False, index=True)
     otp       = Column(Integer, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Department(Base):
+    __tablename__ = "crm_departments"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)  # Dynamic department names
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    permission = Column(ARRAY, nullable=True)
+    
+    # Relationships
+    profiles = relationship("ProfileRole", back_populates="department")
+    users = relationship("UserDetails", back_populates="department")
+
+class ProfileRole(Base):
+    __tablename__ = "crm_profile_roles"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+    department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=False)
+    
+    # Hierarchy
+    parent_profile_id = Column(Integer, ForeignKey("crm_profile_roles.id"), nullable=True)
+    hierarchy_level = Column(Integer, nullable=False)
+
+    default_permissions = Column(ARRAY, nullable=True)
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    department = relationship("Department", back_populates="profiles")
+    parent_profile = relationship("ProfileRole", remote_side=[id], backref="child_profiles")
+    users = relationship("UserDetails", back_populates="profile_role")
 
 
 class UserDetails(Base):
@@ -70,10 +112,9 @@ class UserDetails(Base):
 
     comment           = Column(Text, nullable=True)
 
-    # Foreign Keys - Removed manager_id, kept sales_manager_id and tl_id
+    # Foreign Keys - Removed manager_id, kept parent_profile_id 
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
-    sales_manager_id  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
-    tl_id            = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    senior_profile_id = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
 
     # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -90,21 +131,7 @@ class UserDetails(Base):
                          back_populates="users",
                          foreign_keys=[branch_id]
                        )
-
-    # Self-referential relationships for hierarchy
-    sales_manager     = relationship(
-                         "UserDetails",
-                         remote_side=[employee_code],
-                         foreign_keys=[sales_manager_id],
-                         post_update=True
-                       )
     
-    tl                = relationship(
-                         "UserDetails",
-                         remote_side=[employee_code],
-                         foreign_keys=[tl_id],
-                         post_update=True
-                       )
 
     # Branch management relationship (only for BRANCH MANAGER)
     manages_branch    = relationship(

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
-from db.models import PermissionDetails, UserDetails, UserRoleEnum
+from db.models import PermissionDetails, UserDetails
 from db.Schema.permissions import PermissionUpdate
 
 router = APIRouter(

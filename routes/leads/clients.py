@@ -179,8 +179,8 @@ async def get_clients(
     Visibility rules (no LeadAssignment dependency):
       - SUPERADMIN: all clients
       - BRANCH_MANAGER: clients in their managed branch OR their own branch_id
-      - SALES_MANAGER: clients whose Lead.assigned_to_user belongs to their team (sales_manager_id==me) + self
-      - TL: clients whose Lead.assigned_to_user belongs to their team (tl_id==me) + self
+      - SALES_MANAGER: clients whose Lead.assigned_to_user belongs to their team (senior_profile_id==me) + self
+      - TL: clients whose Lead.assigned_to_user belongs to their team self
       - Others: only clients assigned_to_user == me
     """
     # Permission check
@@ -210,19 +210,7 @@ async def get_clients(
     elif current_user.role == UserRoleEnum.SALES_MANAGER:
         team_codes_subq = (
             db.query(UserDetails.employee_code)
-            .filter(UserDetails.sales_manager_id == current_user.employee_code)
-            .subquery()
-        )
-        query = query.filter(
-            or_(
-                Lead.assigned_to_user.in_(team_codes_subq),
-                Lead.assigned_to_user == current_user.employee_code,
-            )
-        )
-    elif current_user.role == UserRoleEnum.TL:
-        team_codes_subq = (
-            db.query(UserDetails.employee_code)
-            .filter(UserDetails.tl_id == current_user.employee_code)
+            .filter(UserDetails.senior_profile_id == current_user.employee_code)
             .subquery()
         )
         query = query.filter(

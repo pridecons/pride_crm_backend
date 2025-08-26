@@ -8,7 +8,7 @@ import hashlib
 import bcrypt
 
 from db.connection import get_db
-from db.models import UserDetails, TokenDetails, UserRoleEnum
+from db.models import UserDetails, TokenDetails
 from db.Schema.login import TokenResponse, RefreshTokenRequest, LoginRequest, UserInfoResponse
 from routes.auth.JWTSecurity import (
     create_access_token,

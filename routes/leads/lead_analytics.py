@@ -130,16 +130,7 @@ def get_admin_leads_query(db: Session, current_user: UserDetails, date_from: Opt
     elif current_user.role == UserRoleEnum.SALES_MANAGER:
         # Get team members
         team_members = db.query(UserDetails.employee_code).filter(
-            UserDetails.sales_manager_id == current_user.employee_code
-        ).subquery()
-        
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id.in_(team_members)
-        )
-    elif current_user.role == UserRoleEnum.TL:
-        # Get team members
-        team_members = db.query(UserDetails.employee_code).filter(
-            UserDetails.tl_id == current_user.employee_code
+            UserDetails.senior_profile_id == current_user.employee_code
         ).subquery()
         
         query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
@@ -478,12 +469,9 @@ async def get_admin_analytics(
         # Apply team filtering
         if current_user.role == UserRoleEnum.SALES_MANAGER:
             team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.sales_manager_id == current_user.employee_code
+                UserDetails.senior_profile_id == current_user.employee_code
             ).subquery()
-        else:  # TL
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.tl_id == current_user.employee_code
-            ).subquery()
+
         
         payments_query = payments_query.join(
             LeadAssignment, Lead.id == LeadAssignment.lead_id
@@ -539,9 +527,7 @@ async def get_admin_analytics(
     if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
         employees_query = employees_query.filter(UserDetails.branch_id == current_user.manages_branch.id)
     elif current_user.role == UserRoleEnum.SALES_MANAGER:
-        employees_query = employees_query.filter(UserDetails.sales_manager_id == current_user.employee_code)
-    elif current_user.role == UserRoleEnum.TL:
-        employees_query = employees_query.filter(UserDetails.tl_id == current_user.employee_code)
+        employees_query = employees_query.filter(UserDetails.senior_profile_id == current_user.employee_code)
     
     employees = employees_query.all()
     
@@ -609,11 +595,7 @@ async def get_admin_analytics(
         elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
             if current_user.role == UserRoleEnum.SALES_MANAGER:
                 team_members = db.query(UserDetails.employee_code).filter(
-                    UserDetails.sales_manager_id == current_user.employee_code
-                ).subquery()
-            else:
-                team_members = db.query(UserDetails.employee_code).filter(
-                    UserDetails.tl_id == current_user.employee_code
+                    UserDetails.senior_profile_id == current_user.employee_code
                 ).subquery()
             leads_called_count = leads_called_count.filter(LeadAssignment.user_id.in_(team_members))
         
@@ -660,11 +642,7 @@ async def get_admin_analytics(
     elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
         if current_user.role == UserRoleEnum.SALES_MANAGER:
             team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.sales_manager_id == current_user.employee_code
-            ).subquery()
-        else:
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.tl_id == current_user.employee_code
+                UserDetails.senior_profile_id == current_user.employee_code
             ).subquery()
         
         source_analytics_query = source_analytics_query.join(
@@ -703,11 +681,7 @@ async def get_admin_analytics(
     elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
         if current_user.role == UserRoleEnum.SALES_MANAGER:
             team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.sales_manager_id == current_user.employee_code
-            ).subquery()
-        else:
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.tl_id == current_user.employee_code
+                UserDetails.senior_profile_id == current_user.employee_code
             ).subquery()
         
         response_analytics_query = response_analytics_query.join(
@@ -1013,10 +987,8 @@ async def get_admin_response_analytics(
 
         if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
             emp_q = emp_q.filter(UserDetails.branch_id == current_user.manages_branch.id)
-        elif current_user.role == UserRoleEnum.SALES_MANAGER:
-            emp_q = emp_q.filter(UserDetails.sales_manager_id == current_user.employee_code)
-        elif current_user.role == UserRoleEnum.TL:
-            emp_q = emp_q.filter(UserDetails.tl_id == current_user.employee_code)
+        elif current_user.role == UserRoleEnum.senior_profile_id:
+            emp_q = emp_q.filter(UserDetails.senior_profile_id == current_user.employee_code)
 
         emp_q = emp_q.filter(UserDetails.is_active.is_(True))
 

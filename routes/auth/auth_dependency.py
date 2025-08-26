@@ -122,10 +122,6 @@ def get_optional_user(
 
 # Role-based access control
 def require_role(*allowed_roles):
-    """
-    Decorator to require specific roles
-    Usage: @require_role(UserRoleEnum.SUPERADMIN, UserRoleEnum.BRANCH_MANAGER)
-    """
     def role_checker(
         current_user: UserDetails = Depends(get_current_user)
     ) -> UserDetails:

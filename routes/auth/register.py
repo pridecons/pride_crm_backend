@@ -43,7 +43,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None, 
-                                   sales_manager_id: str = None, tl_id: str = None, db: Session = None):
+                                   senior_profile_id: str = None, db: Session = None):
     """Validate hierarchy requirements based on role"""
     
     # SUPERADMIN doesn't need anything
@@ -85,17 +85,17 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
             )
         return branch_id, None, None
     
-    # TL needs branch_id and sales_manager_id
+    # TL needs branch_id and senior_profile_id
     if role == UserRoleEnum.TL:
         if not branch_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="TL requires branch_id"
             )
-        if not sales_manager_id:
+        if not senior_profile_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL requires sales_manager_id"
+                detail="TL requires senior_profile_id"
             )
         
         # Validate branch exists
@@ -106,43 +106,20 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
                 detail="Branch does not exist"
             )
         
-        # Validate sales manager exists and has correct role
-        sales_manager = db.query(UserDetails).filter_by(employee_code=sales_manager_id).first()
-        if not sales_manager:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sales Manager not found"
-            )
-        if sales_manager.role != UserRoleEnum.SALES_MANAGER:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="sales_manager_id must be a SALES_MANAGER"
-            )
-        if sales_manager.branch_id != branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sales Manager must be in the same branch"
-            )
-        
-        return branch_id, sales_manager_id, None
+        return branch_id, senior_profile_id, None
     
-    # SBA and BA need branch_id, sales_manager_id, and tl_id
+    # SBA and BA need branch_id, senior_profile_id
     if role == UserRoleEnum.SBA or role == UserRoleEnum.BA:
         if not branch_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"{role.value} requires branch_id"
             )
-        if not sales_manager_id:
+        if not senior_profile_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{role.value} requires sales_manager_id"
+                detail=f"{role.value} requires senior_profile_id"
             )
-        # if not tl_id:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail=f"{role.value} requires tl_id"
-        #     )
         
         # Validate branch exists
         branch = db.query(BranchDetails).filter_by(id=branch_id).first()
@@ -152,48 +129,7 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
                 detail="Branch does not exist"
             )
         
-        # Validate sales manager
-        sales_manager = db.query(UserDetails).filter_by(employee_code=sales_manager_id).first()
-        if not sales_manager:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sales Manager not found"
-            )
-        if sales_manager.role != UserRoleEnum.SALES_MANAGER:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="sales_manager_id must be a SALES_MANAGER"
-            )
-        if sales_manager.branch_id != branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sales Manager must be in the same branch"
-            )
-        
-        # Validate TL
-        # tl = db.query(UserDetails).filter_by(employee_code=tl_id).first()
-        # if not tl:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail="TL not found"
-        #     )
-        # if tl.role != UserRoleEnum.TL:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail="tl_id must be a TL"
-        #     )
-        # if tl.branch_id != branch_id:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail="TL must be in the same branch"
-        #     )
-        # if tl.sales_manager_id != sales_manager_id:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail="TL must report to the same Sales Manager"
-        #     )
-        
-        return branch_id, sales_manager_id, None
+        return branch_id, senior_profile_id, None
     
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -222,8 +158,7 @@ def serialize_user(user: UserDetails) -> dict:
         "pincode": user.pincode,
         "comment": user.comment,
         "branch_id": user.branch_id,
-        "sales_manager_id": user.sales_manager_id,
-        "tl_id": user.tl_id,
+        "senior_profile_id": user.senior_profile_id,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
     }
@@ -259,11 +194,10 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         )
     
     # Validate hierarchy requirements
-    branch_id, sales_manager_id, tl_id = validate_hierarchy_requirements(
+    branch_id, senior_profile_id = validate_hierarchy_requirements(
         role_enum, 
         user_in.branch_id,
-        user_in.sales_manager_id,
-        user_in.tl_id,
+        user_in.senior_profile_id,
         db
     )
 
@@ -300,8 +234,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         pincode=user_in.pincode,
         comment=user_in.comment,
         branch_id=branch_id,
-        sales_manager_id=sales_manager_id,
-        tl_id=tl_id,
+        senior_profile_id=senior_profile_id,
     )
     
     try:
@@ -462,19 +395,17 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
                 new_role_enum = UserRoleEnum(user_update.role)
                 
                 # Validate hierarchy requirements for new role
-                branch_id, sales_manager_id, tl_id = validate_hierarchy_requirements(
+                branch_id, senior_profile_id = validate_hierarchy_requirements(
                     new_role_enum,
                     user_update.branch_id or user.branch_id,
-                    user_update.sales_manager_id or user.sales_manager_id,
-                    user_update.tl_id or user.tl_id,
+                    user_update.senior_profile_id or user.senior_profile_id,
                     db
                 )
                 
                 # Update hierarchy fields
                 user.role = new_role_enum
                 user.branch_id = branch_id
-                user.sales_manager_id = sales_manager_id
-                user.tl_id = tl_id
+                user.senior_profile_id = senior_profile_id
                 
             except ValueError:
                 raise HTTPException(

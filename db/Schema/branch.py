@@ -5,16 +5,6 @@ from typing import Optional, List
 from datetime import date, datetime
 from enum import Enum
 
-class UserRoleEnum(str, Enum):
-    SUPERADMIN = "SUPERADMIN"
-    BRANCH_MANAGER = "BRANCH MANAGER"
-    HR = "HR"
-    SALES_MANAGER = "SALES MANAGER"
-    TL = "TL"
-    BA = "BA"
-    SBA = "SBA"
-    RESEARCHER = "RESEARCHER"
-
 # Existing schemas (keeping them as they are)
 class BranchBase(BaseModel):
     name: constr(strip_whitespace=True, min_length=1, max_length=100)

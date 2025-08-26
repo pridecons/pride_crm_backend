@@ -770,8 +770,7 @@ async def create_branch_with_manager(
             comment=manager_comment,
             branch_id=branch.id,
             # REMOVED: manager_id=None,  # This field doesn't exist anymore
-            sales_manager_id=None,  # Branch manager doesn't have sales manager
-            tl_id=None  # Branch manager doesn't have TL
+            senior_profile_id=None,  # Branch manager doesn't have sales manager
         )
         
         db.add(manager)

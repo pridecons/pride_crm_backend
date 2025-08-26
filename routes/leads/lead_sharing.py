@@ -68,7 +68,7 @@ def can_share_lead(current_user: UserDetails, lead: Lead, db: Session) -> bool:
     # SALES_MANAGER can share leads of their team members
     if current_user.role == UserRoleEnum.SALES_MANAGER:
         team_members = db.query(UserDetails).filter(
-            UserDetails.sales_manager_id == current_user.employee_code
+            UserDetails.senior_profile_id == current_user.employee_code
         ).all()
         
         for member in team_members:
@@ -81,21 +81,6 @@ def can_share_lead(current_user: UserDetails, lead: Lead, db: Session) -> bool:
             if member_assignment:
                 return True
     
-    # TL can share leads of their team members
-    if current_user.role == UserRoleEnum.TL:
-        team_members = db.query(UserDetails).filter(
-            UserDetails.tl_id == current_user.employee_code
-        ).all()
-        
-        for member in team_members:
-            member_assignment = db.query(LeadAssignment).filter(
-                and_(
-                    LeadAssignment.lead_id == lead.id,
-                    LeadAssignment.user_id == member.employee_code
-                )
-            ).first()
-            if member_assignment:
-                return True
     
     return False
 
@@ -426,21 +411,10 @@ async def get_available_users_for_sharing(
             # SALES_MANAGER can share with their team and peers in same branch
             query = query.filter(
                 or_(
-                    UserDetails.sales_manager_id == current_user.employee_code,
+                    UserDetails.senior_profile_id == current_user.employee_code,
                     and_(
                         UserDetails.branch_id == current_user.branch_id,
                         UserDetails.role.in_([UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL, UserRoleEnum.BA, UserRoleEnum.SBA])
-                    )
-                )
-            )
-        elif current_user.role == UserRoleEnum.TL:
-            # TL can share with their team and peers
-            query = query.filter(
-                or_(
-                    UserDetails.tl_id == current_user.employee_code,
-                    and_(
-                        UserDetails.branch_id == current_user.branch_id,
-                        UserDetails.role.in_([UserRoleEnum.TL, UserRoleEnum.BA, UserRoleEnum.SBA])
                     )
                 )
             )
