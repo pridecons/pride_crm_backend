@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from db.connection import get_db, engine
-    from db.models import UserDetails, PermissionDetails, UserRoleEnum, Base
+    from db.models import UserDetails, PermissionDetails, Base
     from passlib.context import CryptContext
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -61,7 +61,7 @@ def create_admin():
                 email="admin@gmail.com", 
                 name="System Administrator",
                 password=hash_password("Admin@123"),
-                role=UserRoleEnum.SUPERADMIN,
+                role="SUPERADMIN",
                 father_name="System",
                 is_active=True,
                 experience=5.0,
@@ -80,7 +80,7 @@ def create_admin():
             # Create permissions
             admin_permissions = PermissionDetails(
                 user_id="Admin001",
-                **PermissionDetails.get_default_permissions(UserRoleEnum.SUPERADMIN)
+                **PermissionDetails.get_default_permissions("SUPERADMIN")
             )
             
             db.add(admin_permissions)

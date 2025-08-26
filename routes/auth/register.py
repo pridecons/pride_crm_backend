@@ -8,7 +8,7 @@ from typing import List
 import bcrypt
 
 from db.connection import get_db
-from db.models import UserDetails, BranchDetails, PermissionDetails, UserRoleEnum
+from db.models import UserDetails, BranchDetails, PermissionDetails
 from db.Schema.register import UserBase, UserCreate, UserUpdate, UserOut
 from utils.validation_utils import validate_user_data
 
@@ -41,100 +41,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         print(f"Bcrypt verify error, falling back to SHA-256: {e}")
         return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
-
-def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None, 
-                                   senior_profile_id: str = None, db: Session = None):
-    """Validate hierarchy requirements based on role"""
-    
-    # SUPERADMIN doesn't need anything
-    if role == UserRoleEnum.SUPERADMIN:
-        return None, None, None
-    
-    if role == UserRoleEnum.RESEARCHER:
-        return None, None, None
-    
-    # BRANCH MANAGER needs only branch_id
-    if role == UserRoleEnum.BRANCH_MANAGER:
-        if not branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch Manager requires branch_id"
-            )
-        # Validate branch exists
-        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
-            )
-        return branch_id, None, None
-    
-    # HR and SALES_MANAGER need only branch_id
-    if role == UserRoleEnum.HR or role == UserRoleEnum.SALES_MANAGER:
-        if not branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{role.value} requires branch_id"
-            )
-        # Validate branch exists
-        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
-            )
-        return branch_id, None, None
-    
-    # TL needs branch_id and senior_profile_id
-    if role == UserRoleEnum.TL:
-        if not branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL requires branch_id"
-            )
-        if not senior_profile_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL requires senior_profile_id"
-            )
-        
-        # Validate branch exists
-        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
-            )
-        
-        return branch_id, senior_profile_id, None
-    
-    # SBA and BA need branch_id, senior_profile_id
-    if role == UserRoleEnum.SBA or role == UserRoleEnum.BA:
-        if not branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{role.value} requires branch_id"
-            )
-        if not senior_profile_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{role.value} requires senior_profile_id"
-            )
-        
-        # Validate branch exists
-        branch = db.query(BranchDetails).filter_by(id=branch_id).first()
-        if not branch:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Branch does not exist"
-            )
-        
-        return branch_id, senior_profile_id, None
-    
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Unknown role: {role.value}"
-    )
 
 
 def serialize_user(user: UserDetails) -> dict:
@@ -186,20 +92,12 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
 
     # Validate role
     try:
-        role_enum = UserRoleEnum(user_in.role)
+        role_enum = user_in.role
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
+            detail=f"Invalid role. Valid roles"
         )
-    
-    # Validate hierarchy requirements
-    branch_id, senior_profile_id = validate_hierarchy_requirements(
-        role_enum, 
-        user_in.branch_id,
-        user_in.senior_profile_id,
-        db
-    )
 
     # Auto-generate employee_code
     count = db.query(UserDetails).count() or 0
@@ -233,8 +131,8 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         state=user_in.state,
         pincode=user_in.pincode,
         comment=user_in.comment,
-        branch_id=branch_id,
-        senior_profile_id=senior_profile_id,
+        branch_id=user_in.branch_id,
+        senior_profile_id=user_in.senior_profile_id,
     )
     
     try:
@@ -283,12 +181,12 @@ def get_all_users(
         
         if role:
             try:
-                role_enum = UserRoleEnum(role)
+                role_enum = role
                 query = query.filter(UserDetails.role == role_enum)
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
+                    detail=f"Invalid role. Valid roles"
                 )
         
         if search:
@@ -391,26 +289,16 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
         
         # Validate role change if provided
         if user_update.role:
-            try:
-                new_role_enum = UserRoleEnum(user_update.role)
-                
-                # Validate hierarchy requirements for new role
-                branch_id, senior_profile_id = validate_hierarchy_requirements(
-                    new_role_enum,
-                    user_update.branch_id or user.branch_id,
-                    user_update.senior_profile_id or user.senior_profile_id,
-                    db
-                )
-                
+            try:                
                 # Update hierarchy fields
-                user.role = new_role_enum
-                user.branch_id = branch_id
-                user.senior_profile_id = senior_profile_id
+                user.role = user_update.role
+                user.branch_id = user_update.branch_id or user.branch_id,
+                user.senior_profile_id = user_update.senior_profile_id or user.senior_profile_id
                 
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}"
+                    detail=f"Invalid role. Valid roles"
                 )
         
         # Update other fields

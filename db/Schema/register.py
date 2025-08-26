@@ -5,16 +5,6 @@ from typing import Optional
 from datetime import date, datetime
 from enum import Enum
 
-class UserRoleEnum(str, Enum):
-    SUPERADMIN = "SUPERADMIN"
-    BRANCH_MANAGER = "BRANCH MANAGER"
-    HR = "HR"
-    SALES_MANAGER = "SALES MANAGER"
-    TL = "TL"
-    SBA = "SBA"
-    BA = "BA"
-    RESEARCHER = "RESEARCHER"
-
 class UserBase(BaseModel):
     phone_number: constr(strip_whitespace=True, min_length=10, max_length=10)
     email: EmailStr
@@ -62,13 +52,6 @@ class UserCreate(UserBase):
     branch_id: Optional[int] = None
     senior_profile_id: Optional[str] = None
 
-    @validator('role')
-    def validate_role(cls, v):
-        try:
-            UserRoleEnum(v)
-            return v
-        except ValueError:
-            raise ValueError(f'Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}')
 
 class UserUpdate(BaseModel):
     phone_number: Optional[constr(strip_whitespace=True, min_length=10, max_length=10)] = None
@@ -115,15 +98,6 @@ class UserUpdate(BaseModel):
             raise ValueError('Pincode must be exactly 6 digits')
         return v
 
-    @validator('role')
-    def validate_role(cls, v):
-        if v:
-            try:
-                UserRoleEnum(v)
-                return v
-            except ValueError:
-                raise ValueError(f'Invalid role. Valid roles: {[r.value for r in UserRoleEnum]}')
-        return v
 
 # Simple response model without complex relationships
 class UserOut(BaseModel):

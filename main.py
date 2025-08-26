@@ -20,7 +20,6 @@ from scheduler import lead_scheduler
 
 # Import for manual cleanup endpoint
 from routes.auth.auth_dependency import get_current_user
-from db.models import UserRoleEnum
 from routes.Permission import permissions
 from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, lead_sharing, clients, lead_analytics, old_leads_fetch
 from routes.auth.create_admin import create_admin
@@ -111,52 +110,6 @@ def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
-# Manual cleanup endpoints
-@app.post("/api/v1/admin/cleanup-leads-now")
-def cleanup_leads_manually(
-    current_user = Depends(get_current_user)
-):
-    """Manual lead cleanup trigger - Admin only"""
-    
-    if current_user.role != UserRoleEnum.SUPERADMIN:
-        raise HTTPException(403, "Only SUPERADMIN can trigger manual cleanup")
-    
-    try:
-        result = lead_scheduler.run_cleanup_now()
-        return {
-            "message": result,
-            "triggered_by": current_user.name,
-            "triggered_at": datetime.utcnow(),
-            "status": "success"
-        }
-    except Exception as e:
-        logger.error(f"Manual cleanup failed: {e}")
-        raise HTTPException(500, f"Cleanup failed: {str(e)}")
-
-@app.get("/api/v1/admin/scheduler-status")
-def get_scheduler_status(
-    current_user = Depends(get_current_user)
-):
-    """Get scheduler status - Admin/Manager only"""
-    
-    if current_user.role not in [UserRoleEnum.SUPERADMIN, UserRoleEnum.BRANCH_MANAGER]:
-        raise HTTPException(403, "Insufficient permissions")
-    
-    jobs_info = []
-    for job in lead_scheduler.scheduler.get_jobs():
-        jobs_info.append({
-            "id": job.id,
-            "name": job.name,
-            "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-            "trigger": str(job.trigger)
-        })
-    
-    return {
-        "scheduler_running": lead_scheduler.scheduler.running,
-        "total_jobs": len(jobs_info),
-        "jobs": jobs_info,
-        "current_time": datetime.utcnow().isoformat()
-    }
 
 # Register all your existing routes
 try:

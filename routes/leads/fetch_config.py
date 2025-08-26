@@ -7,7 +7,7 @@ from sqlalchemy.exc import OperationalError, DisconnectionError, IntegrityError
 from pydantic import BaseModel, validator
 
 from db.connection import get_db
-from db.models import LeadFetchConfig, UserRoleEnum, BranchDetails
+from db.models import LeadFetchConfig, BranchDetails
 
 router = APIRouter(
     prefix="/lead-fetch-config",
@@ -17,7 +17,7 @@ router = APIRouter(
 
 # Pydantic Schemas
 class LeadFetchConfigBase(BaseModel):
-    role: Optional[UserRoleEnum] = None
+    role: Optional[str] = None
     branch_id: Optional[int] = None
     per_request_limit: int
     daily_call_limit: int

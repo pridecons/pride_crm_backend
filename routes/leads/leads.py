@@ -10,7 +10,7 @@ from pydantic import BaseModel, constr, validator
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig, UserRoleEnum
+    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
 )
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
@@ -458,7 +458,7 @@ def get_all_leads(
     search:              Optional[str]           = Query(None, description="global search on name/email/mobile"),
     response_id:         Optional[int]           = Query(None, description="Filter by lead_response_id"),
     assigned_to_user:    Optional[str]           = Query(None, description="Filter by assigned_to_user"),
-    assigned_roles:      Optional[List[UserRoleEnum]] = Query(
+    assigned_roles:      Optional[List[str]] = Query(
                              None,
                              description="Filter by role(s) of assigned_to_user; e.g. ['TL','BA']"
                          ),

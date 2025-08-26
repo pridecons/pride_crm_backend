@@ -8,7 +8,7 @@ from datetime import datetime
 
 from db.connection import get_db
 from db.models import (
-    Lead, Payment, UserDetails, UserRoleEnum
+    Lead, Payment, UserDetails
 )
 from routes.auth.auth_dependency import get_current_user
 from pydantic import BaseModel
@@ -193,9 +193,9 @@ async def get_clients(
     query = get_client_query_base(db)
 
     # Role-based filtering (ONLY via assigned_to_user / branch)
-    if current_user.role == UserRoleEnum.SUPERADMIN:
+    if current_user.role == "SUPERADMIN":
         pass  # see all
-    elif current_user.role == UserRoleEnum.BRANCH_MANAGER:
+    elif current_user.role == "BRANCH_MANAGER":
         # preferred: managed branch; fallback: own branch_id
         branch_id_for_filter = None
         if current_user.manages_branch:
@@ -207,18 +207,6 @@ async def get_clients(
             query = query.filter(Lead.branch_id == branch_id_for_filter)
         else:
             query = query.filter(Lead.id == -1)  # no branch → no data
-    elif current_user.role == UserRoleEnum.SALES_MANAGER:
-        team_codes_subq = (
-            db.query(UserDetails.employee_code)
-            .filter(UserDetails.senior_profile_id == current_user.employee_code)
-            .subquery()
-        )
-        query = query.filter(
-            or_(
-                Lead.assigned_to_user.in_(team_codes_subq),
-                Lead.assigned_to_user == current_user.employee_code,
-            )
-        )
     else:
         # Regular employees (HR/BA/SBA/Researcher...) → only own clients
         query = query.filter(Lead.assigned_to_user == current_user.employee_code)

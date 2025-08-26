@@ -8,7 +8,7 @@ from datetime import datetime, date, timedelta
 from pydantic import BaseModel
 from db.connection import get_db
 from db.models import (
-    Lead, Payment, UserDetails, UserRoleEnum, LeadAssignment, 
+    Lead, Payment, UserDetails, LeadAssignment, 
     BranchDetails, LeadSource, LeadResponse, LeadStory, LeadComment
 )
 from routes.auth.auth_dependency import get_current_user
@@ -124,18 +124,9 @@ def get_admin_leads_query(db: Session, current_user: UserDetails, date_from: Opt
     query = db.query(Lead).filter(Lead.is_delete == False)
     
     # Apply role-based filtering
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER:
+    if current_user.role == "BRANCH_MANAGER":
         if current_user.manages_branch:
             query = query.filter(Lead.branch_id == current_user.manages_branch.id)
-    elif current_user.role == UserRoleEnum.SALES_MANAGER:
-        # Get team members
-        team_members = db.query(UserDetails.employee_code).filter(
-            UserDetails.senior_profile_id == current_user.employee_code
-        ).subquery()
-        
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id.in_(team_members)
-        )
     
     if date_from:
         query = query.filter(Lead.created_at >= date_from)
@@ -398,8 +389,7 @@ async def get_admin_analytics(
     Only accessible by SUPERADMIN, BRANCH_MANAGER, SALES_MANAGER, and TL
     """
     # Check permissions
-    if current_user.role not in [UserRoleEnum.SUPERADMIN, UserRoleEnum.BRANCH_MANAGER, 
-                                 UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
+    if current_user.role not in ["SUPERADMIN", "BRANCH_MANAGER"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to view admin analytics"
@@ -463,19 +453,8 @@ async def get_admin_analytics(
     payments_query = db.query(Payment).join(Lead, Payment.lead_id == Lead.id)
     
     # Apply same filtering as leads_query
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
         payments_query = payments_query.filter(Lead.branch_id == current_user.manages_branch.id)
-    elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
-        # Apply team filtering
-        if current_user.role == UserRoleEnum.SALES_MANAGER:
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.senior_profile_id == current_user.employee_code
-            ).subquery()
-
-        
-        payments_query = payments_query.join(
-            LeadAssignment, Lead.id == LeadAssignment.lead_id
-        ).filter(LeadAssignment.user_id.in_(team_members))
     
     payments_query = payments_query.filter(
         and_(
@@ -524,10 +503,8 @@ async def get_admin_analytics(
     # Get all employees based on current user's role
     employees_query = db.query(UserDetails).filter(UserDetails.is_active == True)
     
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
         employees_query = employees_query.filter(UserDetails.branch_id == current_user.manages_branch.id)
-    elif current_user.role == UserRoleEnum.SALES_MANAGER:
-        employees_query = employees_query.filter(UserDetails.senior_profile_id == current_user.employee_code)
     
     employees = employees_query.all()
     
@@ -590,14 +567,8 @@ async def get_admin_analytics(
         )
         
         # Apply same role-based filtering
-        if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+        if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
             leads_called_count = leads_called_count.filter(Lead.branch_id == current_user.manages_branch.id)
-        elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
-            if current_user.role == UserRoleEnum.SALES_MANAGER:
-                team_members = db.query(UserDetails.employee_code).filter(
-                    UserDetails.senior_profile_id == current_user.employee_code
-                ).subquery()
-            leads_called_count = leads_called_count.filter(LeadAssignment.user_id.in_(team_members))
         
         leads_called = leads_called_count.count()
         
@@ -637,17 +608,8 @@ async def get_admin_analytics(
     )
     
     # Apply role-based filtering
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
         source_analytics_query = source_analytics_query.filter(Lead.branch_id == current_user.manages_branch.id)
-    elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
-        if current_user.role == UserRoleEnum.SALES_MANAGER:
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.senior_profile_id == current_user.employee_code
-            ).subquery()
-        
-        source_analytics_query = source_analytics_query.join(
-            LeadAssignment, Lead.id == LeadAssignment.lead_id
-        ).filter(LeadAssignment.user_id.in_(team_members))
     
     source_analytics_data = source_analytics_query.group_by(LeadSource.name).all()
     
@@ -676,21 +638,12 @@ async def get_admin_analytics(
     )
     
     # Apply same role-based filtering as source_analytics
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
         response_analytics_query = response_analytics_query.filter(Lead.branch_id == current_user.manages_branch.id)
-    elif current_user.role in [UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL]:
-        if current_user.role == UserRoleEnum.SALES_MANAGER:
-            team_members = db.query(UserDetails.employee_code).filter(
-                UserDetails.senior_profile_id == current_user.employee_code
-            ).subquery()
-        
-        response_analytics_query = response_analytics_query.join(
-            LeadAssignment, Lead.id == LeadAssignment.lead_id
-        ).filter(LeadAssignment.user_id.in_(team_members))
     
     # Branch Performance (only for SUPERADMIN)
     branch_performance = []
-    if current_user.role == UserRoleEnum.SUPERADMIN:
+    if current_user.role == "SUPERADMIN":
         branches = db.query(BranchDetails).filter(BranchDetails.active == True).all()
         
         for branch in branches:
@@ -767,10 +720,8 @@ async def get_admin_dashboard_card(
     """
     # --- permission check ---
     if current_user.role not in {
-        UserRoleEnum.SUPERADMIN,
-        UserRoleEnum.BRANCH_MANAGER,
-        UserRoleEnum.SALES_MANAGER,
-        UserRoleEnum.TL
+        "SUPERADMIN",
+        "BRANCH_MANAGER"
     }:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -932,7 +883,7 @@ async def get_admin_response_analytics(
     days: int = Query(30, ge=1, le=365, description="Default window if from/to not given"),
     branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
     # NEW filters
-    employee_role: Optional[UserRoleEnum] = Query(
+    employee_role: Optional[str] = Query(
         None, description="Filter user-wise by role (e.g., BA, SBA, TL, SALES_MANAGER)"
     ),
     from_date: Optional[date] = Query(None, description="Start date (YYYY-MM-DD)"),
@@ -947,10 +898,8 @@ async def get_admin_response_analytics(
       - branch_id, employee_role, from_date, to_date, source_id, user_id
     """
     if current_user.role not in {
-        UserRoleEnum.SUPERADMIN,
-        UserRoleEnum.BRANCH_MANAGER,
-        UserRoleEnum.SALES_MANAGER,
-        UserRoleEnum.TL,
+        "SUPERADMIN",
+        "BRANCH_MANAGER"
     }:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -985,10 +934,8 @@ async def get_admin_response_analytics(
     if user_id or employee_role:
         emp_q = db.query(UserDetails.employee_code)
 
-        if current_user.role == UserRoleEnum.BRANCH_MANAGER and current_user.manages_branch:
+        if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
             emp_q = emp_q.filter(UserDetails.branch_id == current_user.manages_branch.id)
-        elif current_user.role == UserRoleEnum.senior_profile_id:
-            emp_q = emp_q.filter(UserDetails.senior_profile_id == current_user.employee_code)
 
         emp_q = emp_q.filter(UserDetails.is_active.is_(True))
 

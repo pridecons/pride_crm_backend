@@ -9,8 +9,7 @@ import logging
 
 from db.connection import get_db
 from db.models import (
-    Lead, UserDetails, LeadAssignment, BranchDetails, 
-    UserRoleEnum, LeadStory, AuditLog
+    Lead, UserDetails, LeadAssignment, BranchDetails, LeadStory, AuditLog
 )
 from routes.auth.auth_dependency import get_current_user
 from pydantic import BaseModel, Field
@@ -46,11 +45,11 @@ def can_share_lead(current_user: UserDetails, lead: Lead, db: Session) -> bool:
     """Check if current user can share this lead"""
     
     # SUPERADMIN can share any lead
-    if current_user.role == UserRoleEnum.SUPERADMIN:
+    if current_user.role == "SUPERADMIN":
         return True
     
     # BRANCH_MANAGER can share leads in their branch
-    if current_user.role == UserRoleEnum.BRANCH_MANAGER:
+    if current_user.role == "BRANCH_MANAGER":
         if current_user.manages_branch and current_user.manages_branch.id == lead.branch_id:
             return True
     
@@ -64,22 +63,6 @@ def can_share_lead(current_user: UserDetails, lead: Lead, db: Session) -> bool:
     
     if assignment:
         return True
-    
-    # SALES_MANAGER can share leads of their team members
-    if current_user.role == UserRoleEnum.SALES_MANAGER:
-        team_members = db.query(UserDetails).filter(
-            UserDetails.senior_profile_id == current_user.employee_code
-        ).all()
-        
-        for member in team_members:
-            member_assignment = db.query(LeadAssignment).filter(
-                and_(
-                    LeadAssignment.lead_id == lead.id,
-                    LeadAssignment.user_id == member.employee_code
-                )
-            ).first()
-            if member_assignment:
-                return True
     
     
     return False
@@ -400,32 +383,14 @@ async def get_available_users_for_sharing(
         )
         
         # Filter based on current user's role and hierarchy
-        if current_user.role == UserRoleEnum.SUPERADMIN:
+        if current_user.role == "SUPERADMIN":
             # SUPERADMIN can share with anyone
             pass
-        elif current_user.role == UserRoleEnum.BRANCH_MANAGER:
+        elif current_user.role == "BRANCH_MANAGER":
             # BRANCH_MANAGER can share within their branch
             if current_user.manages_branch:
                 query = query.filter(UserDetails.branch_id == current_user.manages_branch.id)
-        elif current_user.role == UserRoleEnum.SALES_MANAGER:
-            # SALES_MANAGER can share with their team and peers in same branch
-            query = query.filter(
-                or_(
-                    UserDetails.senior_profile_id == current_user.employee_code,
-                    and_(
-                        UserDetails.branch_id == current_user.branch_id,
-                        UserDetails.role.in_([UserRoleEnum.SALES_MANAGER, UserRoleEnum.TL, UserRoleEnum.BA, UserRoleEnum.SBA])
-                    )
-                )
-            )
-        else:
-            # BA and SBA can share with peers in same branch
-            query = query.filter(
-                and_(
-                    UserDetails.branch_id == current_user.branch_id,
-                    UserDetails.role.in_([UserRoleEnum.BA, UserRoleEnum.SBA])
-                )
-            )
+
         
         # Filter by hierarchy level (can only share to same or lower level)
         current_level = current_user.get_hierarchy_level()

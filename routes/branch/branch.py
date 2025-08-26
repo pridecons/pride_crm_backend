@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
-from db.models import BranchDetails, UserDetails, UserRoleEnum
+from db.models import BranchDetails, UserDetails
 from db.Schema.branch import BranchCreate, BranchUpdate, BranchOut, BranchDetailsOut, ManagerInfo, UserInfo, BranchWithManagerResponse
 
 import hashlib
@@ -92,7 +92,7 @@ async def update_branch(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with employee_code '{manager_id}' does not exist"
                     )
-                if manager.role != UserRoleEnum.BRANCH_MANAGER:
+                if manager.role != "BRANCH_MANAGER":
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Only users with BRANCH MANAGER role can manage branches"
@@ -269,7 +269,7 @@ def assign_manager(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Manager with employee_code '{manager_id}' does not exist"
             )
-        if manager.role != UserRoleEnum.BRANCH_MANAGER:
+        if manager.role != "BRANCH_MANAGER":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only users with BRANCH MANAGER role can manage branches"
@@ -379,7 +379,7 @@ def get_available_managers(db: Session = Depends(get_db)):
     try:
         # Get BRANCH MANAGER role users who are not currently managing any branch
         available_managers = db.query(UserDetails).filter(
-            UserDetails.role == UserRoleEnum.BRANCH_MANAGER,
+            UserDetails.role == "BRANCH_MANAGER",
             UserDetails.is_active == True,
             ~UserDetails.employee_code.in_(
                 db.query(BranchDetails.manager_id).filter(BranchDetails.manager_id.isnot(None))
@@ -755,7 +755,7 @@ async def create_branch_with_manager(
             email=manager_email,
             name=manager_name,
             password=hashed_password,
-            role=UserRoleEnum.BRANCH_MANAGER,
+            role="BRANCH_MANAGER",
             father_name=manager_father_name,
             is_active=True,
             experience=manager_experience,
@@ -782,7 +782,7 @@ async def create_branch_with_manager(
         # Create default permissions for branch manager
         permissions = PermissionDetails(
             user_id=manager.employee_code,
-            **PermissionDetails.get_default_permissions(UserRoleEnum.BRANCH_MANAGER)
+            **PermissionDetails.get_default_permissions("BRANCH_MANAGER")
         )
         
         db.add(permissions)

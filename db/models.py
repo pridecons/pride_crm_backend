@@ -10,19 +10,7 @@ import uuid
 import enum
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
-
-
-class UserRoleEnum(str, enum.Enum):
-    SUPERADMIN = "SUPERADMIN"
-    COMPLIANCE = "COMPLIANCE"
-    BRANCH_MANAGER = "BRANCH MANAGER"
-    HR = "HR"
-    SALES_MANAGER = "SALES MANAGER"
-    TL = "TL" 
-    SBA = "SBA"  
-    BA = "BA" 
-    RESEARCHER = "RESEARCHER"
-     
+  
 
 class RecommendationType(str, enum.Enum):
     equity_cash= "Equity Cash"
@@ -47,31 +35,75 @@ class Department(Base):
     __tablename__ = "crm_departments"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)  # Dynamic department names
+    name = Column(String(100), nullable=False, unique=True)  # ACCOUNTING, HR, SALES_TEAM, ADMIN
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     
+    # Available permissions for this department (from PermissionDetails)
+    available_permissions = Column(ARRAY(String), nullable=True, default=[])
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    permission = Column(ARRAY, nullable=True)
     
     # Relationships
     profiles = relationship("ProfileRole", back_populates="department")
     users = relationship("UserDetails", back_populates="department")
 
+    @classmethod
+    def create_default_departments(cls, db):
+        """Create default departments with their permissions"""
+        default_departments = [
+            {
+                "name": "ADMIN",
+                "description": "Administrative Department",
+            },
+            {
+                "name": "ACCOUNTING",
+                "description": "Accounting Department",
+            },
+            {
+                "name": "HR",
+                "description": "Human Resources Department",
+            },
+            {
+                "name": "SALES_TEAM",
+                "description": "Sales Team Department",
+            },
+            {
+                "name": "RESEARCH_TEAM",
+                "description": "Research Team Department",
+            },
+            {
+                "name": "COMPLIANCE_TEAM",
+                "description": "Compliance Team Department",
+            }
+        ]
+        
+        for dept_data in default_departments:
+            existing = db.query(cls).filter_by(name=dept_data["name"]).first()
+            if not existing:
+                dept = cls(**dept_data)
+                db.add(dept)
+        
+        db.commit()
+
+
 class ProfileRole(Base):
     __tablename__ = "crm_profile_roles"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False, unique=True)  # SUPERADMIN, COMPLIANCE, etc.
     department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=False)
     
     # Hierarchy
     parent_profile_id = Column(Integer, ForeignKey("crm_profile_roles.id"), nullable=True)
     hierarchy_level = Column(Integer, nullable=False)
-
-    default_permissions = Column(ARRAY, nullable=True)
+    
+    # Default permissions for this profile (subset of department permissions)
+    default_permissions = Column(ARRAY(String), nullable=True, default=[])
+    
+    # Description
+    description = Column(Text, nullable=True)
     
     # Status
     is_active = Column(Boolean, default=True)
@@ -84,92 +116,281 @@ class ProfileRole(Base):
     parent_profile = relationship("ProfileRole", remote_side=[id], backref="child_profiles")
     users = relationship("UserDetails", back_populates="profile_role")
 
+    def get_all_child_profiles(self, db):
+        """Get all child profiles recursively"""
+        children = []
+        direct_children = db.query(ProfileRole).filter_by(parent_profile_id=self.id).all()
+        for child in direct_children:
+            children.append(child)
+            children.extend(child.get_all_child_profiles(db))
+        return children
+
+    @classmethod
+    def create_default_profiles(cls, db):
+        """Create default profiles with hierarchy"""
+        from sqlalchemy.orm import sessionmaker
+        
+        # Get departments
+        admin_dept = db.query(Department).filter_by(name="ADMIN").first()
+        accounting_dept = db.query(Department).filter_by(name="ACCOUNTING").first()
+        hr_dept = db.query(Department).filter_by(name="HR").first()
+        sales_dept = db.query(Department).filter_by(name="SALES_TEAM").first()
+        
+        if not all([admin_dept, accounting_dept, hr_dept, sales_dept]):
+            raise Exception("Default departments must be created first")
+        
+        default_profiles = [
+            # Admin Department
+            {
+                "name": "SUPERADMIN",
+                "department_id": admin_dept.id,
+                "hierarchy_level": 1,
+                "parent_profile_id": None,
+                "default_permissions": admin_dept.available_permissions,
+                "description": "Super Administrator with full access"
+            },
+            {
+                "name": "BRANCH_MANAGER",
+                "department_id": admin_dept.id,
+                "hierarchy_level": 2,
+                "parent_profile_id": None,  # Will be updated after SUPERADMIN is created
+                "default_permissions": [
+                    'add_user', 'edit_user', 'add_lead', 'edit_lead', 'delete_lead',
+                    'view_users', 'view_lead', 'view_branch', 'view_accounts',
+                    'view_research', 'view_client', 'view_payment', 'view_invoice',
+                    'view_kyc', 'approval', 'internal_mailing', 'chatting',
+                    'targets', 'reports', 'fetch_lead'
+                ],
+                "description": "Branch Manager"
+            },
+            
+            # HR Department
+            {
+                "name": "HR",
+                "department_id": hr_dept.id,
+                "hierarchy_level": 3,
+                "parent_profile_id": None,  # Will be updated after BRANCH_MANAGER is created
+                "default_permissions": [
+                    'add_user', 'edit_user', 'view_users', 'view_branch',
+                    'internal_mailing', 'chatting', 'reports'
+                ],
+                "description": "Human Resources"
+            },
+            
+            # Sales Team Department
+            {
+                "name": "SALES_MANAGER",
+                "department_id": sales_dept.id,
+                "hierarchy_level": 3,
+                "parent_profile_id": None,  # Will be updated after BRANCH_MANAGER is created
+                "default_permissions": [
+                    'add_lead', 'edit_lead', 'view_users', 'view_lead',
+                    'view_accounts', 'view_research', 'view_client',
+                    'view_payment', 'view_invoice', 'view_kyc',
+                    'internal_mailing', 'chatting', 'targets', 'reports', 'fetch_lead'
+                ],
+                "description": "Sales Manager"
+            },
+            {
+                "name": "TL",
+                "department_id": sales_dept.id,
+                "hierarchy_level": 4,
+                "parent_profile_id": None,  # Will be updated after SALES_MANAGER is created
+                "default_permissions": [
+                    'add_lead', 'edit_lead', 'view_users', 'view_lead',
+                    'view_accounts', 'view_research', 'view_client',
+                    'view_payment', 'view_invoice', 'view_kyc',
+                    'chatting', 'targets', 'reports', 'fetch_lead'
+                ],
+                "description": "Team Leader"
+            },
+            {
+                "name": "SBA",
+                "department_id": sales_dept.id,
+                "hierarchy_level": 5,
+                "parent_profile_id": None,  # Will be updated after TL is created
+                "default_permissions": [
+                    'add_lead', 'edit_lead', 'view_lead',
+                    'view_accounts', 'view_research', 'view_client',
+                    'view_payment', 'view_invoice', 'view_kyc',
+                    'chatting', 'fetch_lead'
+                ],
+                "description": "Senior Business Associate"
+            },
+            {
+                "name": "BA",
+                "department_id": sales_dept.id,
+                "hierarchy_level": 6,
+                "parent_profile_id": None,  # Will be updated after TL is created
+                "default_permissions": [
+                    'add_lead', 'edit_lead', 'view_lead',
+                    'view_accounts', 'view_research', 'view_client',
+                    'view_payment', 'view_invoice', 'view_kyc',
+                    'chatting', 'fetch_lead'
+                ],
+                "description": "Business Associate"
+            },
+            {
+                "name": "RESEARCHER",
+                "department_id": sales_dept.id,
+                "hierarchy_level": 4,
+                "parent_profile_id": None,  # Will be updated after SALES_MANAGER is created
+                "default_permissions": [
+                    'view_research', 'view_accounts', 'reports', 'internal_mailing'
+                ],
+                "description": "Research Analyst"
+            }
+        ]
+        
+        # Create profiles in hierarchy order
+        created_profiles = {}
+        
+        for profile_data in default_profiles:
+            existing = db.query(cls).filter_by(name=profile_data["name"]).first()
+            if not existing:
+                profile = cls(**profile_data)
+                db.add(profile)
+                db.flush()  # To get the ID
+                created_profiles[profile_data["name"]] = profile
+        
+        db.commit()
+        
+        # Update parent relationships
+        hierarchy_mapping = {
+            "COMPLIANCE": "SUPERADMIN",
+            "BRANCH_MANAGER": "SUPERADMIN",
+            "HR": "BRANCH_MANAGER",
+            "SALES_MANAGER": "BRANCH_MANAGER",
+            "TL": "SALES_MANAGER",
+            "SBA": "TL",
+            "BA": "TL",
+            "RESEARCHER": "SALES_MANAGER"
+        }
+        
+        for child_name, parent_name in hierarchy_mapping.items():
+            child_profile = db.query(cls).filter_by(name=child_name).first()
+            parent_profile = db.query(cls).filter_by(name=parent_name).first()
+            
+            if child_profile and parent_profile:
+                child_profile.parent_profile_id = parent_profile.id
+        
+        db.commit()
+
 
 class UserDetails(Base):
     __tablename__ = "crm_user_details"
 
-    employee_code     = Column(String(100), primary_key=True, unique=True, index=True)
-    phone_number      = Column(String(10), nullable=False, unique=True, index=True)
-    email             = Column(String(100), nullable=False, unique=True, index=True)
-    name              = Column(String(100), nullable=False)
-    password          = Column(String(255), nullable=False)
-    role              = Column(Enum(UserRoleEnum), nullable=False, default=UserRoleEnum.BA)
+    employee_code = Column(String(100), primary_key=True, unique=True, index=True)
+    phone_number = Column(String(10), nullable=False, unique=True, index=True)
+    email = Column(String(100), nullable=False, unique=True, index=True)
+    name = Column(String(100), nullable=False)
+    password = Column(String(255), nullable=False)
+    
+    # Replace role with profile_role_id and department_id
+    profile_role_id = Column(Integer, ForeignKey("crm_profile_roles.id"), nullable=False)
+    department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=False)
 
-    father_name       = Column(String(100), nullable=False)
-    is_active         = Column(Boolean, nullable=False, default=True)
-    experience        = Column(Float, nullable=False)
+    father_name = Column(String(100), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    experience = Column(Float, nullable=False)
 
-    date_of_joining   = Column(Date, nullable=False)
-    date_of_birth     = Column(Date, nullable=False)
+    date_of_joining = Column(Date, nullable=False)
+    date_of_birth = Column(Date, nullable=False)
 
-    pan               = Column(String(10), nullable=True)
-    aadhaar           = Column(String(12), nullable=True)
+    pan = Column(String(10), nullable=True)
+    aadhaar = Column(String(12), nullable=True)
 
-    address           = Column(Text, nullable=True)
-    city              = Column(String(100), nullable=True)
-    state             = Column(String(100), nullable=True)
-    pincode           = Column(String(6), nullable=True)
+    address = Column(Text, nullable=True)
+    city = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+    pincode = Column(String(6), nullable=True)
 
-    comment           = Column(Text, nullable=True)
+    comment = Column(Text, nullable=True)
 
-    # Foreign Keys - Removed manager_id, kept parent_profile_id 
-    branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
+    # Foreign Keys
+    branch_id = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
     senior_profile_id = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
 
     # Timestamps
-    created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at        = Column(
-                         DateTime(timezone=True),
-                         server_default=func.now(),
-                         onupdate=func.now(),
-                         nullable=False
-                       )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
 
-    # Relationships with explicit foreign_keys
-    branch            = relationship(
-                         "BranchDetails", 
-                         back_populates="users",
-                         foreign_keys=[branch_id]
-                       )
-    
+    # Relationships
+    profile_role = relationship("ProfileRole", back_populates="users")
+    department = relationship("Department", back_populates="users")
+    branch = relationship(
+        "BranchDetails",
+        back_populates="users",
+        foreign_keys=[branch_id]
+    )
+    manages_branch = relationship(
+        "BranchDetails",
+        back_populates="manager",
+        foreign_keys="[BranchDetails.manager_id]",
+        uselist=False
+    )
+    senior_user = relationship(
+        "UserDetails",
+        remote_side=[employee_code],
+        backref="subordinates"
+    )
+    permission = relationship(
+        "PermissionDetails",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+    leads = relationship(
+        "Lead",
+        back_populates="assigned_user",
+        foreign_keys="[Lead.assigned_to_user]",
+        cascade="all, delete-orphan"
+    )
+    created_leads = relationship(
+        "Lead",
+        back_populates="creator",
+        foreign_keys="[Lead.created_by]",
+        cascade="all, delete-orphan"
+    )
+    employee = relationship(
+        "EmployeeDetails",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    campaigns = relationship(
+        "Campaign",
+        back_populates="owner",
+        cascade="all, delete-orphan"
+    )
+    tokens = relationship(
+        "TokenDetails",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
-    # Branch management relationship (only for BRANCH MANAGER)
-    manages_branch    = relationship(
-                         "BranchDetails",
-                         back_populates="manager",
-                         uselist=False,
-                         foreign_keys="[BranchDetails.manager_id]"
-                       )
+    def get_hierarchy_level(self):
+        """Get hierarchy level from profile role"""
+        return self.profile_role.hierarchy_level if self.profile_role else 7
 
-    # Other relationships
-    permission        = relationship(
-                         "PermissionDetails",
-                         back_populates="user",
-                         uselist=False,
-                         cascade="all, delete-orphan"
-                       )
+    def can_manage(self, other_user):
+        """Check if this user can manage another user"""
+        return self.get_hierarchy_level() < other_user.get_hierarchy_level()
 
-    audit_logs        = relationship(
-                         "AuditLog",
-                         back_populates="user",
-                         cascade="all, delete-orphan"
-                       )
-
-    attendance_records= relationship(
-                         "Attendance",
-                         back_populates="employee",
-                         cascade="all, delete-orphan"
-                       )
-    salary_slips      = relationship(
-                         "SalarySlip",
-                         back_populates="employee",
-                         cascade="all, delete-orphan"
-                       )
-    tokens            = relationship(
-                    "TokenDetails",
-                    back_populates="user",
-                    cascade="all, delete-orphan"
-                )
+    def get_team_members(self, db):
+        """Get all team members under this user"""
+        team_members = []
+        direct_subordinates = db.query(UserDetails).filter_by(senior_profile_id=self.employee_code).all()
+        
+        for subordinate in direct_subordinates:
+            team_members.append(subordinate)
+            team_members.extend(subordinate.get_team_members(db))
+        
+        return team_members
 
 
 
@@ -361,7 +582,7 @@ class LeadAssignment(Base):
 class LeadFetchConfig(Base):
     __tablename__ = "crm_lead_fetch_config"
     id                = Column(Integer, primary_key=True, autoincrement=True)
-    role              = Column(Enum(UserRoleEnum), nullable=True)
+    role              = Column(String(100), nullable=True)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
     per_request_limit = Column(Integer, nullable=False)
     daily_call_limit  = Column(Integer, nullable=False)
