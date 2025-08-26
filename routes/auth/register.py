@@ -10,6 +10,7 @@ import bcrypt
 from db.connection import get_db
 from db.models import UserDetails, BranchDetails, PermissionDetails, UserRoleEnum
 from db.Schema.register import UserBase, UserCreate, UserUpdate, UserOut
+from utils.validation_utils import validate_user_data
 
 router = APIRouter(
     prefix="/users",
@@ -137,11 +138,11 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"{role.value} requires sales_manager_id"
             )
-        if not tl_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{role.value} requires tl_id"
-            )
+        # if not tl_id:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail=f"{role.value} requires tl_id"
+        #     )
         
         # Validate branch exists
         branch = db.query(BranchDetails).filter_by(id=branch_id).first()
@@ -170,29 +171,29 @@ def validate_hierarchy_requirements(role: UserRoleEnum, branch_id: int = None,
             )
         
         # Validate TL
-        tl = db.query(UserDetails).filter_by(employee_code=tl_id).first()
-        if not tl:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL not found"
-            )
-        if tl.role != UserRoleEnum.TL:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="tl_id must be a TL"
-            )
-        if tl.branch_id != branch_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL must be in the same branch"
-            )
-        if tl.sales_manager_id != sales_manager_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TL must report to the same Sales Manager"
-            )
+        # tl = db.query(UserDetails).filter_by(employee_code=tl_id).first()
+        # if not tl:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="TL not found"
+        #     )
+        # if tl.role != UserRoleEnum.TL:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="tl_id must be a TL"
+        #     )
+        # if tl.branch_id != branch_id:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="TL must be in the same branch"
+        #     )
+        # if tl.sales_manager_id != sales_manager_id:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="TL must report to the same Sales Manager"
+        #     )
         
-        return branch_id, sales_manager_id, tl_id
+        return branch_id, sales_manager_id, None
     
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -244,6 +245,9 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
+    
+    user_data = user_in.dict()
+    validate_user_data(db, user_data)
 
     # Validate role
     try:
@@ -444,6 +448,13 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already exists"
                 )
+        
+        # user_data = {
+        #     'email': user_update.email,
+        #     'phone_number': user_update.phone_number,
+        #     'pan':
+        # }
+        # validate_user_data(db, user_data)
         
         # Validate role change if provided
         if user_update.role:

@@ -874,6 +874,7 @@ class LeadSource(Base):
     name        = Column(String(100), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
     created_by  = Column(String(100), nullable=True)
+    branch_id   = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
     leads       = relationship("Lead", back_populates="lead_source")
 

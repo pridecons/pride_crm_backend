@@ -19,6 +19,7 @@ from db.Schema.branch import BranchCreate, BranchUpdate, BranchOut, BranchDetail
 import hashlib
 from datetime import date, datetime
 from db.models import PermissionDetails
+from utils.validation_utils import validate_user_data
 
 router = APIRouter(
     prefix="/branches",
@@ -707,6 +708,14 @@ async def create_branch_with_manager(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User with this phone number already exists"
             )
+        
+        manager_data = {
+            "phone_number": manager_phone,  # Note: using phone_number for UserDetails
+            "email": manager_email,
+            "pan": manager_pan.upper() if manager_pan else None
+        }
+        
+        validate_user_data(db, manager_data)
         
         # Save agreement PDF
         os.makedirs(SAVE_DIR, exist_ok=True)

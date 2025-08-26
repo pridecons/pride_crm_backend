@@ -17,7 +17,11 @@ from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
-from sqlalchemy import or_
+
+from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
+
+
+
 
 
 
@@ -249,27 +253,17 @@ def save_uploaded_file(file: UploadFile, lead_id: int, file_type: str) -> str:
     return f"/{UPLOAD_DIR}/{filename}"
 
 
-def prepare_lead_data_for_db(lead_data: dict) -> dict:
+def prepare_lead_data_for_db(data: dict) -> dict:
     """Prepare lead data for database insertion"""
-    prepared_data = lead_data.copy()
+    # Convert segments to JSON string if it's a list
+    if 'segment' in data and isinstance(data['segment'], list):
+        data['segment'] = json.dumps(data['segment'])
     
-    # Handle segment field - always convert to JSON string
-    if 'segment' in prepared_data and prepared_data['segment'] is not None:
-        if isinstance(prepared_data['segment'], list):
-            prepared_data['segment'] = json.dumps(prepared_data['segment'])
-        elif isinstance(prepared_data['segment'], str):
-            try:
-                parsed = json.loads(prepared_data['segment'])
-                if not isinstance(parsed, list):
-                    parsed = [parsed]
-                prepared_data['segment'] = json.dumps(parsed)
-            except json.JSONDecodeError:
-                prepared_data['segment'] = json.dumps([prepared_data['segment']])
-        else:
-            prepared_data['segment'] = json.dumps([str(prepared_data['segment'])])
-
+    # Convert PAN to uppercase if provided
+    if 'pan' in data and data['pan']:
+        data['pan'] = data['pan'].upper()
     
-    return prepared_data
+    return data
 
 
 def safe_convert_lead_to_dict(lead) -> dict:
@@ -391,6 +385,7 @@ def create_lead(
         
         # Prepare data for database
         lead_data = prepare_lead_data_for_db(lead_in.dict(exclude_none=True))
+        validate_lead_data(db, lead_data)
         if is_old:
            lead_data["is_old_lead"] = True
         
@@ -649,6 +644,9 @@ def update_lead(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Another lead with this mobile already exists"
                 )
+            
+        validate_lead_data(db, update_data, exclude_lead_id=lead_id)
+
         
         # Apply updates
         for field, value in update_data.items():

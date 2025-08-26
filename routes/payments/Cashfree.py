@@ -271,7 +271,7 @@ async def front_create(
     newLink = urlparse(link).path.lstrip("/")
     await cashfree_payment_link(data.phone, data.name, data.amount, newLink, user_lead.kyc)
 
-    new_link = link.replace("https://", "/payment/consent/") if user_lead.kyc else link
+    new_link = link.replace("https://", "https://service.pridecons.com/payment/consent/") if user_lead.kyc else link
 
     await payment_link_mail(data.email, data.name, new_link)
 
