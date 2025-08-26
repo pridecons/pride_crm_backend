@@ -171,34 +171,6 @@ class UserDetails(Base):
                     cascade="all, delete-orphan"
                 )
 
-    def get_hierarchy_level(self):
-        """Get hierarchy level based on role"""
-        hierarchy = {
-            UserRoleEnum.SUPERADMIN: 1,
-            UserRoleEnum.BRANCH_MANAGER: 2,
-            UserRoleEnum.SALES_MANAGER: 3,
-            UserRoleEnum.HR: 3,
-            UserRoleEnum.TL: 4,
-            UserRoleEnum.SBA: 5,
-            UserRoleEnum.BA: 6
-        }
-        return hierarchy.get(self.role, 7)
-
-    def can_manage(self, other_user):
-        """Check if this user can manage another user"""
-        return self.get_hierarchy_level() < other_user.get_hierarchy_level()
-
-    def get_required_manager_role(self):
-        """Get the role that should be this user's manager"""
-        manager_mapping = {
-            UserRoleEnum.BRANCH_MANAGER: UserRoleEnum.SUPERADMIN,
-            UserRoleEnum.SALES_MANAGER: UserRoleEnum.BRANCH_MANAGER,
-            UserRoleEnum.HR: UserRoleEnum.BRANCH_MANAGER,
-            UserRoleEnum.TL: UserRoleEnum.SALES_MANAGER,
-            UserRoleEnum.BA: UserRoleEnum.TL,
-            UserRoleEnum.SBA: UserRoleEnum.TL
-        }
-        return manager_mapping.get(self.role)
 
 
 class TokenDetails(Base):
