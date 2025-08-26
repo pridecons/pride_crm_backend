@@ -2,24 +2,27 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_, desc, func
+from sqlalchemy import and_, or_, desc, func, exists
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime
 
 from db.connection import get_db
 from db.models import (
-    Lead, Payment, UserDetails, UserRoleEnum, LeadAssignment, BranchDetails
+    Lead, Payment, UserDetails, UserRoleEnum
 )
 from routes.auth.auth_dependency import get_current_user
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
 
+# ---------------------------
 # Pydantic Models for Response
+# ---------------------------
+
 class ClientPaymentInfo(BaseModel):
     payment_id: int
     order_id: Optional[str]
-    service: Optional[List[str]]             # <-- बदल दिया, अब array of strings
+    service: Optional[List[str]]
     paid_amount: float
     status: Optional[str]
     mode: str
@@ -47,17 +50,17 @@ class ClientResponse(BaseModel):
     segment: Optional[str]
     lead_status: Optional[str]
     created_at: datetime
-    
+
     # Payment Information
     total_payments: int
     total_amount_paid: float
     latest_payment: Optional[ClientPaymentInfo]
     all_payments: List[ClientPaymentInfo]
-    
+
     # Employee Assignment Information
     assigned_employee: Optional[AssignedEmployeeInfo]
     branch_name: Optional[str]
-    
+
     # Client Status
     is_active_client: bool
     kyc_status: bool
@@ -69,114 +72,72 @@ class ClientListResponse(BaseModel):
     limit: int
     total_pages: int
 
+# ---------------------------
 # Helper Functions
-def get_client_query_base(db: Session):
-    """Base query to get leads that have made payments (clients)"""
-    return db.query(Lead).join(Payment, Lead.id == Payment.lead_id).filter(
-        and_(
-            Lead.is_delete == False,
-            Payment.paid_amount > 0,
-            Payment.status == "PAID"
-        )
-    ).distinct()
+# ---------------------------
 
-def can_view_client(current_user: UserDetails, client_lead: Lead, db: Session) -> bool:
-    """Check if current user can view this client"""
-    
-    # SUPERADMIN and BRANCH_MANAGER can see all clients
-    if current_user.role in [UserRoleEnum.SUPERADMIN, UserRoleEnum.BRANCH_MANAGER]:
-        return True
-    
-    # Check if client is assigned to current user
-    assignment = db.query(LeadAssignment).filter(
-        and_(
-            LeadAssignment.lead_id == client_lead.id,
-            LeadAssignment.user_id == current_user.employee_code
+def get_client_query_base(db: Session):
+    """
+    Base query: active clients only, no deletions.
+    Ownership via Lead.assigned_to_user.
+    """
+    return (
+        db.query(Lead)
+        .filter(
+            and_(
+                Lead.is_delete == False,
+                Lead.is_client == True
+            )
         )
-    ).first()
-    
-    if assignment:
-        return True
-    
-    # SALES_MANAGER can see clients of their team members
-    if current_user.role == UserRoleEnum.SALES_MANAGER:
-        team_assignments = db.query(LeadAssignment).join(
-            UserDetails, LeadAssignment.user_id == UserDetails.employee_code
-        ).filter(
-            and_(
-                LeadAssignment.lead_id == client_lead.id,
-                UserDetails.sales_manager_id == current_user.employee_code
-            )
-        ).first()
-        
-        if team_assignments:
-            return True
-    
-    # TL can see clients of their team members
-    if current_user.role == UserRoleEnum.TL:
-        team_assignments = db.query(LeadAssignment).join(
-            UserDetails, LeadAssignment.user_id == UserDetails.employee_code
-        ).filter(
-            and_(
-                LeadAssignment.lead_id == client_lead.id,
-                UserDetails.tl_id == current_user.employee_code
-            )
-        ).first()
-        
-        if team_assignments:
-            return True
-    
-    return False
+        .distinct()
+    )
+
+def _paid_statuses():
+    # normalize paid/success statuses
+    return {"PAID", "SUCCESS", "SUCCESSFUL", "COMPLETED"}
+
+def _is_paid_status(status: Optional[str]) -> bool:
+    return (status or "").upper() in _paid_statuses()
 
 def format_client_response(lead: Lead, db: Session) -> ClientResponse:
     """Format lead data into client response"""
-    
-    # Get all payments for this client
-    payments = db.query(Payment).filter(
-        Payment.lead_id == lead.id
-    ).order_by(desc(Payment.created_at)).all()
-    
-    # Format payment information
-    payment_info = []
-    for payment in payments:
-        payment_info.append(ClientPaymentInfo(
-            payment_id=payment.id,
-            order_id=payment.order_id,
-            service=payment.Service if payment.Service else [],  # array preserved
-            paid_amount=payment.paid_amount,
-            status=payment.status,
-            mode=payment.mode,
-            plan=payment.plan if payment.plan else [],
-            created_at=payment.created_at,
-            duration_day=payment.duration_day,
-            call=payment.call
-        ))
-    
-    # Get assigned employee information
-    assignment = db.query(LeadAssignment).filter(
-        LeadAssignment.lead_id == lead.id
-    ).first()
-    
+    payments = (
+        db.query(Payment)
+        .filter(Payment.lead_id == lead.id)
+        .order_by(desc(Payment.created_at))
+        .all()
+    )
+
+    payment_info = [
+        ClientPaymentInfo(
+            payment_id=p.id,
+            order_id=p.order_id,
+            service=p.Service if p.Service else [],
+            paid_amount=p.paid_amount,
+            status=p.status,
+            mode=p.mode,
+            plan=p.plan if p.plan else [],
+            created_at=p.created_at,
+            duration_day=p.duration_day,
+            call=p.call,
+        )
+        for p in payments
+    ]
+
+    # Assigned employee via relationship defined on models: Lead.assigned_user
     assigned_employee = None
-    if assignment:
-        employee = db.query(UserDetails).filter(
-            UserDetails.employee_code == assignment.user_id
-        ).first()
-        
-        if employee:
-            assigned_employee = AssignedEmployeeInfo(
-                employee_code=employee.employee_code,
-                name=employee.name,
-                role=employee.role.value,
-                phone_number=employee.phone_number,
-                email=employee.email
-            )
-    
-    # Get branch information
-    branch_name = None
-    if lead.branch:
-        branch_name = lead.branch.name
-    
+    if lead.assigned_user:
+        u = lead.assigned_user
+        assigned_employee = AssignedEmployeeInfo(
+            employee_code=u.employee_code,
+            name=u.name,
+            role=u.role.value if hasattr(u.role, "value") else str(u.role),
+            phone_number=u.phone_number,
+            email=u.email,
+        )
+
+    branch_name = lead.branch.name if lead.branch else None
+
     return ClientResponse(
         lead_id=lead.id,
         full_name=lead.full_name,
@@ -194,11 +155,13 @@ def format_client_response(lead: Lead, db: Session) -> ClientResponse:
         all_payments=payment_info,
         assigned_employee=assigned_employee,
         branch_name=branch_name,
-        is_active_client=any(p.status == "success" for p in payments),
-        kyc_status=lead.kyc if lead.kyc else False
+        is_active_client=any(_is_paid_status(p.status) for p in payments) or bool(lead.is_client),
+        kyc_status=bool(lead.kyc),
     )
 
+# ---------------------------
 # API Endpoints
+# ---------------------------
 
 @router.get("/", response_model=ClientListResponse)
 async def get_clients(
@@ -209,109 +172,123 @@ async def get_clients(
     branch_id: Optional[int] = Query(None, description="Filter by branch"),
     status: Optional[str] = Query(None, description="Filter by payment status"),
     current_user: UserDetails = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
-    Get list of clients (leads who have made payments)
-    
-    - **Employees**: Can see only their assigned clients
-    - **TL/Sales Manager**: Can see their team's clients
-    - **Branch Manager**: Can see all clients in their branch
-    - **Admin**: Can see all clients
+    Get list of clients (leads who have made payments / marked client)
+    Visibility rules (no LeadAssignment dependency):
+      - SUPERADMIN: all clients
+      - BRANCH_MANAGER: clients in their managed branch OR their own branch_id
+      - SALES_MANAGER: clients whose Lead.assigned_to_user belongs to their team (sales_manager_id==me) + self
+      - TL: clients whose Lead.assigned_to_user belongs to their team (tl_id==me) + self
+      - Others: only clients assigned_to_user == me
     """
-    
-    # Check permission
-    if not current_user.permission or not current_user.permission.view_client:
+    # Permission check
+    if not current_user.permission or not current_user.permission.client_page:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view clients"
+            detail="You don't have permission to view clients",
         )
-    
-    # Base query
+
     query = get_client_query_base(db)
-    
-    # Apply role-based filtering
+
+    # Role-based filtering (ONLY via assigned_to_user / branch)
     if current_user.role == UserRoleEnum.SUPERADMIN:
-        # Admin can see all clients
-        pass
+        pass  # see all
     elif current_user.role == UserRoleEnum.BRANCH_MANAGER:
-        # Branch manager sees clients in their branch
+        # preferred: managed branch; fallback: own branch_id
+        branch_id_for_filter = None
         if current_user.manages_branch:
-            query = query.filter(Lead.branch_id == current_user.manages_branch.id)
+            branch_id_for_filter = current_user.manages_branch.id
+        elif current_user.branch_id:
+            branch_id_for_filter = current_user.branch_id
+
+        if branch_id_for_filter:
+            query = query.filter(Lead.branch_id == branch_id_for_filter)
         else:
-            # If no branch assigned, see no clients
-            query = query.filter(Lead.id == -1)
+            query = query.filter(Lead.id == -1)  # no branch → no data
     elif current_user.role == UserRoleEnum.SALES_MANAGER:
-        # Sales manager sees clients of their team
-        team_user_codes = db.query(UserDetails.employee_code).filter(
-            UserDetails.sales_manager_id == current_user.employee_code
-        ).subquery()
-        
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id.in_(team_user_codes)
+        team_codes_subq = (
+            db.query(UserDetails.employee_code)
+            .filter(UserDetails.sales_manager_id == current_user.employee_code)
+            .subquery()
+        )
+        query = query.filter(
+            or_(
+                Lead.assigned_to_user.in_(team_codes_subq),
+                Lead.assigned_to_user == current_user.employee_code,
+            )
         )
     elif current_user.role == UserRoleEnum.TL:
-        # TL sees clients of their team
-        team_user_codes = db.query(UserDetails.employee_code).filter(
-            UserDetails.tl_id == current_user.employee_code
-        ).subquery()
-        
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id.in_(team_user_codes)
+        team_codes_subq = (
+            db.query(UserDetails.employee_code)
+            .filter(UserDetails.tl_id == current_user.employee_code)
+            .subquery()
+        )
+        query = query.filter(
+            or_(
+                Lead.assigned_to_user.in_(team_codes_subq),
+                Lead.assigned_to_user == current_user.employee_code,
+            )
         )
     else:
-        # Regular employees see only their assigned clients
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id == current_user.employee_code
-        )
-    
-    # Apply filters
+        # Regular employees (HR/BA/SBA/Researcher...) → only own clients
+        query = query.filter(Lead.assigned_to_user == current_user.employee_code)
+
+    # Filters
     if search:
         search_term = f"%{search}%"
         query = query.filter(
             or_(
                 Lead.full_name.ilike(search_term),
                 Lead.email.ilike(search_term),
-                Lead.mobile.ilike(search_term)
+                Lead.mobile.ilike(search_term),
             )
         )
-    
+
     if employee_code:
-        query = query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id).filter(
-            LeadAssignment.user_id == employee_code
-        )
-    
+        query = query.filter(Lead.assigned_to_user == employee_code)
+
     if branch_id:
         query = query.filter(Lead.branch_id == branch_id)
-    
+
     if status:
-        query = query.join(Payment, Lead.id == Payment.lead_id).filter(
-            Payment.status == status
+        # EXISTS on payments with the given status (case-insensitive)
+        query = query.filter(
+            exists().where(
+                and_(
+                    Payment.lead_id == Lead.id,
+                    func.upper(Payment.status) == status.upper(),
+                )
+            )
         )
-    
-    # Get total count
+
+    # Count BEFORE pagination
     total_count = query.count()
-    
-    # Apply pagination
+
+    # Pagination + eager loads
     offset = (page - 1) * limit
-    clients = query.options(
-        joinedload(Lead.branch),
-        joinedload(Lead.payments),
-        joinedload(Lead.assignment)
-    ).offset(offset).limit(limit).all()
-    
-    # Format response
-    client_responses = []
-    for client in clients:
-        if can_view_client(current_user, client, db):
-            client_responses.append(format_client_response(client, db))
-    
+    clients = (
+        query.options(
+            joinedload(Lead.branch),
+            joinedload(Lead.payments),
+            joinedload(Lead.assigned_user),
+        )
+        .order_by(desc(Lead.created_at))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    # Build response
+    client_responses = [format_client_response(client, db) for client in clients]
+
     return ClientListResponse(
         clients=client_responses,
         total_count=total_count,
         page=page,
         limit=limit,
-        total_pages=(total_count + limit - 1) // limit
+        total_pages=(total_count + limit - 1) // limit,
     )
 
 @router.get("/my/clients", response_model=ClientListResponse)
@@ -319,44 +296,54 @@ async def get_my_clients(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     current_user: UserDetails = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
-    Get clients assigned to current user only
+    Clients directly assigned to the current user (via Lead.assigned_to_user).
+    No LeadAssignment dependency.
     """
-    
-    # Check permission
-    if not current_user.permission or not current_user.permission.view_client:
+    if not current_user.permission or not current_user.permission.client_page:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view clients"
+            detail="You don't have permission to view clients",
         )
-    
-    # Get clients assigned to current user
-    query = get_client_query_base(db).join(
-        LeadAssignment, Lead.id == LeadAssignment.lead_id
-    ).filter(
-        LeadAssignment.user_id == current_user.employee_code
+
+    query = (
+        db.query(Lead)
+        .filter(
+            and_(
+                Lead.is_delete == False,
+                Lead.is_client == True,
+                Lead.assigned_to_user == current_user.employee_code,
+            )
+        )
     )
-    
+
+    print("current_user.employee_code : ",current_user.employee_code)
+
+    print("query : ",query.all())
+
     total_count = query.count()
-    
-    # Apply pagination
+
     offset = (page - 1) * limit
-    clients = query.options(
-        joinedload(Lead.branch),
-        joinedload(Lead.payments),
-        joinedload(Lead.assignment)
-    ).offset(offset).limit(limit).all()
-    
-    # Format response
+    clients = (
+        query.options(
+            joinedload(Lead.branch),
+            joinedload(Lead.payments),
+            joinedload(Lead.assigned_user),
+        )
+        .order_by(desc(Lead.created_at))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
     client_responses = [format_client_response(client, db) for client in clients]
-    
+
     return ClientListResponse(
         clients=client_responses,
         total_count=total_count,
         page=page,
         limit=limit,
-        total_pages=(total_count + limit - 1) // limit
+        total_pages=(total_count + limit - 1) // limit,
     )
-

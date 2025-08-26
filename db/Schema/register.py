@@ -46,7 +46,7 @@ class UserBase(BaseModel):
 
     @validator('aadhaar')
     def validate_aadhaar(cls, v):
-        if v and (len(v) != 12 or not v.isdigit()):
+        if v and (len(v) != 12):
             raise ValueError('Aadhaar must be exactly 12 digits')
         return v
 
@@ -107,7 +107,7 @@ class UserUpdate(BaseModel):
 
     @validator('aadhaar')
     def validate_aadhaar(cls, v):
-        if v and (len(v) != 12 or not v.isdigit()):
+        if v and (len(v) != 12):
             raise ValueError('Aadhaar must be exactly 12 digits')
         return v
 

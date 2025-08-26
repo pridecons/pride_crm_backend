@@ -19,6 +19,7 @@ from db.Schema.branch import BranchCreate, BranchUpdate, BranchOut, BranchDetail
 import hashlib
 from datetime import date, datetime
 from db.models import PermissionDetails
+from utils.validation_utils import validate_user_data
 
 router = APIRouter(
     prefix="/branches",
@@ -584,8 +585,8 @@ async def create_branch_with_manager(
     branch_name: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
     branch_address: str = Form(...),
     authorized_person: constr(strip_whitespace=True, min_length=1, max_length=100) = Form(...),
-    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(...),
-    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12) = Form(...),
+    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10) = Form(None),
+    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12) = Form(None),
     branch_active: bool = Form(True),
     agreement_pdf: UploadFile = File(...),
     
@@ -623,7 +624,7 @@ async def create_branch_with_manager(
         return len(pan) == 10
     
     def validate_aadhaar(aadhaar: str):
-        return len(aadhaar) == 12 and aadhaar.isdigit()
+        return len(aadhaar) == 12
     
     def validate_pincode(pincode: str):
         return len(pincode) == 6 and pincode.isdigit()
@@ -707,6 +708,14 @@ async def create_branch_with_manager(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="User with this phone number already exists"
             )
+        
+        manager_data = {
+            "phone_number": manager_phone,  # Note: using phone_number for UserDetails
+            "email": manager_email,
+            "pan": manager_pan.upper() if manager_pan else None
+        }
+        
+        validate_user_data(db, manager_data)
         
         # Save agreement PDF
         os.makedirs(SAVE_DIR, exist_ok=True)

@@ -11,7 +11,7 @@ from num2words import num2words
 from io import BytesIO
 
 from db.connection import get_db
-from db.models import Lead, Invoice, Payment
+from db.models import Lead, Payment
 
 from reportlab.pdfgen import canvas
 from reportlab.pdfgen import canvas as rl_canvas
@@ -442,6 +442,55 @@ def service_quantity(billing_cycle: str, call_count: int = 0, duration_day: int 
     else:
         return billing_cycle
 
+import math
+
+def truncate_to_2(x: float) -> float:
+    """Floor/truncate to 2 decimal places (not round)."""
+    return math.floor(x * 100) / 100
+
+def calculate_tax_breakdown(total_payment: float, state: str) -> dict:
+    """
+    Given total payment (which includes tax) and state, returns:
+    service_charges (pre-tax), gateway_charges (2% truncated), net_service_charges,
+    and IGST or CGST+SGST with rounding as in example.
+    """
+    if total_payment < 0:
+        raise ValueError("total_payment must be non-negative")
+
+    # Derive base service charges by removing 18% tax (since total = service + 18% tax)
+    service_charges_raw = total_payment / 1.18
+    service_charges = round(service_charges_raw + 1e-9, 2)  # standard rounding
+
+    # Gateway charges: 2% of service, but truncated (floor) to 2 decimals
+    gateway_charges_raw = service_charges_raw * 0.02
+    gateway_charges = truncate_to_2(gateway_charges_raw)
+
+    net_service_charges = service_charges - gateway_charges
+
+    state_up = state.strip().upper()
+    if state_up == "GUJARAT":
+        igst = 0.0
+        # each 9%, rounding normally
+        cgst = round(service_charges_raw * 0.09 + 1e-9, 2)
+        sgst = round(service_charges_raw * 0.09 + 1e-9, 2)
+    else:
+        igst = round(service_charges_raw * 0.18 + 1e-9, 2)
+        cgst = sgst = 0.0
+
+    total_tax = round(igst + cgst + sgst + 1e-9, 2)
+    reconstructed_total = round(service_charges + total_tax + 1e-9, 2)
+
+    return {
+        "service_charges": service_charges,
+        "gateway_charges": gateway_charges,
+        "net_service_charges": round(net_service_charges + 1e-9, 2),
+        "igst": igst,
+        "cgst": cgst,
+        "sgst": sgst,
+        "total_tax": total_tax,
+        "reconstructed_total": reconstructed_total,
+    }
+
 def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
     """
     Pull details from Lead, calculate GST & txn charges INCLUSIVELY,
@@ -472,36 +521,15 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
         cust_state = (user.state or "").upper()
         cust_code  = state_code.get(cust_state, "")
 
-        # 3) GST rates based on state
-        if cust_state == "GUJARAT":
-            total_gst_rate = 0.18  # IGST 18%
-            cgst_rate = sgst_rate = 0.0
-        else:
-            total_gst_rate = 0.18  # CGST 9% + SGST 9% = 18%
-            cgst_rate = sgst_rate = 0.09
 
-        # 4) Transaction charge rate
-        txn_rate = 0.02  # 2%
-        
-        # 5) INCLUSIVE CALCULATION
-        # Total = Base Amount + GST + Transaction Charges
-        # paid_amount = base_amount * (1 + total_gst_rate + txn_rate)
-        # Therefore: base_amount = paid_amount / (1 + total_gst_rate + txn_rate)
-        
-        total_multiplier = 1 + total_gst_rate + txn_rate
-        base_amount = paid_amount / total_multiplier
-        
-        # 6) Calculate individual components
-        gst_amount = base_amount * total_gst_rate
-        txn_amount = base_amount * txn_rate
-        
-        # Split GST based on state
-        if cust_state == "GUJARAT":
-            igst_amt = gst_amount
-            cgst_amt = sgst_amt = 0
-        else:
-            igst_amt = 0
-            cgst_amt = sgst_amt = gst_amount / 2
+        taxes = calculate_tax_breakdown(paid_amount, cust_state)
+        service_charges = taxes["service_charges"]
+        gateway_charges = taxes["gateway_charges"]
+        net_service_charges = taxes["net_service_charges"]
+        igst = taxes["igst"]
+        cgst = taxes["cgst"]
+        sgst = taxes["sgst"]
+        total_tax = taxes["total_tax"]
         
         # 7) Generate proper invoice number (will be set by the SQLAlchemy event listener)
         date_part = datetime.utcnow().strftime("%Y%m%d")
@@ -543,11 +571,11 @@ def build_invoice_details(payment: Dict[str, Any]) -> Dict[str, Any]:
             }],
 
             "totals": {
-                "service_charges": f"{base_amount:,.2f}",
-                "igst":            f"{igst_amt:,.2f}" if igst_amt else "",
-                "cgst":            f"{cgst_amt:,.2f}" if cgst_amt else "",
-                "sgst":            f"{sgst_amt:,.2f}" if sgst_amt else "",
-                "txn_charges":     f"{txn_amount:,.2f}",
+                "service_charges": f"{net_service_charges:,.2f}",
+                "igst":            f"{igst:,.2f}" if igst else "",
+                "cgst":            f"{cgst:,.2f}" if cgst else "",
+                "sgst":            f"{sgst:,.2f}" if sgst else "",
+                "txn_charges":     f"{gateway_charges:,.2f}",
                 "total":           f"{paid_amount:,.2f}",  # This matches the paid amount
                 "in_words":        in_words
             },
@@ -600,42 +628,107 @@ async def generate_invoices_from_payments(
             f.write(signPdf)
         print(f"Generated {path}")
         to_addr = pay.get("email")
+        body_content = """
+  <div>
+    <p>Dear Client,</p>
+    <p>Greetings from Pride Trading Consultancy Pvt. Ltd.!!!</p>
+    <p>Thank you for subscribing our services.</p>
+    <p>Please go through your registered details of your subscription as mentioned below,</p>
+    <p>"Pride Trading Consultancy Pvt. Ltd." is an Research Analyst having a team consists of highly qualified analysts who are skilled and impeccable in their analysis .In These analysts, using their experience and latest software tools , which are able to predict the movements in share market on time and with high accuracy . As a result, using our tips, our clients gain the most out of the share market . We provides recommendations for Stocks - Cash and F & O traded in NSE & Commodities including Bullions, Metals , Energy and Argo - commodities traded in MCX , NCDEX . We also provide daily and weekly reports having overview of commodity market which helps the investors to understand the trends of the market and helps in taking wise decisions.
+    In case of any change in the above-mentioned details, please inform us about the same in writing through e - mail within 3 days of the receipt of this e - mail.</p>
+
+    <p>
+      <b>
+        Always trade in the calls given only through SMS<br/>
+        It is mandatory to trade in all the provided calls and always trade as per the level provided in the call<br/>
+        Always trade with equal investment in all the call.<br/>
+        Always trade with uniform number of lots in all the calls for example if you are trading in Derivative Market (Future , Option & Commodity Trader , then each call can be with same quantity , initially for at least one month you should trade with 1 lots & then increase the number of lots as per your investment and risk taking capacity .<br/>
+        Please keep enough space in your message inbox to get trading message on timely basis comfortably.<br/>
+        Always maintain stop loss while trading in all calls even if anyone asks to eradicate SL while trading.<br/>
+        Always avoid trading without stop loss.<br/>
+        Keep booking partial profits at 1st and 2nd target as messages received from research team.<br/>
+        Revise your SL once you start booking profit as per company's follow up message
+      </b>
+    </p>
+
+    <p>Don't enter in the trade if prices are quite greater than given price, Please call us for assistance . Also, the medium of our services is only SMS thus Please do trade only on SMS provided by Money Bells - Research Analyst . Please do not trade on Verbal calls. Telephonic support provided, if any, will only be to confirm the calls / tips provided through SMS . No separate calls / tips are being provided through telephone.</p>
+
+    <p>We provide advice only through our registered SMS Channel. Kindly insist for SMS or Messenger services from your business analyst.</p>
+
+    <p><b>DO NOT Trade on Telephonic calls.Also, we would request you to read our Refund Policy , Disclaimer , Disclosures , Terms & Conditions etc mentioned on our website www.pridecons.com before proceeding for the services , as further company will not be responsible for any confusion or inconvenience caused to client .</b></p>
+
+    <p>Pride Trading Consultancy Pvt. Ltd. provides only advises service NOT any Brokerage or Demat.</p>
+
+    <p>By taking our services you are agreeing that you will get our SMS and Telephone call on your DND numbers too.<br/>
+      �
+      For more detail of company and your invoice please find the attachment. You are our valued client and we look forward to a long association with you. In case of any complaints / queries / clarifications please feel free to call us at +91-9981919424 and mail us at compliance@pridecons.com to ensure prompt revert.</p>
+
+    <p>We wish you to get best services from our side and expecting long term relationship with us.</p>
+
+    <p>Happy Investing!!</p>
+
+    <p>Terms &Conditions: As per the SEBI norms, in order to serve you better we would require following documents from you to maintain the records which includes the mandatory requirement from SEBI,</p>
+
+    <p>PAN NO and DOB (To fetch KYC from KRA)</p>
+
+    <p>Above details are mandatory requirement from SEBI. In case client fails to provide above details, company has all the required rights to discontinue the services until such details are obtained from the client .</p>
+
+    <p>We offer tips in Equity, Commodity and Derivatives Market , we take cautious measures in designing the services & utmost care is being taken in providing advice to clients , but we do not guarantee any assured profits , as " Investments in Market are subject to market risk " hence company will not be liable for any loss incurred to the client .<br/>
+    Beware of Any Fishing calls if you receive on the name of assigned executive & Kindly refuse to pay in any personal A / c apart from the company's Bank details.<br/>
+    Securities investments are subject to market risks and there is no assurance or guarantee that the targets of investment advices will be achieved.<br/>
+    As with any investment in securities, the value of securities can go up or down depending on various factors and forces , affecting the capital markets . Investors are requested to trade on our advice on his discretion and should understand specific relevant details & risk factors of securities market.<br/>
+    The Product name does not in any manner indicate either its quality or its prospects&returns.<br/>
+    Past performance of the Service Product is not indicative of the future performance of the Service Product (s).<br/>
+    <b>Investments are subject to market risks.</b>
+    </p>
+
+    <p>Kindly trade only on SMS given by the PRRIDE on your registered mobile number.</p>
+
+    <p>By subscribing & using our services you agree to all our Terms & Conditions and Policies mentioned in the e - mail & on our website. compliance@pridecons.com</p>
+
+    <p>If you have any query and grievances so, kindly revert immediate on same mail.</p>
+
+    <p>Regards</p>
+
+    <p>Team Support</p>
+
+    <p>Pride Trading Consultancy Pvt. Ltd.</p>
+
+    <p>SEBI Registered Number INH000010362</p>
+
+    <p>www.pridecons.com</p>
+
+    <p>compliance@pridecons.com</p>
+
+    <p>*Investment in market is subject to market risk.</p>
+
+    <p>*Accuracy mentioned is as per past record. Vary as per market conditions.</p>
+
+    <p>*Please read all disclaimer, disclosure, and terms & conditions prior to subscribing to services.</p>
+
+    <p>KINDLY REVERT BACK WITH YOUR ACCEPTANCE REGARDING SERVICES  compliance@pridecons.com</p>
+
+    <p>Thanks  & Regards,<br/>
+    Research Analyst: INH000010362<br/>
+    Contact: +91-9981919424<br/>
+    Website: www.pridecons.com</p>
+  </div>
+"""
         subject = f"Your Invoice #{invoice_no}"
-        html_body = (
-            f"<p>Dear {details['customer']['name']},</p>"
-            f"<p>Thank you for your payment of ₹{pay['paid_amount']:.2f}. "
-            f"Please find attached your invoice <strong>{invoice_no}</strong>.</p>"
-            "<p>Regards,<br/>Pride Trading Consultancy</p>"
-        )
 
         send_mail_by_client_with_file(
             to_email=to_addr,
             subject=subject,
-            html_content=html_body,
+            html_content=body_content,
             pdf_file_path=path
         )
 
         payment_obj = db.query(Payment).filter(Payment.order_id == order_id).first()
         if payment_obj:
             payment_obj.is_send_invoice = True
-            payment_obj.invoice = output_dir
+            payment_obj.invoice = path
+            payment_obj.invoice_no = invoice_no
             db.commit()
             db.refresh(payment_obj)
 
-        phone_number  = pay['phone_number']
-        employee_code  = pay['employee_code']
-        user = db.query(Lead).filter(Lead.mobile == phone_number).first()
 
-        kwargs = {
-            "invoice_no": invoice_no,
-            "lead_id": user.id,
-            "employee_code": employee_code,
-            "path": output_dir,
-            "order_id": order_id,
-        }
-
-        templateInvoice = Invoice(**kwargs)
-        db.add(templateInvoice)
-        db.commit()
-        db.refresh(templateInvoice)
-        

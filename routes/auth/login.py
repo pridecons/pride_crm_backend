@@ -112,29 +112,10 @@ def login(
 
         # Get user permissions
         if user.permission:
-            user_info["permissions"] = {
-                "add_user": user.permission.add_user,
-                "edit_user": user.permission.edit_user,
-                "delete_user": user.permission.delete_user,
-                "add_lead": user.permission.add_lead,
-                "edit_lead": user.permission.edit_lead,
-                "delete_lead": user.permission.delete_lead,
-                "view_users": user.permission.view_users,
-                "view_lead": user.permission.view_lead,
-                "view_branch": user.permission.view_branch,
-                "view_accounts": user.permission.view_accounts,
-                "view_research": user.permission.view_research,
-                "view_client": user.permission.view_client,
-                "view_payment": user.permission.view_payment,
-                "view_invoice": user.permission.view_invoice,
-                "view_kyc": user.permission.view_kyc,
-                "approval": user.permission.approval,
-                "internal_mailing": user.permission.internal_mailing,
-                "chatting": user.permission.chatting,
-                "targets": user.permission.targets,
-                "reports": user.permission.reports,
-                "fetch_lead": user.permission.fetch_lead,
-            }
+            user_info["permissions"] = (
+                {key: getattr(user.permission, key) for key in vars(user.permission) if not key.startswith("_")}
+                if user.permission else {}
+            )
 
         return TokenResponse(
             access_token=access_token,

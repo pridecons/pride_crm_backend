@@ -14,6 +14,7 @@ from datetime import datetime
 
 class UserRoleEnum(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
+    COMPLIANCE = "COMPLIANCE"
     BRANCH_MANAGER = "BRANCH MANAGER"
     HR = "HR"
     SALES_MANAGER = "SALES MANAGER"
@@ -251,34 +252,98 @@ class PermissionDetails(Base):
     id              = Column(Integer, primary_key=True, autoincrement=True)
     user_id         = Column(String(100), ForeignKey("crm_user_details.employee_code"), unique=True, nullable=False)
 
-    # User Management Permissions
-    add_user        = Column(Boolean, default=False)
-    edit_user       = Column(Boolean, default=False)
-    delete_user     = Column(Boolean, default=False)
+    # LEAD/[id]
+    lead_recording_view = Column(Boolean, default=False)
+    lead_recording_upload   = Column(Boolean, default=False)
+    lead_story_view = Column(Boolean, default=False)
+    lead_transfer = Column(Boolean, default=False)
+    lead_branch_view = Column(Boolean, default=False)
 
-    # Lead Management Permissions
-    add_lead        = Column(Boolean, default=False)
-    edit_lead       = Column(Boolean, default=False)
-    delete_lead     = Column(Boolean, default=False)
+    # LEAD SOURCE
+    create_lead = Column(Boolean, default=False)
+    edit_lead = Column(Boolean, default=False)
+    delete_lead  = Column(Boolean, default=False)
 
-    # View Permissions
-    view_users      = Column(Boolean, default=False)
-    view_lead       = Column(Boolean, default=False)
-    view_branch     = Column(Boolean, default=False)
-    view_accounts   = Column(Boolean, default=False)
-    view_research   = Column(Boolean, default=False)
-    view_client     = Column(Boolean, default=False)
-    view_payment    = Column(Boolean, default=False)
-    view_invoice    = Column(Boolean, default=False)
-    view_kyc        = Column(Boolean, default=False)
+    # LEAD RESPONSE
+    create_new_lead_response  = Column(Boolean, default=False)
+    edit_response = Column(Boolean, default=False)
+    delete_response = Column(Boolean, default=False)
 
-    # Special Permissions
-    approval        = Column(Boolean, default=False)
-    internal_mailing= Column(Boolean, default=False)
-    chatting        = Column(Boolean, default=False)
-    targets         = Column(Boolean, default=False)
-    reports         = Column(Boolean, default=False)
-    fetch_lead      = Column(Boolean, default=False)
+    # USER 
+    user_add_user = Column(Boolean, default=False)
+    user_all_roles = Column(Boolean, default=False)
+    user_all_branches = Column(Boolean, default=False)
+    user_view_user_details = Column(Boolean, default=False)
+    user_edit_user = Column(Boolean, default=False)
+    user_delete_user = Column(Boolean, default=False)
+
+    # FETCH LIMIT
+    fetch_limit_create_new = Column(Boolean, default=False)
+    fetch_limit_edit = Column(Boolean, default=False)
+    fetch_limit_delete = Column(Boolean, default=False)
+
+    # PLANS
+    plans_create = Column(Boolean, default=False)
+    edit_plan = Column(Boolean, default=False)
+    delete_plane = Column(Boolean, default=False)
+
+    # CLIENT
+    client_select_branch = Column(Boolean, default=False)
+    client_invoice = Column(Boolean, default=False)
+    client_story = Column(Boolean, default=False)
+    client_comments = Column(Boolean, default=False)
+
+    # SIDEBAR
+    lead_manage_page = Column(Boolean, default=False)
+    plane_page = Column(Boolean, default=False)
+    attandance_page = Column(Boolean, default=False)
+    client_page = Column(Boolean, default=False)
+    lead_source_page = Column(Boolean, default=False)
+    lead_response_page = Column(Boolean, default=False)
+    user_page = Column(Boolean, default=False)
+    permission_page = Column(Boolean, default=False)
+    lead_upload_page = Column(Boolean, default=False)
+    fetch_limit_page = Column(Boolean, default=False)
+
+
+    add_lead_page = Column(Boolean, default=False)
+    payment_page = Column(Boolean, default=False)
+    messanger_page = Column(Boolean, default=False)
+    template = Column(Boolean, default=False)
+    sms_page = Column(Boolean, default=False)
+    email_page = Column(Boolean, default=False)
+    branch_page = Column(Boolean, default=False)
+    old_lead_page = Column(Boolean, default=False)
+    new_lead_page = Column(Boolean, default=False)
+
+    # MESSANGER
+    rational_download = Column(Boolean, default=False)
+    rational_pdf_model_download = Column(Boolean, default=False)
+    rational_pdf_model_view = Column(Boolean, default=False)
+    rational_graf_model_view = Column(Boolean, default=False)
+    rational_status = Column(Boolean, default=False)
+    rational_edit = Column(Boolean, default=False)
+    rational_add_recommadation = Column(Boolean, default=False)
+
+    # EMAIL
+    email_add_temp = Column(Boolean, default=False)
+    email_view_temp = Column(Boolean, default=False)
+    email_edit_temp = Column(Boolean, default=False)
+    email_delete_temp = Column(Boolean, default=False)
+
+    # SMS
+    sms_add = Column(Boolean, default=False)
+    sms_edit = Column(Boolean, default=False)
+    sms_delete = Column(Boolean, default=False)
+
+    # BRANCH
+    branch_add = Column(Boolean, default=False)
+    branch_edit = Column(Boolean, default=False)
+    branch_details = Column(Boolean, default=False)
+    branch_agreement_view = Column(Boolean, default=False)
+
+    # header 
+    header_global_search = Column(Boolean, default=False)
 
     user            = relationship("UserDetails", back_populates="permission")
 
@@ -287,76 +352,481 @@ class PermissionDetails(Base):
         """Get default permissions based on user role"""
         permissions = {
             UserRoleEnum.SUPERADMIN: {
-                'add_user': True, 'edit_user': True, 'delete_user': True,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': True,
-                'view_users': True, 'view_lead': True, 'view_branch': True,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': True, 'internal_mailing': True, 'chatting': True,
-                'targets': True, 'reports': True, 'fetch_lead': True
+                'lead_recording_view' : True,
+                'lead_recording_upload': True,
+                'lead_story_view' : True,
+                'lead_transfer' : True,
+                'lead_branch_view': True,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True,
+                'edit_lead' : True,
+                'delete_lead'  : True,
+
+                # LEAD RESPONSE
+                'create_new_lead_response'  : True,
+                'edit_response' : True,
+                'delete_response' : True,
+
+                # USER 
+                'user_add_user' : True,
+                'user_all_roles' : True,
+                'user_all_branches' : True,
+                'user_view_user_details' : True,
+                'user_edit_user' : True,
+                'user_delete_user' : True,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : True,
+                'fetch_limit_edit' : True,
+                'fetch_limit_delete' : True,
+
+                # PLANS
+                'plans_create' : True,
+                'edit_plan' : True,
+                'delete_plane' : True,
+
+                # CLIENT
+                'client_select_branch' : True,
+                'client_invoice' : True,
+                'client_story' : True,
+                'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : True,
+                'plane_page' : True,
+                'attandance_page' : True,
+                'client_page' : True,
+                'lead_source_page' : True,
+                'lead_response_page' : True,
+                'user_page' : True,
+                'permission_page' : True,
+                'lead_upload_page' : True,
+                'fetch_limit_page' : True,
+
+                'add_lead_page' : True,
+                'payment_page' : True,
+                'messanger_page' : True,
+                'template' : True,
+                'sms_page' : True,
+                'email_page' : True,
+                'branch_page' : True,
+                'old_lead_page' : True,
+                'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : True,
+                'rational_pdf_model_download' : True,
+                'rational_pdf_model_view' : True,
+                'rational_graf_model_view' : True,
+                'rational_status' : True,
+                'rational_edit' : True,
+                'rational_add_recommadation' : True,
+
+                # EMAIL
+                'email_add_temp' : True,
+                'email_edit_temp' : True,
+                'email_delete_temp' : True,
+                'email_view_temp' : True,
+
+                # SMS
+                'sms_add' : True,
+                'sms_edit' : True,
+                'sms_delete' : True,
+
+                # BRANCH
+                'branch_add' : True,
+                'branch_edit' : True,
+                'branch_details' : True,
+                'branch_agreement_view' : True
+
             },
             UserRoleEnum.BRANCH_MANAGER: {
-                'add_user': True, 'edit_user': True, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': True,
-                'view_users': True, 'view_lead': True, 'view_branch': True,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': True, 'internal_mailing': True, 'chatting': True,
-                'targets': True, 'reports': True, 'fetch_lead': True
+                # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+                
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : True, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : True, 'user_edit_user' : True, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : True, 'fetch_limit_edit' : True, 'fetch_limit_delete' : True,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : True, 'client_story' : True, 'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : True, 'plane_page' : True, 'attandance_page' : True,
+                'client_page' : True, 'lead_source_page' : True, 'lead_response_page' : True,
+                'user_page' : True, 'permission_page' : False, 'lead_upload_page' : True, 'fetch_limit_page' : False,
+
+                'add_lead_page' : True, 'payment_page' : True, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             },
             UserRoleEnum.SALES_MANAGER: {
-                'add_user': False, 'edit_user': False, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
-                'view_users': True, 'view_lead': True, 'view_branch': False,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': False, 'internal_mailing': True, 'chatting': True,
-                'targets': True, 'reports': True, 'fetch_lead': True
+                # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : True, 'client_story' : True, 'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : True, 'attandance_page' : False,
+                'client_page' : True, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             },
             UserRoleEnum.HR: {
-                'add_user': True, 'edit_user': True, 'delete_user': False,
-                'add_lead': False, 'edit_lead': False, 'delete_lead': False,
-                'view_users': True, 'view_lead': False, 'view_branch': True,
-                'view_accounts': False, 'view_research': False, 'view_client': False,
-                'view_payment': False, 'view_invoice': False, 'view_kyc': False,
-                'approval': False, 'internal_mailing': True, 'chatting': True,
-                'targets': False, 'reports': True, 'fetch_lead': False
+                # LEAD/[id]
+                'lead_recording_view' : False, 'lead_recording_upload': False,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : True, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : True, 'user_edit_user' : True, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : False, 'client_story' : False, 'client_comments' : False,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : False, 'attandance_page' : True,
+                'client_page' : False, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : True, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             },
             UserRoleEnum.TL: {
-                'add_user': False, 'edit_user': False, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
-                'view_users': True, 'view_lead': True, 'view_branch': False,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': False, 'internal_mailing': True, 'chatting': True,
-                'targets': True, 'reports': True, 'fetch_lead': True
+                 # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : True, 'client_story' : True, 'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : True, 'attandance_page' : False,
+                'client_page' : True, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             },
             UserRoleEnum.SBA: {
-                'add_user': False, 'edit_user': False, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
-                'view_users': False, 'view_lead': True, 'view_branch': False,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': False, 'internal_mailing': False, 'chatting': True,
-                'targets': False, 'reports': False, 'fetch_lead': True
-            },
+                 # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : True, 'client_story' : True, 'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : True, 'attandance_page' : False,
+                'client_page' : True, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
+                },
             UserRoleEnum.BA: {
-                'add_user': False, 'edit_user': False, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
-                'view_users': False, 'view_lead': True, 'view_branch': False,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': False, 'internal_mailing': False, 'chatting': True,
-                'targets': False, 'reports': False, 'fetch_lead': True
+                 # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': False,
+                'lead_story_view' : True, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': True,
+
+                # LEAD SOURCE
+                'create_lead' : True, 'edit_lead' : True, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : True, 'client_story' : True, 'client_comments' : True,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : True, 'attandance_page' : False,
+                'client_page' : True, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : True, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : True, 'new_lead_page' : True,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             },
             UserRoleEnum.RESEARCHER: {
-                'add_user': False, 'edit_user': False, 'delete_user': False,
-                'add_lead': True, 'edit_lead': True, 'delete_lead': False,
-                'view_users': False, 'view_lead': True, 'view_branch': False,
-                'view_accounts': True, 'view_research': True, 'view_client': True,
-                'view_payment': True, 'view_invoice': True, 'view_kyc': True,
-                'approval': False, 'internal_mailing': False, 'chatting': True,
-                'targets': False, 'reports': False, 'fetch_lead': True
+                # LEAD/[id]
+                'lead_recording_view' : False, 'lead_recording_upload': False,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': False,
+
+                # LEAD SOURCE
+                'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : False, 'client_story' : False, 'client_comments' : False,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : False, 'attandance_page' : False,
+                'client_page' : False, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : True, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : True, 'rational_status' : True, 'rational_edit' : True, 'rational_add_recommadation' : True,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
+            },
+            UserRoleEnum.COMPLIANCE: {
+                # LEAD/[id]
+                'lead_recording_view' : True, 'lead_recording_upload': True,
+                'lead_story_view' : False, 'lead_transfer' : False, 'lead_branch_view': False,
+
+                # header 
+                'header_global_search': False,
+
+                # LEAD SOURCE
+                'create_lead' : False, 'edit_lead' : False, 'delete_lead'  : False,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' : False, 'edit_response' : False, 'delete_response' : False,
+
+                # USER 
+                'user_add_user' : False, 'user_all_roles' : False, 'user_all_branches' : False,
+                'user_view_user_details' : False, 'user_edit_user' : False, 'user_delete_user' : False,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' : False, 'fetch_limit_edit' : False, 'fetch_limit_delete' : False,
+
+                # PLANS
+                'plans_create' : False, 'edit_plan' : False, 'delete_plane' : False,
+
+                # CLIENT
+                'client_select_branch' : False, 'client_invoice' : False, 'client_story' : False, 'client_comments' : False,
+
+                # SIDEBAR
+                'lead_manage_page' : False, 'plane_page' : False, 'attandance_page' : False,
+                'client_page' : False, 'lead_source_page' : False, 'lead_response_page' : False,
+                'user_page' : False, 'permission_page' : False, 'lead_upload_page' : False, 'fetch_limit_page' : False,
+
+                'add_lead_page' : False, 'payment_page' : False, 'messanger_page' : False, 'template' : False,
+                'sms_page' : False, 'email_page' : False, 'branch_page' : False, 'old_lead_page' : False, 'new_lead_page' : False,
+
+                # MESSANGER
+                'rational_download' : False, 'rational_pdf_model_download' : False, 'rational_pdf_model_view' : False,
+                'rational_graf_model_view' : False, 'rational_status' : False, 'rational_edit' : False, 'rational_add_recommadation' : False,
+
+                # EMAIL
+                'email_add_temp' : False, 'email_edit_temp' : False, 'email_delete_temp' : False, 'email_view_temp' : False,
+
+                # SMS
+                'sms_add' : False, 'sms_edit' : False, 'sms_delete' : False,
+
+                # BRANCH
+                'branch_add' : False, 'branch_edit' : False, 'branch_details' : False, 'branch_agreement_view' : False
             }
         }
         return permissions.get(role, {})
@@ -404,6 +874,7 @@ class LeadSource(Base):
     name        = Column(String(100), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=True)
     created_by  = Column(String(100), nullable=True)
+    branch_id   = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
 
     leads       = relationship("Lead", back_populates="lead_source")
 
@@ -455,7 +926,7 @@ class Lead(Base):
     alternate_mobile  = Column(String(20), nullable=True)
     aadhaar           = Column(String(12), nullable=True)
     pan               = Column(String(10), nullable=True)
-    gstin             = Column(String(15), nullable=True)
+    gstin             = Column(String(15), nullable=True, default="URP")
 
     state             = Column(String(100), nullable=True)
     city              = Column(String(100), nullable=True)
@@ -467,6 +938,7 @@ class Lead(Base):
     dob               = Column(Date, nullable=True)
     occupation        = Column(String(100), nullable=True)
     segment           = Column(Text, nullable=True)  # Store as JSON string
+    ft_service_type   = Column(String(50), nullable=True) #call or sms
     experience        = Column(String(50), nullable=True)
     investment        = Column(String(50), nullable=True)
 
@@ -486,7 +958,6 @@ class Lead(Base):
     is_old_lead       = Column(Boolean, default=False, nullable=True)
     call_back_date    = Column(DateTime, nullable=True)
     lead_status       = Column(String(50), nullable=True)
-    profile           = Column(String(50), nullable=True)
     is_delete         = Column(Boolean, default=False, nullable=True)
     ft_to_date        = Column(String(50), nullable=True)
     ft_from_date      = Column(String(50), nullable=True)
@@ -508,37 +979,7 @@ class Lead(Base):
     lead_response     = relationship("LeadResponse", back_populates="leads")
     assignment        = relationship("LeadAssignment", back_populates="lead", uselist=False)
     recordings = relationship("LeadRecording", back_populates="lead", cascade="all, delete-orphan")
-    invoices = relationship("Invoice", back_populates="lead", cascade="all, delete-orphan")
     assigned_user = relationship("UserDetails", foreign_keys=[assigned_to_user])
-
-class Invoice(Base):
-    __tablename__ = "crm_invoice"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-
-    # ← NEW: a unique, non‑nullable invoice number
-    invoice_no = Column(
-        String(50),
-        unique=True,
-        nullable=False,
-    )
-
-    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
-    employee_code = Column(
-        String(100),
-        ForeignKey("crm_user_details.employee_code"),
-        nullable=True
-    )
-    path = Column(String(255), nullable=False)
-    order_id = Column(String(100), nullable=True)
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False
-    )
-
-    lead     = relationship("Lead", back_populates="invoices")
-    employee = relationship("UserDetails", backref="invoices")
 
 class Payment(Base):
     __tablename__ = "crm_payment"
@@ -561,7 +1002,8 @@ class Payment(Base):
     status           = Column(String(50), nullable=True)
     mode             = Column(String(50), nullable=False)
     is_send_invoice  = Column(Boolean, nullable=False, default=False)
-    invoice          = Column(Boolean, nullable=False, default=False)
+    invoice          = Column(String(255), nullable=True)
+    invoice_no       = Column(String(300), nullable=True)
     description      = Column(Text, nullable=True)
     transaction_id   = Column(String(100), nullable=True)
     user_id          = Column(String(50), nullable=True)
@@ -583,6 +1025,40 @@ class Payment(Base):
     lead_id          = Column(Integer, ForeignKey("crm_lead.id"), nullable=True)
     lead             = relationship("Lead", back_populates="payments")
 
+
+class ServiceDispatchHistory(Base):
+    __tablename__ = "crm_service_dispatch_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, index=True)
+    recommendation_id = Column(Integer, ForeignKey("crm_narration.id"), nullable=True, index=True)
+    payment_id = Column(Integer, ForeignKey("crm_payment.id"), nullable=True, index=True)
+
+    service_name = Column(String(150), nullable=False, index=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    lead = relationship("Lead", backref="dispatch_histories")
+    recommendation = relationship("NARRATION", backref="dispatch_histories")
+    payment = relationship("Payment", backref="dispatch_histories")
+    platform_statuses = relationship("ServiceDispatchPlatformStatus", back_populates="dispatch_history", cascade="all, delete-orphan")
+
+
+class ServiceDispatchPlatformStatus(Base):
+    __tablename__ = "crm_service_dispatch_platform_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    history_id = Column(Integer, ForeignKey("crm_service_dispatch_history.id"), nullable=False)
+
+    platform = Column(String(30), nullable=False)  # SMS, WHATSAPP, CALL, EMAIL, APPLICATION
+    platform_identifier = Column(String(100), nullable=True)  # Twilio ID, WhatsApp Msg ID, etc.
+    status = Column(String(30), nullable=False, default="PENDING")  # SENT / FAILED / etc.
+    delivered_at = Column(String(100), nullable=True)
+
+    dispatch_history = relationship("ServiceDispatchHistory", back_populates="platform_statuses")
 
 class LeadRecording(Base):
     __tablename__ = "crm_lead_recordings"
@@ -738,7 +1214,7 @@ class EmailTemplate(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True, index=True)
-    template_type = Column(SAEnum(TemplateTypeEnum), nullable=False)
+    template_type = Column(ARRAY(String), nullable=False)
     subject = Column(String(200), nullable=False)
     body = Column(Text, nullable=False)
 

@@ -1,35 +1,5 @@
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
-
-# Pydantic Schemas
-class PermissionBase(BaseModel):
-    add_user: bool = False
-    edit_user: bool = False
-    delete_user: bool = False
-    add_lead: bool = False
-    edit_lead: bool = False
-    delete_lead: bool = False
-    view_users: bool = False
-    view_lead: bool = False
-    view_branch: bool = False
-    view_accounts: bool = False
-    view_research: bool = False
-    view_client: bool = False
-    view_payment: bool = False
-    view_invoice: bool = False
-    view_kyc: bool = False
-    approval: bool = False
-    internal_mailing: bool = False
-    chatting: bool = False
-    targets: bool = False
-    reports: bool = False
-    fetch_lead: bool = False
-
-
-class PermissionCreate(PermissionBase):
-    user_id: str
-
-
 class PermissionUpdate(BaseModel):
     add_user: Optional[bool] = None
     edit_user: Optional[bool] = None
@@ -53,26 +23,36 @@ class PermissionUpdate(BaseModel):
     reports: Optional[bool] = None
     fetch_lead: Optional[bool] = None
 
-
-class UserSchema(BaseModel):
-    name: str
-    role: str
-    email: str
-    phone_number: str
-
-    class Config:
-        # if you’re on Pydantic v1:
-        from_attributes = True
+    manage_add_lead      : Optional[bool] = None
+    manage_source_lead      : Optional[bool] = None
+    manage_response_lead      : Optional[bool] = None
+    manage_fetch_limit      : Optional[bool] = None
+    manage_bulk_upload      : Optional[bool] = None
 
 
-class PermissionOut(PermissionBase):
-    id: int
-    user_id: str
-    user: Optional[UserSchema] = None
-    
-    class Config:
-        from_attributes = True
+    # Lead[id] :- 
+    lead_recording_view      : Optional[bool] = None
+    lead_recording_upload      : Optional[bool] = None
+    lead_transfer      : Optional[bool] = None
+
+    # Users :-
+    user_add      : Optional[bool] = None
+    user_branch_filter      : Optional[bool] = None
 
 
-class BulkPermissionUpdate(BaseModel):
-    permissions: Dict[str, bool]  # permission_name: boolean_value
+    # Rational :-
+    rational_export_pdf      : Optional[bool] = None
+    rational_export_xls      : Optional[bool] = None
+    rational_add_rational      : Optional[bool] = None
+
+
+    # Services :-
+    service_create      : Optional[bool] = None
+    service_edit      : Optional[bool] = None
+    service_delete      : Optional[bool] = None
+
+    # Email :-
+    email_add_temp  : Optional[bool] = None
+    email_view_temp : Optional[bool] = None
+    email_edit_temp : Optional[bool] = None
+    email_delete_temp : Optional[bool] = None

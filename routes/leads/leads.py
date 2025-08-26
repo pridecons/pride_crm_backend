@@ -10,13 +10,19 @@ from pydantic import BaseModel, constr, validator
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
+    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig, UserRoleEnum
 )
 from utils.AddLeadStory import AddLeadStory
 from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
+
+from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
+
+
+
+
 
 
 router = APIRouter(
@@ -58,7 +64,7 @@ class LeadBase(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -111,7 +117,7 @@ class LeadUpdate(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -165,7 +171,7 @@ class LeadOut(BaseModel):
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
-    profile: Optional[str] = None
+    ft_service_type: Optional[str] = None
     
     # Lead Management
     lead_response_id: Optional[int] = None
@@ -247,27 +253,17 @@ def save_uploaded_file(file: UploadFile, lead_id: int, file_type: str) -> str:
     return f"/{UPLOAD_DIR}/{filename}"
 
 
-def prepare_lead_data_for_db(lead_data: dict) -> dict:
+def prepare_lead_data_for_db(data: dict) -> dict:
     """Prepare lead data for database insertion"""
-    prepared_data = lead_data.copy()
+    # Convert segments to JSON string if it's a list
+    if 'segment' in data and isinstance(data['segment'], list):
+        data['segment'] = json.dumps(data['segment'])
     
-    # Handle segment field - always convert to JSON string
-    if 'segment' in prepared_data and prepared_data['segment'] is not None:
-        if isinstance(prepared_data['segment'], list):
-            prepared_data['segment'] = json.dumps(prepared_data['segment'])
-        elif isinstance(prepared_data['segment'], str):
-            try:
-                parsed = json.loads(prepared_data['segment'])
-                if not isinstance(parsed, list):
-                    parsed = [parsed]
-                prepared_data['segment'] = json.dumps(parsed)
-            except json.JSONDecodeError:
-                prepared_data['segment'] = json.dumps([prepared_data['segment']])
-        else:
-            prepared_data['segment'] = json.dumps([str(prepared_data['segment'])])
-
+    # Convert PAN to uppercase if provided
+    if 'pan' in data and data['pan']:
+        data['pan'] = data['pan'].upper()
     
-    return prepared_data
+    return data
 
 
 def safe_convert_lead_to_dict(lead) -> dict:
@@ -318,7 +314,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "occupation": getattr(lead, 'occupation', None),
             "experience": getattr(lead, 'experience', None),
             "investment": getattr(lead, 'investment', None),
-            "profile": getattr(lead, 'profile', None),
+            "ft_service_type": getattr(lead, 'ft_service_type', None),
             "created_at": getattr(lead, 'created_at', datetime.now()),
             "lead_status": getattr(lead, 'lead_status', None),
             "kyc": getattr(lead, 'kyc', False),
@@ -335,6 +331,7 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "is_old_lead": getattr(lead, 'is_old_lead', False),
             "call_back_date": getattr(lead, 'call_back_date', None),
         }
+
 
 
 # API Endpoints
@@ -388,6 +385,7 @@ def create_lead(
         
         # Prepare data for database
         lead_data = prepare_lead_data_for_db(lead_in.dict(exclude_none=True))
+        validate_lead_data(db, lead_data)
         if is_old:
            lead_data["is_old_lead"] = True
         
@@ -440,68 +438,116 @@ def create_lead(
 
 @router.get("/", response_model=List[LeadOut])
 def get_all_leads(
-    skip: int = 0,
-    limit: int = 100,
-    branch_id: Optional[int] = None,
-    lead_status: Optional[str] = None,
-    lead_source_id: Optional[int] = None,
-    created_by: Optional[str] = None,
-    kyc_only: bool = False,
-    gender: Optional[str] = None,
-    city: Optional[str] = None,
-    state: Optional[str] = None,
+    # Pagination
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, gt=0, description="Max number of records to return"),
+
+    # Existing filters
+    branch_id:      Optional[int]  = Query(None),
+    lead_status:    Optional[str]  = Query(None, description="old, new, client"), # old, new, client
+    lead_source_id: Optional[int]  = Query(None),
+    created_by:     Optional[str]  = Query(None),
+    kyc_only:       bool           = Query(False, description="Only leads with kyc=True"),
+    gender:         Optional[str]  = Query(None),
+    city:           Optional[str]  = Query(None),
+    state:          Optional[str]  = Query(None),
+
+    # New filters
+    from_date:           Optional[date]          = Query(None, description="created_at ≥ this date (YYYY-MM-DD)"),
+    to_date:             Optional[date]          = Query(None, description="created_at ≤ this date (YYYY-MM-DD)"),
+    search:              Optional[str]           = Query(None, description="global search on name/email/mobile"),
+    response_id:         Optional[int]           = Query(None, description="Filter by lead_response_id"),
+    assigned_to_user:    Optional[str]           = Query(None, description="Filter by assigned_to_user"),
+    assigned_roles:      Optional[List[UserRoleEnum]] = Query(
+                             None,
+                             description="Filter by role(s) of assigned_to_user; e.g. ['TL','BA']"
+                         ),
+
     db: Session = Depends(get_db),
 ):
-    """Get all leads with filtering options"""
+    """Get all leads with extended filtering options."""
     try:
         query = db.query(Lead)
-        
+
+        # core filters
+        query = query.filter(Lead.is_delete == False)
         if branch_id:
             query = query.filter(Lead.branch_id == branch_id)
+
+        if lead_status=="client":
+            query = query.filter(Lead.is_client == True)
+
+        if lead_status=="old":
+            query = query.filter(Lead.is_old_lead == True, Lead.is_client == False)
         
-        if lead_status:
-            query = query.filter(Lead.lead_status == lead_status)
-        
+        if lead_status=="new":
+            query = query.filter(Lead.is_old_lead == False, Lead.is_client == False)
+
+
         if lead_source_id:
             query = query.filter(Lead.lead_source_id == lead_source_id)
-        
         if created_by:
             query = query.filter(Lead.created_by == created_by)
-        
         if kyc_only:
-            query = query.filter(Lead.kyc == True)
-        
+            query = query.filter(Lead.kyc.is_(True))
         if gender:
             query = query.filter(Lead.gender == gender)
-        
         if city:
             query = query.filter(Lead.city.ilike(f"%{city}%"))
-        
         if state:
             query = query.filter(Lead.state.ilike(f"%{state}%"))
 
-        query = query.filter(Lead.is_delete == False)
-        
-        leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
-        
-        # Convert to list with proper error handling
+        # date range
+        if from_date:
+            query = query.filter(Lead.created_at.cast(date) >= from_date)
+        if to_date:
+            query = query.filter(Lead.created_at.cast(date) <= to_date)
+
+        # global search
+        if search:
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Lead.full_name.ilike(term),
+                    Lead.email.ilike(term),
+                    Lead.mobile.ilike(term)
+                )
+            )
+
+        # response-wise
+        if response_id is not None:
+            query = query.filter(Lead.lead_response_id == response_id)
+
+        # employee-wise
+        if assigned_to_user:
+            query = query.filter(Lead.assigned_to_user == assigned_to_user)
+
+        # role-wise (join to UserDetails)
+        if assigned_roles:
+            query = query.join(
+                UserDetails,
+                Lead.assigned_to_user == UserDetails.employee_code
+            ).filter(
+                UserDetails.role.in_(assigned_roles)
+            )
+
+        # pagination & ordering
+        leads = (
+            query
+            .order_by(Lead.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        # convert to Pydantic
         result = []
         for lead in leads:
-            try:
-                lead_dict = safe_convert_lead_to_dict(lead)
-                lead_out = LeadOut(**lead_dict)
-                result.append(lead_out)
-            except Exception as e:
-                print(f"Failed to convert lead {lead.id}: {str(e)}")
-                continue
-        
+            lead_dict = safe_convert_lead_to_dict(lead)
+            result.append(LeadOut(**lead_dict))
+
         return result
-        
-    except (OperationalError, DisconnectionError):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection lost. Please try again."
-        )
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -559,7 +605,7 @@ def update_lead(
         update_data = prepare_lead_data_for_db(lead_in.dict(exclude_unset=True))
         
         # Validate references if being updated
-        if "lead_source_id" in update_data:
+        if update_data['lead_source_id']:
             lead_source = db.query(LeadSource).filter_by(id=update_data["lead_source_id"]).first()
             if not lead_source:
                 raise HTTPException(
@@ -567,7 +613,7 @@ def update_lead(
                     detail=f"Lead source with ID {update_data['lead_source_id']} not found"
                 )
         is_old = False
-        if "lead_response_id" in update_data:
+        if update_data['lead_response_id']:
             lead_response = db.query(LeadResponse).filter_by(id=update_data["lead_response_id"]).first()
             is_old = True
             if not lead_response:
@@ -598,6 +644,9 @@ def update_lead(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Another lead with this mobile already exists"
                 )
+            
+        validate_lead_data(db, update_data, exclude_lead_id=lead_id)
+
         
         # Apply updates
         for field, value in update_data.items():
@@ -980,6 +1029,8 @@ class ChangeResponse(BaseModel):
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
     call_back_date: Optional[datetime] = None
+    segment: Optional[str] = None
+    ft_service_type: Optional[str] = None
 
 from datetime import datetime, timedelta, timezone
 
@@ -1013,6 +1064,7 @@ async def change_lead_response(
     if old_response_id:
         old_resp = db.query(LeadResponse).filter_by(id=old_response_id).first()
         old_response_name = old_resp.name if old_resp else "Unknown"
+        
 
     # 3) Response change + retention logic
     timeout_days = None
@@ -1089,6 +1141,10 @@ async def change_lead_response(
         lead.ft_to_date = payload.ft_to_date
     if payload.ft_from_date:
         lead.ft_from_date = payload.ft_from_date
+    if payload.segment:
+        lead.segment = payload.segment
+    if payload.ft_service_type:
+        lead.ft_service_type = payload.ft_service_type
 
     # 6) Commit changes
     db.commit()

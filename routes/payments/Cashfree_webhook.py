@@ -138,7 +138,14 @@ async def payment_webhook(
         raise HTTPException(500, "DB update error")
 
     # 7) Build auxiliary payloads
-    notify_msg = f"Order {order_id} status updated to {new_status}"
+    notify_msg = (
+        "<div style='font-family:Arial,sans-serif; line-height:1.5;'>"
+        f"  <p><strong>Lead:</strong> {payment.name} ({payment.phone_number})</p>"
+        f"  <p><strong>Status:</strong> {new_status}</p>"
+        f"  <p><strong>Amount:</strong> ₹{float(payment.paid_amount or 0):,.2f}</p>"
+        "</div>"
+    )
+
     story_msg = f"Payment for order {order_id} updated to {new_status}"
     invoice_payload = {
         "order_id": payment.order_id,
@@ -150,7 +157,7 @@ async def payment_webhook(
         "email": payment.email,
         "name": payment.name,
         "mode": payment.mode,
-        "employee_code": payment.user_id,
+        "employee_code": payment.user_id
     }
 
     # 8) Schedule background tasks (use actual lead.id if available)
@@ -161,6 +168,11 @@ async def payment_webhook(
         payment.user_id,
         story_msg,
     )
-    background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
+
+    if lead.kyc:
+        background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
 
     return {"message": "processed", "new_status": new_status}
+
+
+

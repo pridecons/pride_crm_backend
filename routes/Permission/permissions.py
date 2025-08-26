@@ -6,7 +6,7 @@ from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
 from db.models import PermissionDetails, UserDetails, UserRoleEnum
-from db.Schema.permissions import PermissionBase, PermissionCreate, PermissionUpdate, PermissionOut, BulkPermissionUpdate
+from db.Schema.permissions import PermissionUpdate
 
 router = APIRouter(
     prefix="/permissions",
@@ -16,7 +16,7 @@ router = APIRouter(
 
 # API Endpoints
 
-@router.get("/", response_model=list[PermissionOut])
+@router.get("/")
 def get_all_permissions(
     skip: int = 0,
     limit: int = 100,
@@ -38,7 +38,7 @@ def get_all_permissions(
         )
 
 
-@router.get("/user/{employee_code}", response_model=PermissionOut)
+@router.get("/user/{employee_code}")
 def get_user_permissions(
     employee_code: str,
     db: Session = Depends(get_db),
@@ -66,7 +66,7 @@ def get_user_permissions(
         )
 
 
-@router.put("/user/{employee_code}", response_model=PermissionOut)
+@router.put("/user/{employee_code}")
 def update_user_permissions(
     employee_code: str,
     permission_in: PermissionUpdate,
@@ -117,10 +117,49 @@ def toggle_single_permission(
     try:
         # Validate permission name
         valid_permissions = {
-            'add_user', 'edit_user', 'delete_user', 'add_lead', 'edit_lead', 'delete_lead',
-            'view_users', 'view_lead', 'view_branch', 'view_accounts', 'view_research',
-            'view_client', 'view_payment', 'view_invoice', 'view_kyc', 'approval',
-            'internal_mailing', 'chatting', 'targets', 'reports', 'fetch_lead'
+             # LEAD/[id]
+                'lead_recording_view' , 'lead_recording_upload',
+                'lead_story_view' , 'lead_transfer' ,"lead_branch_view"
+
+                # LEAD SOURCE
+                'create_lead' , 'edit_lead' , 'delete_lead'  ,
+
+                # LEAD RESPONSE
+                'create_new_lead_response' , 'edit_response' , 'delete_response' ,
+
+                # USER 
+                'user_add_user' , 'user_all_roles' , 'user_all_branches' ,
+                'user_view_user_details' , 'user_edit_user' , 'user_delete_user' ,
+
+                # FETCH LIMIT
+                'fetch_limit_create_new' , 'fetch_limit_edit' , 'fetch_limit_delete' ,
+
+                # PLANS
+                'plans_create' , 'edit_plan' , 'delete_plane' ,
+
+                # CLIENT
+                'client_select_branch' , 'client_invoice' , 'client_story' , 'client_comments' ,
+
+                # SIDEBAR
+                'lead_manage_page' , 'plane_page' , 'attandance_page' ,
+                'client_page' , 'lead_source_page' , 'lead_response_page' ,
+                'user_page' , 'permission_page' , 'lead_upload_page' , 'fetch_limit_page' ,
+
+                'add_lead_page' , 'payment_page' , 'messanger_page' , 'template' ,
+                'sms_page' , 'email_page' , 'branch_page' , 'old_lead_page' , 'new_lead_page' ,
+
+                # MESSANGER
+                'rational_download' , 'rational_pdf_model_download' , 'rational_pdf_model_view' ,
+                'rational_graf_model_view' , 'rational_status' , 'rational_edit' , 'rational_add_recommadation' ,
+
+                # EMAIL
+                'email_add_temp' , 'email_view_temp' , 'email_edit_temp' , 'email_delete_temp' ,
+
+                # SMS
+                'sms_add' , 'sms_edit' , 'sms_delete' ,
+
+                # BRANCH
+                'branch_add' , 'branch_edit' , 'branch_details' , 'branch_agreement_view'
         }
 
         if permission_name not in valid_permissions:

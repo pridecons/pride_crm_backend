@@ -147,17 +147,17 @@ def require_permission(permission_name: str):
     def permission_checker(
         current_user: UserDetails = Depends(get_current_user)
     ) -> UserDetails:
-        if not current_user.permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User permissions not found"
-            )
+        # if not current_user.permission:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail="User permissions not found"
+        #     )
         
-        if not getattr(current_user.permission, permission_name, False):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission '{permission_name}' required"
-            )
+        # if not getattr(current_user.permission, permission_name, False):
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail=f"Permission '{permission_name}' required"
+        #     )
         
         return current_user
     

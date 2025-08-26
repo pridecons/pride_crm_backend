@@ -27,6 +27,7 @@ from db.connection import SessionLocal
 from typing import Literal
 from typing import Union
 from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError,  StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
+from services.service_manager import distribution_rational
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
@@ -112,6 +113,8 @@ async def create_recommendation(
     stock_name: Optional[str]            = Form(None),
     recommendation_type: Optional[Union[List[str], str]] = Form(None),
     graph: UploadFile                    = File(None),
+    templateId: Optional[int]            = Form(None),
+    message: Optional[str]            = Form(None),
     db: Session                          = Depends(get_db),
     current_user                        = Depends(get_current_user),
 ):
@@ -146,6 +149,7 @@ async def create_recommendation(
                 # Generate safe filename
                 timestamp = int(time.time())
                 safe_filename = f"{current_user.employee_code}_{timestamp}_{graph.filename}"
+                # safe_filename = f"Admin001_{timestamp}_{graph.filename}"
                 file_path = Path(UPLOAD_DIR) / safe_filename
                 
                 # Save file
@@ -195,6 +199,8 @@ async def create_recommendation(
             db.commit()
             db.refresh(recommendation)
             logger.info(f"Recommendation created successfully with ID: {recommendation.id}")
+
+            
             
         except IntegrityError as e:
             db.rollback()
@@ -210,6 +216,14 @@ async def create_recommendation(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Database error occurred while creating recommendation"
             )
+        
+        background_tasks.add_task(
+            distribution_rational,
+            recommendation.id,
+            templateId,
+            message,
+        )
+
 
         # Generate PDF if rationale provided
         if rational and rational.strip():
