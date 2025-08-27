@@ -29,20 +29,18 @@ class OTP(Base):
 
 class Department(Base):
     __tablename__ = "crm_departments"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)  # ACCOUNTING, HR, SALES_TEAM, ADMIN
+    name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
-    
-    # Available permissions for this department (from PermissionDetails)
     available_permissions = Column(ARRAY(String), nullable=True, default=[])
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     # Relationships
-    profiles = relationship("ProfileRole", back_populates="department")
+    profiles = relationship("ProfileRole", back_populates="department", cascade="all, delete-orphan")
     users = relationship("UserDetails", back_populates="department")
 
     @classmethod
@@ -86,30 +84,18 @@ class Department(Base):
 
 class ProfileRole(Base):
     __tablename__ = "crm_profile_roles"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)  # SUPERADMIN, COMPLIANCE, etc.
-    department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=False)
-    
-    # Hierarchy
+    name = Column(String(100), nullable=False, unique=True, index=True)
+
+    department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=False, index=True)
     hierarchy_level = Column(Integer, nullable=False)
-    
-    # Default permissions for this profile (subset of department permissions)
     default_permissions = Column(ARRAY(String), nullable=True, default=[])
-    
-    # Description
     description = Column(Text, nullable=True)
-    
-    # Status
     is_active = Column(Boolean, default=True)
-    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
     department = relationship("Department", back_populates="profiles")
-    parent_profile = relationship("ProfileRole", remote_side=[id], backref="child_profiles")
-    users = relationship("UserDetails", back_populates="profile_role")
 
 
     @classmethod
@@ -244,6 +230,7 @@ class UserDetails(Base):
                          nullable=False
                        )
     role = relationship("ProfileRole", back_populates="users")  # c
+    department = relationship("Department", back_populates="users")
 
     # Relationships with explicit foreign_keys
     branch            = relationship(
