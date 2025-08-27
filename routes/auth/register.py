@@ -128,15 +128,6 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
         
-        # Create default permissions based on role_id
-        default_perms = PermissionDetails.get_default_permissions(user_in.role_id)
-        permission = PermissionDetails(
-            user_id=user.employee_code,
-            **default_perms
-        )
-        db.add(permission)
-        db.commit()
-        
         return serialize_user(user)
     except Exception as e:
         db.rollback()

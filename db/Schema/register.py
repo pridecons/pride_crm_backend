@@ -48,7 +48,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: constr(min_length=6)
-    role_id: str
+    role_id: str = 0
     branch_id: Optional[int] = None
 
 
@@ -100,7 +100,7 @@ class UserUpdate(BaseModel):
 # Simple response model without complex relationships
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     employee_code: str
     phone_number: str
     email: str
