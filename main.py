@@ -22,7 +22,7 @@ from scheduler import lead_scheduler
 from routes.auth.auth_dependency import get_current_user
 from routes.Permission import permissions
 from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, clients, lead_analytics, old_leads_fetch
-from routes.auth.create_admin import create_admin
+# from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree, Cashfree_webhook
 from routes.Pan_verification import PanVerification
@@ -34,31 +34,59 @@ from routes.notification import notifiaction_websocket, send_notification
 from routes.Send_client_message import Client_mail_service, sms_templates
 from routes.notification.notification_scheduler import start_scheduler
 from routes.payments import Get_Invoice, payment
+from db.complete_initialization import setup_complete_system
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
     # Startup
     logger.info("🚀 Starting CRM Backend...")
     
     try:
-        # Start lead cleanup scheduler
         lead_scheduler.start()
-        logger.info("✅ Lead cleanup scheduler started")
-        logger.info("📅 Scheduled cleanup: Daily at 2:00 AM UTC")
-        logger.info("📅 Scheduled old lead marking: Weekly Sunday at 3:00 AM UTC")
+        # Initialize FastAPI Cache
+        FastAPICache.init(
+            backend=InMemoryBackend(),
+            prefix="fastapi-cache"
+        )
+        logger.info("✅ Cache initialized")
+        
+        # Check database connection
+        if not check_database_connection():
+            logger.error("❌ Database connection failed!")
+            raise Exception("Database connection failed")
+        logger.info("✅ Database connection verified")
+        
+        # Create database tables
+        models.Base.metadata.create_all(engine)
+        logger.info("✅ Database tables created/verified")
+        
+        # SINGLE FUNCTION CALL - This will create everything
+        if setup_complete_system():
+            logger.info("✅ Complete system setup successful!")
+        else:
+            logger.error("❌ System setup failed!")
+        
+        # Create static directories
+        os.makedirs("static/agreements", exist_ok=True)
+        os.makedirs("static/lead_documents", exist_ok=True)
+        logger.info("✅ Static directories created")
+        
+        logger.info("🎉 Application startup completed successfully!")
         
     except Exception as e:
-        logger.error(f"❌ Startup failed: {e}")
-        raise
+        logger.error(f"❌ Application startup failed: {str(e)}")
+        raise e
     
     yield
     
     # Shutdown
-    logger.info("🛑 Shutting down CRM Backend...")
     lead_scheduler.stop()
-    logger.info("✅ Shutdown completed")
+    logger.info("🛑 Shutting down CRM Backend...")
+
+
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(

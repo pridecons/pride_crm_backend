@@ -95,7 +95,16 @@ class ProfileRole(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Existing relationship
     department = relationship("Department", back_populates="profiles")
+    
+    # ADD THIS MISSING RELATIONSHIP:
+    users = relationship(
+        "UserDetails",
+        back_populates="profile_role", 
+        foreign_keys="[UserDetails.role_id]"
+    )
 
 
     @classmethod
@@ -192,7 +201,7 @@ class UserDetails(Base):
     email             = Column(String(100), nullable=False, unique=True, index=True)
     name              = Column(String(100), nullable=False)
     password          = Column(String(255), nullable=False)
-    role_id       = Column(Integer, ForeignKey("crm_profile_roles.id"), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("crm_profile_roles.id"), nullable=False, index=True)
 
     # DO NOT store role_name as a second FK column; derive it read-only instead:
     role_name = column_property(
@@ -230,7 +239,11 @@ class UserDetails(Base):
                          nullable=False
                        )
     department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=True, index=True)
-    role = relationship("ProfileRole", back_populates="users")  # c
+    profile_role = relationship(
+        "ProfileRole", 
+        back_populates="users",
+        foreign_keys=[role_id]
+    )
     department = relationship(
         "Department",
         back_populates="users",
