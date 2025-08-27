@@ -1,4 +1,4 @@
-# routes/auth/login.py - Fixed version with proper password verification
+# routes/auth/login.py - Fixed version for ProfileRole system
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -86,36 +86,41 @@ def login(
                 detail="Account is deactivated. Contact administrator.",
             )
 
-        # Create tokens - use employee_code as user identifier
+        # Create tokens - FIXED: use role_id directly (it's an integer)
         access_token = create_access_token({
-            "sub": user.employee_code,  # Use employee_code instead of phone
-            "role_id": user.role_id.value,
+            "sub": user.employee_code,
+            "role_id": user.role_id,  # REMOVED .value - role_id is already an integer
+            "role_name": user.profile_role.name if user.profile_role else "Unknown",
             "branch_id": user.branch_id
         })
-        refresh_token = create_refresh_token(user.employee_code)  # Use employee_code
+        refresh_token = create_refresh_token(user.employee_code)
 
         # Persist refresh token
         save_refresh_token(db, user.employee_code, refresh_token)
 
-        # Prepare user info
+        # Prepare user info - FIXED: removed .value calls
         user_info = {
             "employee_code": user.employee_code,
             "name": user.name,
             "email": user.email,
             "phone_number": user.phone_number,
-            "role_id": user.role_id.value,
+            "role_id": user.role_id,  # This is already an integer
+            "role_name": user.profile_role.name if user.profile_role else "Unknown",
+            "department_id": user.department_id,
+            "department_name": user.department.name if user.department else None,
             "branch_id": user.branch_id,
-            "is_active": user.is_active,
             "branch_name": user.branch.name if user.branch else None,
-            "permissions": {}
+            "is_active": user.is_active,
+            "permissions": user.profile_role.default_permissions if user.profile_role else []
         }
 
-        # Get user permissions
-        if user.permission:
-            user_info["permissions"] = (
-                {key: getattr(user.permission, key) for key in vars(user.permission) if not key.startswith("_")}
-                if user.permission else {}
-            )
+        # Get legacy permissions if they exist (optional)
+        if hasattr(user, 'permission') and user.permission:
+            user_info["legacy_permissions"] = {
+                key: getattr(user.permission, key) 
+                for key in vars(user.permission) 
+                if not key.startswith("_") and key != "id" and key != "user_id"
+            }
 
         return TokenResponse(
             access_token=access_token,
@@ -131,13 +136,14 @@ def login(
             detail="Database connection lost. Please try again."
         )
     except Exception as e:
+        import traceback
+        print(f"Login error traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
         )
 
 
-# Keep all other endpoints the same...
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(
     body: RefreshTokenRequest,
@@ -182,10 +188,11 @@ def refresh_token(
                 detail="Account is deactivated",
             )
 
-        # Create new tokens
+        # Create new tokens - FIXED: removed .value calls
         access_token = create_access_token({
             "sub": user.employee_code,
-            "role_id": user.role_id.value,
+            "role_id": user.role_id,  # Already an integer
+            "role_name": user.profile_role.name if user.profile_role else "Unknown",
             "branch_id": user.branch_id
         })
         new_refresh_token = create_refresh_token(user_id)
@@ -194,13 +201,14 @@ def refresh_token(
         revoke_refresh_token(db, body.refresh_token)
         save_refresh_token(db, user_id, new_refresh_token)
 
-        # Prepare user info
+        # Prepare user info - FIXED: removed .value calls
         user_info = {
             "employee_code": user.employee_code,
             "name": user.name,
             "email": user.email,
             "phone_number": user.phone_number,
-            "role_id": user.role_id.value,
+            "role_id": user.role_id,  # Already an integer
+            "role_name": user.profile_role.name if user.profile_role else "Unknown",
             "branch_id": user.branch_id,
             "is_active": user.is_active,
         }
@@ -218,5 +226,4 @@ def refresh_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token refresh failed: {str(e)}"
         )
-    
     

@@ -279,7 +279,7 @@ def initialize_complete_system():
                         employee_code="ADMIN001",
                         phone_number="9999999999",
                         email="admin@company.com",
-                        name="Super Administrator",
+                        name="SUPERADMIN",
                         password=hash_password("admin123"),
                         role_id=superadmin_profile.id,
                         department_id=departments["ADMIN"].id,
