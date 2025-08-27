@@ -529,14 +529,6 @@ async def create_branch_with_manager(
         db.add(manager)
         db.flush()
 
-        # Create default permissions for manager
-        default_perms = PermissionDetails.get_default_permissions("BRANCH_MANAGER")
-        permissions = PermissionDetails(
-            user_id=manager.employee_code,
-            **default_perms
-        )
-        db.add(permissions)
-
         # Commit all changes
         db.commit()
         

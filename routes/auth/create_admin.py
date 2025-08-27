@@ -87,13 +87,6 @@ def create_admin():
             db.add(admin_user)
             db.flush()
             
-            # Create permissions
-            admin_permissions = PermissionDetails(
-                user_id="Admin001",
-                **PermissionDetails.get_default_permissions("SUPERADMIN")
-            )
-            
-            db.add(admin_permissions)
             db.commit()
             
             print("🎉 ADMIN USER CREATED SUCCESSFULLY!")
