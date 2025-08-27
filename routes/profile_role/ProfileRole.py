@@ -41,7 +41,7 @@ class DepartmentOut(DepartmentBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # ProfileRole
@@ -70,7 +70,7 @@ class ProfileRoleOut(ProfileRoleBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # -----------------------------------------------------------------------------
