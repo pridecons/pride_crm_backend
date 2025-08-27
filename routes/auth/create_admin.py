@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from db.connection import get_db, engine
-    from db.models import UserDetails, PermissionDetails, Base
+    from db.models import UserDetails, PermissionDetails, ProfileRole, Base
     from passlib.context import CryptContext
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -51,8 +51,18 @@ def create_admin():
                 print("ℹ️  Admin user already exists!")
                 print(f"   Employee Code: {existing_admin.employee_code}")
                 print(f"   Email: {existing_admin.email}")
-                print(f"   Role: {existing_admin.role_id}")
+                print(f"   Role: {existing_admin.role_name if hasattr(existing_admin, 'role_name') else 'Unknown'}")
                 return
+            
+            # Get or create SUPERADMIN profile role
+            superadmin_profile = db.query(ProfileRole).filter_by(name="SUPERADMIN").first()
+            if not superadmin_profile:
+                # Create default profiles if they don't exist
+                ProfileRole.create_default_profiles(db)
+                superadmin_profile = db.query(ProfileRole).filter_by(name="SUPERADMIN").first()
+            
+            if not superadmin_profile:
+                raise Exception("SUPERADMIN profile role not found and could not be created")
             
             # Create admin user
             admin_user = UserDetails(
@@ -61,7 +71,7 @@ def create_admin():
                 email="admin@gmail.com", 
                 name="System Administrator",
                 password=hash_password("Admin@123"),
-                role_id="SUPERADMIN",
+                role_id=superadmin_profile.id,  # Use ProfileRole ID
                 father_name="System",
                 is_active=True,
                 experience=5.0,
@@ -109,4 +119,7 @@ def create_admin():
         print(f"❌ Database connection error: {str(e)}")
         print("Make sure your database is running and connection settings are correct")
 
-create_admin()
+if __name__ == "__main__":
+    create_admin()
+
+    
