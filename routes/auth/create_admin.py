@@ -51,7 +51,7 @@ def create_admin():
                 print("ℹ️  Admin user already exists!")
                 print(f"   Employee Code: {existing_admin.employee_code}")
                 print(f"   Email: {existing_admin.email}")
-                print(f"   Role: {existing_admin.role}")
+                print(f"   Role: {existing_admin.role_id}")
                 return
             
             # Create admin user
@@ -61,7 +61,7 @@ def create_admin():
                 email="admin@gmail.com", 
                 name="System Administrator",
                 password=hash_password("Admin@123"),
-                role="SUPERADMIN",
+                role_id="SUPERADMIN",
                 father_name="System",
                 is_active=True,
                 experience=5.0,

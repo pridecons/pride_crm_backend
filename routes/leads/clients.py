@@ -34,7 +34,7 @@ class ClientPaymentInfo(BaseModel):
 class AssignedEmployeeInfo(BaseModel):
     employee_code: str
     name: str
-    role: str
+    role_id: str
     phone_number: Optional[str]
     email: Optional[str]
 
@@ -131,7 +131,7 @@ def format_client_response(lead: Lead, db: Session) -> ClientResponse:
         assigned_employee = AssignedEmployeeInfo(
             employee_code=u.employee_code,
             name=u.name,
-            role=u.role.value if hasattr(u.role, "value") else str(u.role),
+            role_id=u.role_id.value if hasattr(u.role_id, "value") else str(u.role_id),
             phone_number=u.phone_number,
             email=u.email,
         )
@@ -179,8 +179,8 @@ async def get_clients(
     Visibility rules (no LeadAssignment dependency):
       - SUPERADMIN: all clients
       - BRANCH_MANAGER: clients in their managed branch OR their own branch_id
-      - SALES_MANAGER: clients whose Lead.assigned_to_user belongs to their team (senior_profile_id==me) + self
-      - TL: clients whose Lead.assigned_to_user belongs to their team self
+      - SALES_MANAGER: clients whose Lead.assigned_to_user belongs to their team (me) + self
+      - TL: clients whose Lead.assigned_to_user belongs to their team (me) + self
       - Others: only clients assigned_to_user == me
     """
     # Permission check
@@ -193,9 +193,9 @@ async def get_clients(
     query = get_client_query_base(db)
 
     # Role-based filtering (ONLY via assigned_to_user / branch)
-    if current_user.role == "SUPERADMIN":
+    if current_user.role_name == "SUPERADMIN":
         pass  # see all
-    elif current_user.role == "BRANCH_MANAGER":
+    elif current_user.role_name == "BRANCH_MANAGER":
         # preferred: managed branch; fallback: own branch_id
         branch_id_for_filter = None
         if current_user.manages_branch:

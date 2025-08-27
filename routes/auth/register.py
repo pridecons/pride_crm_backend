@@ -42,7 +42,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
 
-
 def serialize_user(user: UserDetails) -> dict:
     """Serialize user object to dictionary with proper enum handling"""
     return {
@@ -50,7 +49,7 @@ def serialize_user(user: UserDetails) -> dict:
         "phone_number": user.phone_number,
         "email": user.email,
         "name": user.name,
-        "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+        "role_id": user.role_id.value if hasattr(user.role_id, 'value') else str(user.role_id),
         "father_name": user.father_name,
         "is_active": user.is_active,
         "experience": user.experience,
@@ -64,7 +63,6 @@ def serialize_user(user: UserDetails) -> dict:
         "pincode": user.pincode,
         "comment": user.comment,
         "branch_id": user.branch_id,
-        "senior_profile_id": user.senior_profile_id,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
     }
@@ -88,16 +86,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         )
     
     user_data = user_in.dict()
-    validate_user_data(db, user_data)
-
-    # Validate role
-    try:
-        role_enum = user_in.role
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid role. Valid roles"
-        )
+    validate_user_data(db, user_data)    
 
     # Auto-generate employee_code
     count = db.query(UserDetails).count() or 0
@@ -118,7 +107,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         email=user_in.email,
         name=user_in.name,
         password=hashed_pw,
-        role=role_enum,
+        role_id=user_in.role_id,
         father_name=user_in.father_name,
         is_active=user_in.is_active,
         experience=user_in.experience,
@@ -132,7 +121,6 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         pincode=user_in.pincode,
         comment=user_in.comment,
         branch_id=user_in.branch_id,
-        senior_profile_id=user_in.senior_profile_id,
     )
     
     try:
@@ -140,8 +128,8 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
         
-        # Create default permissions based on role
-        default_perms = PermissionDetails.get_default_permissions(role_enum)
+        # Create default permissions based on role_id
+        default_perms = PermissionDetails.get_default_permissions(user_in.role_id)
         permission = PermissionDetails(
             user_id=user.employee_code,
             **default_perms
@@ -165,7 +153,7 @@ def get_all_users(
     limit: int = 100,
     active_only: bool = False,
     branch_id: int = None,
-    role: str = None,
+    role_id: str = None,
     search: str = None,
     db: Session = Depends(get_db),
 ):
@@ -179,14 +167,14 @@ def get_all_users(
         if branch_id:
             query = query.filter(UserDetails.branch_id == branch_id)
         
-        if role:
+        if role_id:
             try:
-                role_enum = role
-                query = query.filter(UserDetails.role == role_enum)
+                role_enum = role_id
+                query = query.filter(UserDetails.role_id == role_enum)
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid role. Valid roles"
+                    detail=f"Invalid role_id. Valid roles"
                 )
         
         if search:
@@ -287,18 +275,17 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
         # }
         # validate_user_data(db, user_data)
         
-        # Validate role change if provided
-        if user_update.role:
-            try:                
+        # Validate role_id change if provided
+        if user_update.role_id:
+            try:
                 # Update hierarchy fields
-                user.role = user_update.role
+                user.role_id = user_update.role_id
                 user.branch_id = user_update.branch_id or user.branch_id,
-                user.senior_profile_id = user_update.senior_profile_id or user.senior_profile_id
                 
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid role. Valid roles"
+                    detail=f"Invalid role_id. Valid roles"
                 )
         
         # Update other fields

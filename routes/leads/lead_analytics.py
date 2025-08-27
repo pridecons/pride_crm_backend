@@ -61,7 +61,7 @@ class DailyActivityModel(BaseModel):
 class EmployeePerformanceModel(BaseModel):
     employee_code: str
     employee_name: str
-    role: str
+    role_id: str
     branch_name: Optional[str]
     total_leads: int
     called_leads: int
@@ -123,10 +123,11 @@ def get_admin_leads_query(db: Session, current_user: UserDetails, date_from: Opt
     """Get base query for admin's accessible leads"""
     query = db.query(Lead).filter(Lead.is_delete == False)
     
-    # Apply role-based filtering
-    if current_user.role == "BRANCH_MANAGER":
+    # Apply role_id-based filtering
+    if current_user.role_name == "BRANCH_MANAGER":
         if current_user.manages_branch:
             query = query.filter(Lead.branch_id == current_user.manages_branch.id)
+
     
     if date_from:
         query = query.filter(Lead.created_at >= date_from)
@@ -388,12 +389,6 @@ async def get_admin_analytics(
     Get comprehensive analytics for admin dashboard
     Only accessible by SUPERADMIN, BRANCH_MANAGER, SALES_MANAGER, and TL
     """
-    # Check permissions
-    if current_user.role not in ["SUPERADMIN", "BRANCH_MANAGER"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view admin analytics"
-        )
     
     start_date, end_date = get_date_range_filter(days)
     
@@ -453,7 +448,7 @@ async def get_admin_analytics(
     payments_query = db.query(Payment).join(Lead, Payment.lead_id == Lead.id)
     
     # Apply same filtering as leads_query
-    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+    if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
         payments_query = payments_query.filter(Lead.branch_id == current_user.manages_branch.id)
     
     payments_query = payments_query.filter(
@@ -500,10 +495,10 @@ async def get_admin_analytics(
     # Employee Performance Analysis
     employee_performance = []
     
-    # Get all employees based on current user's role
+    # Get all employees based on current user's role_id
     employees_query = db.query(UserDetails).filter(UserDetails.is_active == True)
     
-    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+    if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
         employees_query = employees_query.filter(UserDetails.branch_id == current_user.manages_branch.id)
     
     employees = employees_query.all()
@@ -537,7 +532,7 @@ async def get_admin_analytics(
         employee_performance.append(EmployeePerformanceModel(
             employee_code=employee.employee_code,
             employee_name=employee.name,
-            role=employee.role.value,
+            role_id=employee.role_id.value,
             branch_name=employee.branch.name if employee.branch else None,
             total_leads=emp_total_leads,
             called_leads=emp_called_leads,
@@ -566,8 +561,8 @@ async def get_admin_analytics(
             )
         )
         
-        # Apply same role-based filtering
-        if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+        # Apply same role_id-based filtering
+        if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
             leads_called_count = leads_called_count.filter(Lead.branch_id == current_user.manages_branch.id)
         
         leads_called = leads_called_count.count()
@@ -607,8 +602,8 @@ async def get_admin_analytics(
         )
     )
     
-    # Apply role-based filtering
-    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+    # Apply role_id-based filtering
+    if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
         source_analytics_query = source_analytics_query.filter(Lead.branch_id == current_user.manages_branch.id)
     
     source_analytics_data = source_analytics_query.group_by(LeadSource.name).all()
@@ -637,13 +632,13 @@ async def get_admin_analytics(
         )
     )
     
-    # Apply same role-based filtering as source_analytics
-    if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+    # Apply same role_id-based filtering as source_analytics
+    if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
         response_analytics_query = response_analytics_query.filter(Lead.branch_id == current_user.manages_branch.id)
     
     # Branch Performance (only for SUPERADMIN)
     branch_performance = []
-    if current_user.role == "SUPERADMIN":
+    if current_user.role_name == "SUPERADMIN":
         branches = db.query(BranchDetails).filter(BranchDetails.active == True).all()
         
         for branch in branches:
@@ -718,20 +713,11 @@ async def get_admin_dashboard_card(
       - overall: total_leads, total_clients, old_leads, new_leads
       - source_wise: same metrics, grouped by lead source
     """
-    # --- permission check ---
-    if current_user.role not in {
-        "SUPERADMIN",
-        "BRANCH_MANAGER"
-    }:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view this endpoint"
-        )
 
     # date bounds
     start_date, end_date = get_date_range_filter(days)
 
-    # base lead query (applies date_range and role/branch filtering)
+    # base lead query (applies date_range and role_id/branch filtering)
     base_q = get_admin_leads_query(db, current_user, start_date, end_date)
     if branch_id:
         base_q = base_q.filter(Lead.branch_id == branch_id)
@@ -816,7 +802,7 @@ def _compute_response_analytics_from_leads_query(
     leads_base_q,
 ) -> Tuple[int, List[ResponseAnalyticsModel]]:
     """
-    Given a base Lead query (already filtered for role/date/branch),
+    Given a base Lead query (already filtered for role_id/date/branch),
     return (overall_total_leads, breakdown_by_response)
     """
     leads_subq = (
@@ -884,7 +870,7 @@ async def get_admin_response_analytics(
     branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
     # NEW filters
     employee_role: Optional[str] = Query(
-        None, description="Filter user-wise by role (e.g., BA, SBA, TL, SALES_MANAGER)"
+        None, description="Filter user-wise by role_id (e.g., BA, SBA, TL, SALES_MANAGER)"
     ),
     from_date: Optional[date] = Query(None, description="Start date (YYYY-MM-DD)"),
     to_date: Optional[date] = Query(None, description="End date (YYYY-MM-DD)"),
@@ -897,14 +883,6 @@ async def get_admin_response_analytics(
     Response-wise breakdown for admin views with extra filters (and overall total):
       - branch_id, employee_role, from_date, to_date, source_id, user_id
     """
-    if current_user.role not in {
-        "SUPERADMIN",
-        "BRANCH_MANAGER"
-    }:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view this endpoint",
-        )
 
     # resolve date range
     if from_date and to_date and from_date > to_date:
@@ -930,17 +908,17 @@ async def get_admin_response_analytics(
     if source_id:
         leads_q = leads_q.filter(Lead.lead_source_id == source_id)
 
-    # user/role scoping
+    # user/role_id scoping
     if user_id or employee_role:
         emp_q = db.query(UserDetails.employee_code)
 
-        if current_user.role == "BRANCH_MANAGER" and current_user.manages_branch:
+        if current_user.role_name == "BRANCH_MANAGER" and current_user.manages_branch:
             emp_q = emp_q.filter(UserDetails.branch_id == current_user.manages_branch.id)
 
         emp_q = emp_q.filter(UserDetails.is_active.is_(True))
 
         if employee_role:
-            emp_q = emp_q.filter(UserDetails.role == employee_role)
+            emp_q = emp_q.filter(UserDetails.role_id == employee_role)
 
         if user_id:
             emp_q = emp_q.filter(UserDetails.employee_code == user_id)

@@ -17,7 +17,7 @@ router = APIRouter(
 
 # Pydantic Schemas
 class LeadFetchConfigBase(BaseModel):
-    role: Optional[str] = None
+    role_id: Optional[str] = None
     branch_id: Optional[int] = None
     per_request_limit: int
     daily_call_limit: int
@@ -108,7 +108,7 @@ class LeadFetchConfigUpdate(BaseModel):
 
 class LeadFetchConfigResponse(BaseModel):
     id: int
-    role: Optional[str] = None
+    role_id: Optional[str] = None
     branch_id: Optional[int] = None
     per_request_limit: int
     daily_call_limit: int
@@ -132,16 +132,16 @@ def create_fetch_config(
 ):
     """Create a new lead fetch configuration"""
     try:
-        # Check if configuration already exists for this role/branch combination
+        # Check if configuration already exists for this role_id/branch combination
         existing_config = db.query(LeadFetchConfig).filter_by(
-            role=config.role,
+            role_id=config.role_id,
             branch_id=config.branch_id
         ).first()
         
         if existing_config:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Configuration already exists for this role/branch combination"
+                detail="Configuration already exists for this role_id/branch combination"
             )
         
         # Validate branch exists if branch_id is provided
@@ -154,7 +154,7 @@ def create_fetch_config(
                 )
         
         new_config = LeadFetchConfig(
-            role=config.role,
+            role_id=config.role_id,
             branch_id=config.branch_id,
             per_request_limit=config.per_request_limit,
             daily_call_limit=config.daily_call_limit,
@@ -169,7 +169,7 @@ def create_fetch_config(
         
         return LeadFetchConfigResponse(
             id=new_config.id,
-            role=new_config.role.value if new_config.role else None,
+            role_id=new_config.role_id.value if new_config.role_id else None,
             branch_id=new_config.branch_id,
             per_request_limit=new_config.per_request_limit,
             daily_call_limit=new_config.daily_call_limit,
@@ -184,7 +184,7 @@ def create_fetch_config(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Configuration already exists for this role/branch combination"
+            detail="Configuration already exists for this role_id/branch combination"
         )
     except Exception as e:
         db.rollback()
@@ -206,7 +206,7 @@ def get_all_fetch_configs(
         for config in configs:
             config_dict = {
                 "id": config.id,
-                "role": config.role.value if config.role else None,
+                "role_id": config.role_id.value if config.role_id else None,
                 "branch_id": config.branch_id,
                 "per_request_limit": config.per_request_limit,
                 "daily_call_limit": config.daily_call_limit,
@@ -257,7 +257,7 @@ def get_fetch_config(
         # Prepare response with branch details
         config_dict = {
             "id": config.id,
-            "role": config.role.value if config.role else None,
+            "role_id": config.role_id.value if config.role_id else None,
             "branch_id": config.branch_id,
             "per_request_limit": config.per_request_limit,
             "daily_call_limit": config.daily_call_limit,
@@ -317,7 +317,7 @@ def update_fetch_config(
         
         return LeadFetchConfigResponse(
             id=config.id,
-            role=config.role.value if config.role else None,
+            role_id=config.role_id.value if config.role_id else None,
             branch_id=config.branch_id,
             per_request_limit=config.per_request_limit,
             daily_call_limit=config.daily_call_limit,

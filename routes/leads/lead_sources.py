@@ -11,8 +11,8 @@ from sqlalchemy import or_, UniqueConstraint  # or_ used below
 # ...
 
 def is_superadmin(user: UserDetails) -> bool:
-    # Prefer role if available; fall back to your legacy code only if needed
-    return getattr(user, "role", None) == "SUPERADMIN" or getattr(user, "employee_code", "") == "Admin001"
+    # Prefer role_name if available; fall back to your legacy code only if needed
+    return getattr(user, "role_name", None) == "SUPERADMIN"
 
 router = APIRouter(
     prefix="/lead-config",

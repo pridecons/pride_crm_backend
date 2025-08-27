@@ -65,21 +65,21 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
     cfg = None
     source = "default"
 
-    # 1️⃣ role+branch
-    if user.role and user.branch_id:
+    # 1️⃣ role_id+branch
+    if user.role_id and user.branch_id:
         cfg = (
             db.query(LeadFetchConfig)
-            .filter_by(role=user.role, branch_id=user.branch_id)
+            .filter_by(role_id=user.role_id, branch_id=user.branch_id)
             .first()
         )
         if cfg:
             source = "role_branch"
 
-    # 2️⃣ role global
-    if not cfg and user.role:
+    # 2️⃣ role_id global
+    if not cfg and user.role_id:
         cfg = (
             db.query(LeadFetchConfig)
-            .filter_by(role=user.role, branch_id=None)
+            .filter_by(role_id=user.role_id, branch_id=None)
             .first()
         )
         if cfg:
@@ -89,7 +89,7 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
     if not cfg and user.branch_id:
         cfg = (
             db.query(LeadFetchConfig)
-            .filter_by(role=None, branch_id=user.branch_id)
+            .filter_by(role_id=None, branch_id=user.branch_id)
             .first()
         )
         if cfg:
@@ -97,16 +97,8 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
 
     # 4️⃣ defaults
     if not cfg:
-        defaults = {
-            "SUPERADMIN": dict(per_request_limit=100, daily_call_limit=50, last_fetch_limit=10, assignment_ttl_hours=24),
-            "BRANCH_MANAGER": dict(per_request_limit=50, daily_call_limit=30, last_fetch_limit=8, assignment_ttl_hours=48),
-            "SALES_MANAGER": dict(per_request_limit=30, daily_call_limit=20, last_fetch_limit=6, assignment_ttl_hours=72),
-            "TL": dict(per_request_limit=20, daily_call_limit=15, last_fetch_limit=5, assignment_ttl_hours=72),
-            "BA": dict(per_request_limit=10, daily_call_limit=10, last_fetch_limit=3, assignment_ttl_hours=168),
-            "SBA": dict(per_request_limit=15, daily_call_limit=12, last_fetch_limit=4, assignment_ttl_hours=120),
-        }
-        role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
-        cfg_values = defaults.get(role_str, defaults["BA"])
+
+        cfg_values = {'per_request_limit':100, 'daily_call_limit':50, 'last_fetch_limit':10, 'assignment_ttl_hours':24}
         class TempConfig:
             def __init__(self, **kw):
                 for k, v in kw.items():

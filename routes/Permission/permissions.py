@@ -212,9 +212,9 @@ def reset_to_default_permissions(
     employee_code: str,
     db: Session = Depends(get_db),
 ):
-    """Reset user permissions to role defaults"""
+    """Reset user permissions to role_id defaults"""
     try:
-        # Get user to determine role
+        # Get user to determine role_id
         user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
         if not user:
             raise HTTPException(
@@ -230,8 +230,8 @@ def reset_to_default_permissions(
                 detail=f"Permissions not found for user {employee_code}"
             )
 
-        # Get default permissions for role
-        default_perms = PermissionDetails.get_default_permissions(user.role)
+        # Get default permissions for role_id
+        default_perms = PermissionDetails.get_default_permissions(user.role_id)
 
         # Update all permissions to defaults
         for perm_name, perm_value in default_perms.items():
@@ -241,9 +241,9 @@ def reset_to_default_permissions(
         db.refresh(permission)
 
         return {
-            "message": f"Permissions reset to {user.role.value} defaults for user {employee_code}",
+            "message": f"Permissions reset to {user.role_id.value} defaults for user {employee_code}",
             "user_id": employee_code,
-            "role": user.role.value,
+            "role_id": user.role_id.value,
             "default_permissions": default_perms
         }
 

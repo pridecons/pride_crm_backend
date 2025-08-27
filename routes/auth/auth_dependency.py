@@ -122,13 +122,16 @@ def get_optional_user(
 
 # Role-based access control
 def require_role(*allowed_roles):
+    """
+    Decorator to require specific roles
+    """
     def role_checker(
         current_user: UserDetails = Depends(get_current_user)
     ) -> UserDetails:
-        if current_user.role not in allowed_roles:
+        if current_user.role_id not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {[role.value for role in allowed_roles]}"
+                detail=f"Access denied. Required roles: {[role_id.value for role_id in allowed_roles]}"
             )
         return current_user
     

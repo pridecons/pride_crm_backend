@@ -282,7 +282,7 @@ async def get_payment_history_rich(
         employee = employee_map.get(r.user_id) if r.user_id else None
         if employee:
             data["raised_by"] = getattr(employee, "name", None) or getattr(employee, "full_name", None)
-            data["raised_by_role"] = getattr(employee, "role", None)
+            data["raised_by_role"] = getattr(employee, "role_id", None)
             data["raised_by_phone"] = getattr(employee, "phone_number", None)
             data["raised_by_email"] = getattr(employee, "email", None)
         else:

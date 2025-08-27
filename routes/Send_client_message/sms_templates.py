@@ -11,7 +11,7 @@ import os
 import logging
 
 from db.connection import get_db
-from db.models import SMSTemplate, SMSLog, UserDetails
+from db.models import SMSTemplate, SMSLog
 from routes.auth.auth_dependency import get_current_user
 from config import AIRTEL_IQ_SMS_URL, BASIC_AUTH_PASS, BASIC_AUTH_USER, BASIC_IQ_CUSTOMER_ID, BASIC_IQ_ENTITY_ID
 

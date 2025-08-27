@@ -92,10 +92,10 @@ async def update_branch(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Manager with employee_code '{manager_id}' does not exist"
                     )
-                if manager.role != "BRANCH_MANAGER":
+                if manager.role_name != "BRANCH_MANAGER":
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Only users with BRANCH MANAGER role can manage branches"
+                        detail="Only users with BRANCH MANAGER role_id can manage branches"
                     )
                 # Check if manager is already managing another branch
                 existing_managed = db.query(BranchDetails).filter(
@@ -269,10 +269,10 @@ def assign_manager(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Manager with employee_code '{manager_id}' does not exist"
             )
-        if manager.role != "BRANCH_MANAGER":
+        if manager.role_name != "BRANCH_MANAGER":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only users with BRANCH MANAGER role can manage branches"
+                detail="Only users with BRANCH MANAGER role_id can manage branches"
             )
 
         # Check if manager is already managing another branch
@@ -377,9 +377,9 @@ def get_all_branches(
 def get_available_managers(db: Session = Depends(get_db)):
     """Get list of users who can be branch managers"""
     try:
-        # Get BRANCH MANAGER role users who are not currently managing any branch
+        # Get BRANCH MANAGER role_id users who are not currently managing any branch
         available_managers = db.query(UserDetails).filter(
-            UserDetails.role == "BRANCH_MANAGER",
+            UserDetails.role_name == "BRANCH_MANAGER",
             UserDetails.is_active == True,
             ~UserDetails.employee_code.in_(
                 db.query(BranchDetails.manager_id).filter(BranchDetails.manager_id.isnot(None))
@@ -484,7 +484,7 @@ def get_branch_details(
             {
                 "employee_code": user.employee_code,
                 "name": user.name,
-                "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+                "role_id": user.role_id.value if hasattr(user.role_id, 'value') else str(user.role_id),
                 "email": user.email,
                 "is_active": user.is_active
             }
@@ -755,7 +755,7 @@ async def create_branch_with_manager(
             email=manager_email,
             name=manager_name,
             password=hashed_password,
-            role="BRANCH_MANAGER",
+            role_name="BRANCH_MANAGER",
             father_name=manager_father_name,
             is_active=True,
             experience=manager_experience,
@@ -769,8 +769,6 @@ async def create_branch_with_manager(
             pincode=manager_pincode,
             comment=manager_comment,
             branch_id=branch.id,
-            # REMOVED: manager_id=None,  # This field doesn't exist anymore
-            senior_profile_id=None,  # Branch manager doesn't have sales manager
         )
         
         db.add(manager)
@@ -812,7 +810,7 @@ async def create_branch_with_manager(
             "name": manager.name,
             "email": manager.email,
             "phone_number": manager.phone_number,
-            "role": manager.role.value,
+            "role_id": manager.role_id.value,
             "branch_id": manager.branch_id,
             "is_active": manager.is_active,
             "date_of_joining": manager.date_of_joining,
@@ -823,7 +821,7 @@ async def create_branch_with_manager(
             "employee_code": manager.employee_code,
             "email": manager.email,
             "password": manager_password,  # Return original password for initial login
-            "role": manager.role.value
+            "role_id": manager.role_id.value
         }
         
         return {

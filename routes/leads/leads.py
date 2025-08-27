@@ -460,7 +460,7 @@ def get_all_leads(
     assigned_to_user:    Optional[str]           = Query(None, description="Filter by assigned_to_user"),
     assigned_roles:      Optional[List[str]] = Query(
                              None,
-                             description="Filter by role(s) of assigned_to_user; e.g. ['TL','BA']"
+                             description="Filter by role_id of assigned_to_user; e.g. ['TL','BA']"
                          ),
 
     db: Session = Depends(get_db),
@@ -522,13 +522,13 @@ def get_all_leads(
         if assigned_to_user:
             query = query.filter(Lead.assigned_to_user == assigned_to_user)
 
-        # role-wise (join to UserDetails)
+        # role_id-wise (join to UserDetails)
         if assigned_roles:
             query = query.join(
                 UserDetails,
                 Lead.assigned_to_user == UserDetails.employee_code
             ).filter(
-                UserDetails.role.in_(assigned_roles)
+                UserDetails.role_id.in_(assigned_roles)
             )
 
         # pagination & ordering
@@ -972,19 +972,19 @@ def load_fetch_config(db: Session, user: UserDetails):
     cfg = None
     source = "default"
 
-    # Try role+branch first
-    if user.role and user.branch_id:
+    # Try role_id+branch first
+    if user.role_id and user.branch_id:
         cfg = db.query(LeadFetchConfig).filter_by(
-            role=user.role, 
+            role_id=user.role_id, 
             branch_id=user.branch_id
         ).first()
         if cfg:
             source = "role_branch"
 
-    # Try role global
-    if not cfg and user.role:
+    # Try role_id global
+    if not cfg and user.role_id:
         cfg = db.query(LeadFetchConfig).filter_by(
-            role=user.role, 
+            role_id=user.role_id, 
             branch_id=None
         ).first()
         if cfg:
@@ -993,7 +993,7 @@ def load_fetch_config(db: Session, user: UserDetails):
     # Try branch global
     if not cfg and user.branch_id:
         cfg = db.query(LeadFetchConfig).filter_by(
-            role=None, 
+            role_id=None, 
             branch_id=user.branch_id
         ).first()
         if cfg:
@@ -1001,16 +1001,7 @@ def load_fetch_config(db: Session, user: UserDetails):
 
     # Default fallback
     if not cfg:
-        defaults = {
-            "SUPERADMIN": dict(old_lead_remove_days=15),
-            "BRANCH_MANAGER": dict(old_lead_remove_days=20),
-            "SALES_MANAGER": dict(old_lead_remove_days=25),
-            "TL": dict(old_lead_remove_days=30),
-            "BA": dict(old_lead_remove_days=30),
-            "SBA": dict(old_lead_remove_days=25),
-        }
-        role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
-        cfg_values = defaults.get(role_str, {"old_lead_remove_days": 30})
+        cfg_values = {"old_lead_remove_days": 30}
 
         class TempConfig:
             def __init__(self, **kw):

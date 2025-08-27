@@ -89,7 +89,7 @@ def login(
         # Create tokens - use employee_code as user identifier
         access_token = create_access_token({
             "sub": user.employee_code,  # Use employee_code instead of phone
-            "role": user.role.value,
+            "role_id": user.role_id.value,
             "branch_id": user.branch_id
         })
         refresh_token = create_refresh_token(user.employee_code)  # Use employee_code
@@ -103,7 +103,7 @@ def login(
             "name": user.name,
             "email": user.email,
             "phone_number": user.phone_number,
-            "role": user.role.value,
+            "role_id": user.role_id.value,
             "branch_id": user.branch_id,
             "is_active": user.is_active,
             "branch_name": user.branch.name if user.branch else None,
@@ -185,7 +185,7 @@ def refresh_token(
         # Create new tokens
         access_token = create_access_token({
             "sub": user.employee_code,
-            "role": user.role.value,
+            "role_id": user.role_id.value,
             "branch_id": user.branch_id
         })
         new_refresh_token = create_refresh_token(user_id)
@@ -200,7 +200,7 @@ def refresh_token(
             "name": user.name,
             "email": user.email,
             "phone_number": user.phone_number,
-            "role": user.role.value,
+            "role_id": user.role_id.value,
             "branch_id": user.branch_id,
             "is_active": user.is_active,
         }
