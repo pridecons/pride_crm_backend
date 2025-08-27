@@ -50,7 +50,6 @@ class UserCreate(UserBase):
     password: constr(min_length=6)
     role: str
     branch_id: Optional[int] = None
-    senior_profile_id: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -72,7 +71,6 @@ class UserUpdate(BaseModel):
     password: Optional[constr(min_length=6)] = None
     role: Optional[str] = None
     branch_id: Optional[int] = None
-    senior_profile_id: Optional[str] = None
 
     @validator('phone_number')
     def validate_phone(cls, v):
@@ -121,7 +119,6 @@ class UserOut(BaseModel):
     pincode: Optional[str] = None
     comment: Optional[str] = None
     branch_id: Optional[int] = None
-    senior_profile_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
