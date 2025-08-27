@@ -229,8 +229,13 @@ class UserDetails(Base):
                          onupdate=func.now(),
                          nullable=False
                        )
+    department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=True, index=True)
     role = relationship("ProfileRole", back_populates="users")  # c
-    department = relationship("Department", back_populates="users")
+    department = relationship(
+        "Department",
+        back_populates="users",
+        foreign_keys=[department_id],
+    )
 
     # Relationships with explicit foreign_keys
     branch            = relationship(

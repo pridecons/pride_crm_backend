@@ -52,7 +52,6 @@ class ProfileRoleBase(BaseModel):
     default_permissions: Optional[List[str]] = Field(default_factory=list)
     description: Optional[str] = None
     is_active: Optional[bool] = True
-    parent_profile_id: Optional[int] = Field(default=None, description="Optional parent ProfileRole id for hierarchy")
 
 class ProfileRoleCreate(ProfileRoleBase):
     pass
@@ -64,7 +63,6 @@ class ProfileRoleUpdate(BaseModel):
     default_permissions: Optional[List[str]] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
-    parent_profile_id: Optional[int] = None
 
 class ProfileRoleOut(ProfileRoleBase):
     id: int
@@ -254,13 +252,6 @@ def create_profile(payload: ProfileRoleCreate, db: Session = Depends(get_db)):
     if db.query(ProfileRole).filter(ProfileRole.name == payload.name.strip()).first():
         raise HTTPException(status_code=400, detail="ProfileRole name already exists")
 
-    # parent_profile check if provided
-    parent_id = payload.parent_profile_id
-    if parent_id is not None:
-        parent = db.query(ProfileRole).get(parent_id)
-        if not parent:
-            raise HTTPException(status_code=400, detail="Invalid parent_profile_id")
-
     pr = ProfileRole(
         name=payload.name.strip(),
         department_id=payload.department_id,
@@ -268,9 +259,6 @@ def create_profile(payload: ProfileRoleCreate, db: Session = Depends(get_db)):
         default_permissions=payload.default_permissions or [],
         description=payload.description,
         is_active=True if payload.is_active is None else payload.is_active,
-        # The model snippet shows parent_profile relationship + backref child_profiles
-        # and uses parent_profile_id in get_all_child_profiles. So we set it if provided:
-        parent_profile_id=parent_id,
     )
 
     db.add(pr)
@@ -302,16 +290,6 @@ def update_profile(profile_id: int, payload: ProfileRoleUpdate, db: Session = De
         dept = db.query(Department).get(data["department_id"])
         if not dept:
             raise HTTPException(status_code=400, detail="Invalid department_id")
-
-    # parent_profile check
-    if "parent_profile_id" in data:
-        pid = data["parent_profile_id"]
-        if pid is not None:
-            parent = db.query(ProfileRole).get(pid)
-            if not parent:
-                raise HTTPException(status_code=400, detail="Invalid parent_profile_id")
-            if parent.id == pr.id:
-                raise HTTPException(status_code=400, detail="parent_profile_id cannot be self")
 
     # apply changes
     for field, value in data.items():
