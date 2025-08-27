@@ -48,7 +48,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: constr(min_length=6)
-    role: str
+    role_id: str
     branch_id: Optional[int] = None
 
 
@@ -69,7 +69,7 @@ class UserUpdate(BaseModel):
     pincode: Optional[constr(strip_whitespace=True, min_length=6, max_length=6)] = None
     comment: Optional[str] = None
     password: Optional[constr(min_length=6)] = None
-    role: Optional[str] = None
+    role_id: Optional[str] = None
     branch_id: Optional[int] = None
 
     @validator('phone_number')
@@ -105,7 +105,7 @@ class UserOut(BaseModel):
     phone_number: str
     email: str
     name: str
-    role: str  # String instead of enum for easier serialization
+    role_id: str  # String instead of enum for easier serialization
     father_name: str
     is_active: bool
     experience: float
