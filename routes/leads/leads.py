@@ -967,52 +967,6 @@ def search_leads(
             detail=f"Error searching leads: {str(e)}"
         )
 
-def load_fetch_config(db: Session, user: UserDetails):
-    """Load fetch config for user - same as in leads_fetch.py"""
-    cfg = None
-    source = "default"
-
-    # Try role_id+branch first
-    if user.role_id and user.branch_id:
-        cfg = db.query(LeadFetchConfig).filter_by(
-            role_id=user.role_id, 
-            branch_id=user.branch_id
-        ).first()
-        if cfg:
-            source = "role_branch"
-
-    # Try role_id global
-    if not cfg and user.role_id:
-        cfg = db.query(LeadFetchConfig).filter_by(
-            role_id=user.role_id, 
-            branch_id=None
-        ).first()
-        if cfg:
-            source = "role_global"
-
-    # Try branch global
-    if not cfg and user.branch_id:
-        cfg = db.query(LeadFetchConfig).filter_by(
-            role_id=None, 
-            branch_id=user.branch_id
-        ).first()
-        if cfg:
-            source = "branch_global"
-
-    # Default fallback
-    if not cfg:
-        cfg_values = {"old_lead_remove_days": 30}
-
-        class TempConfig:
-            def __init__(self, **kw):
-                for k, v in kw.items():
-                    setattr(self, k, v)
-
-        cfg = TempConfig(**cfg_values)
-
-    return cfg, source
-
-
 from routes.notification.notification_service import notification_service
 
 class ChangeResponse(BaseModel):
