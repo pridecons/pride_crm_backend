@@ -183,12 +183,6 @@ async def get_clients(
       - TL: clients whose Lead.assigned_to_user belongs to their team (me) + self
       - Others: only clients assigned_to_user == me
     """
-    # Permission check
-    if not current_user.permission or not current_user.permission.client_page:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view clients",
-        )
 
     query = get_client_query_base(db)
 
@@ -278,11 +272,6 @@ async def get_my_clients(
     Clients directly assigned to the current user (via Lead.assigned_to_user).
     No LeadAssignment dependency.
     """
-    if not current_user.permission or not current_user.permission.client_page:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view clients",
-        )
 
     query = (
         db.query(Lead)
