@@ -50,6 +50,7 @@ class UserCreate(UserBase):
     password: constr(min_length=6)
     role_id: str = 0
     branch_id: Optional[int] = None
+    senior_profile_id: Optional[int] = None
 
 
 class UserUpdate(BaseModel):
@@ -71,6 +72,7 @@ class UserUpdate(BaseModel):
     password: Optional[constr(min_length=6)] = None
     role_id: Optional[str] = None
     branch_id: Optional[int] = None
+    senior_profile_id: Optional[int] = None
 
     @validator('phone_number')
     def validate_phone(cls, v):
@@ -121,6 +123,7 @@ class UserOut(BaseModel):
     branch_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    senior_profile_id: Optional[int] = None
 
 # Response models for specific operations
 class UserCreateResponse(BaseModel):

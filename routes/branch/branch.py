@@ -88,30 +88,7 @@ router = APIRouter(
 
 SAVE_DIR = "static/agreements"
 
-def handle_db_error(func):
-    """Decorator to handle database connection errors"""
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except (OperationalError, DisconnectionError) as e:
-            if "server closed the connection unexpectedly" in str(e):
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Database connection lost. Please restart the application and try again."
-                )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error: {str(e)}"
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Unexpected error: {str(e)}"
-            )
-    return wrapper
-
 @router.get("/", response_model=List[BranchOut])
-@handle_db_error
 def get_all_branches(
     skip: int = 0,
     limit: int = 100,
@@ -131,10 +108,6 @@ def get_all_branches(
     except HTTPException:
         raise
     except (OperationalError, DisconnectionError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection lost. Please restart the application and try again."
-        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}"

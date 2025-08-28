@@ -1,4 +1,4 @@
-# routes/leads/fetch_config.py - Updated with last_fetch_limit
+# routes/leads/fetch_config.py - Updated with last_fetch_limit and safe role_id handling
 
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,8 +14,28 @@ router = APIRouter(
     tags=["lead-fetch-config"],
 )
 
+# ---------- helpers ----------
+def _role_id_value(v):
+    """Return enum.value if Enum-like, else string (or None)."""
+    if v is None:
+        return None
+    return getattr(v, "value", str(v))
 
-# Pydantic Schemas
+def _serialize_config(config: LeadFetchConfig, branch: Optional[BranchDetails] = None) -> dict:
+    return {
+        "id": config.id,
+        "role_id": _role_id_value(config.role_id),
+        "branch_id": config.branch_id,
+        "per_request_limit": config.per_request_limit,
+        "daily_call_limit": config.daily_call_limit,
+        "last_fetch_limit": config.last_fetch_limit,
+        "assignment_ttl_hours": config.assignment_ttl_hours,
+        "old_lead_remove_days": config.old_lead_remove_days,
+        "branch_name": getattr(branch, "name", None),
+        "branch_address": getattr(branch, "address", None),
+    }
+
+# ---------- Schemas ----------
 class LeadFetchConfigBase(BaseModel):
     role_id: Optional[str] = None
     branch_id: Optional[int] = None
@@ -112,7 +132,7 @@ class LeadFetchConfigResponse(BaseModel):
     branch_id: Optional[int] = None
     per_request_limit: int
     daily_call_limit: int
-    last_fetch_limit: int  # NEW FIELD
+    last_fetch_limit: int
     assignment_ttl_hours: int
     old_lead_remove_days: int
 
@@ -124,52 +144,42 @@ class LeadFetchConfigDetails(LeadFetchConfigResponse):
     branch_name: Optional[str] = None
     branch_address: Optional[str] = None
 
-
+# ---------- Routes ----------
 @router.post("/", response_model=LeadFetchConfigResponse)
-def create_fetch_config(
-    config: LeadFetchConfigCreate,
-    db: Session = Depends(get_db),
-):
+def create_fetch_config(config: LeadFetchConfigCreate, db: Session = Depends(get_db)):
     """Create a new lead fetch configuration"""
     try:
-        # Check if configuration already exists for this role_id/branch combination
         existing_config = db.query(LeadFetchConfig).filter_by(
             role_id=config.role_id,
             branch_id=config.branch_id
         ).first()
-        
         if existing_config:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Configuration already exists for this role_id/branch combination"
             )
-        
-        # Validate branch exists if branch_id is provided
+
         if config.branch_id:
             branch = db.query(BranchDetails).filter_by(id=config.branch_id).first()
             if not branch:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Branch not found"
-                )
-        
+                raise HTTPException(status_code=404, detail="Branch not found")
+
         new_config = LeadFetchConfig(
             role_id=config.role_id,
             branch_id=config.branch_id,
             per_request_limit=config.per_request_limit,
             daily_call_limit=config.daily_call_limit,
-            last_fetch_limit=config.last_fetch_limit,  # NEW FIELD
+            last_fetch_limit=config.last_fetch_limit,
             assignment_ttl_hours=config.assignment_ttl_hours,
             old_lead_remove_days=config.old_lead_remove_days
         )
-        
         db.add(new_config)
         db.commit()
         db.refresh(new_config)
-        
+
         return LeadFetchConfigResponse(
             id=new_config.id,
-            role_id=new_config.role_id.value if new_config.role_id else None,
+            role_id=_role_id_value(new_config.role_id),
             branch_id=new_config.branch_id,
             per_request_limit=new_config.per_request_limit,
             daily_call_limit=new_config.daily_call_limit,
@@ -177,7 +187,7 @@ def create_fetch_config(
             assignment_ttl_hours=new_config.assignment_ttl_hours,
             old_lead_remove_days=new_config.old_lead_remove_days
         )
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -188,95 +198,47 @@ def create_fetch_config(
         )
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating fetch configuration: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error creating fetch configuration: {str(e)}")
 
 
 @router.get("/", response_model=List[LeadFetchConfigDetails])
-def get_all_fetch_configs(
-    db: Session = Depends(get_db),
-):
+def get_all_fetch_configs(db: Session = Depends(get_db)):
     """Get all lead fetch configurations"""
     try:
         configs = db.query(LeadFetchConfig).all()
-        
-        result = []
-        for config in configs:
-            config_dict = {
-                "id": config.id,
-                "role_id": config.role_id.value if config.role_id else None,
-                "branch_id": config.branch_id,
-                "per_request_limit": config.per_request_limit,
-                "daily_call_limit": config.daily_call_limit,
-                "last_fetch_limit": config.last_fetch_limit,
-                "assignment_ttl_hours": config.assignment_ttl_hours,
-                "old_lead_remove_days": config.old_lead_remove_days,
-                "branch_name": None,
-                "branch_address": None
-            }
-            
-            # Get branch details if branch_id is set
-            if config.branch_id:
-                branch = db.query(BranchDetails).filter_by(id=config.branch_id).first()
-                if branch:
-                    config_dict["branch_name"] = branch.name
-                    config_dict["branch_address"] = branch.address
-            
-            result.append(LeadFetchConfigDetails(**config_dict))
-        
+        result: List[LeadFetchConfigDetails] = []
+
+        for cfg in configs:
+            branch = None
+            if cfg.branch_id:
+                branch = db.query(BranchDetails).filter_by(id=cfg.branch_id).first()
+            result.append(LeadFetchConfigDetails(**_serialize_config(cfg, branch)))
+
         return result
-        
+
     except (OperationalError, DisconnectionError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database connection lost. Please try again."
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching configurations: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error fetching configurations: {str(e)}")
 
 
 @router.get("/{config_id}", response_model=LeadFetchConfigDetails)
-def get_fetch_config(
-    config_id: int,
-    db: Session = Depends(get_db),
-):
+def get_fetch_config(config_id: int, db: Session = Depends(get_db)):
     """Get a specific lead fetch configuration by ID"""
     try:
-        config = db.query(LeadFetchConfig).filter_by(id=config_id).first()
-        if not config:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Fetch configuration not found"
-            )
-        
-        # Prepare response with branch details
-        config_dict = {
-            "id": config.id,
-            "role_id": config.role_id.value if config.role_id else None,
-            "branch_id": config.branch_id,
-            "per_request_limit": config.per_request_limit,
-            "daily_call_limit": config.daily_call_limit,
-            "last_fetch_limit": config.last_fetch_limit,
-            "assignment_ttl_hours": config.assignment_ttl_hours,
-            "old_lead_remove_days": config.old_lead_remove_days,
-            "branch_name": None,
-            "branch_address": None
-        }
-        
-        # Get branch details if branch_id is set
-        if config.branch_id:
-            branch = db.query(BranchDetails).filter_by(id=config.branch_id).first()
-            if branch:
-                config_dict["branch_name"] = branch.name
-                config_dict["branch_address"] = branch.address
-        
-        return LeadFetchConfigDetails(**config_dict)
-        
+        cfg = db.query(LeadFetchConfig).filter_by(id=config_id).first()
+        if not cfg:
+            raise HTTPException(status_code=404, detail="Fetch configuration not found")
+
+        branch = None
+        if cfg.branch_id:
+            branch = db.query(BranchDetails).filter_by(id=cfg.branch_id).first()
+
+        return LeadFetchConfigDetails(**_serialize_config(cfg, branch))
+
     except HTTPException:
         raise
     except (OperationalError, DisconnectionError):
@@ -285,83 +247,60 @@ def get_fetch_config(
             detail="Database connection lost. Please try again."
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching configuration: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error fetching configuration: {str(e)}")
 
 
 @router.put("/{config_id}", response_model=LeadFetchConfigResponse)
-def update_fetch_config(
-    config_id: int,
-    updates: LeadFetchConfigUpdate,
-    db: Session = Depends(get_db),
-):
+def update_fetch_config(config_id: int, updates: LeadFetchConfigUpdate, db: Session = Depends(get_db)):
     """Update a lead fetch configuration"""
     try:
-        config = db.query(LeadFetchConfig).filter_by(id=config_id).first()
-        if not config:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Fetch configuration not found"
-            )
-        
-        # Update only provided fields
+        cfg = db.query(LeadFetchConfig).filter_by(id=config_id).first()
+        if not cfg:
+            raise HTTPException(status_code=404, detail="Fetch configuration not found")
+
         update_data = updates.dict(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(config, field):
-                setattr(config, field, value)
-        
+            if hasattr(cfg, field):
+                setattr(cfg, field, value)
+
         db.commit()
-        db.refresh(config)
-        
+        db.refresh(cfg)
+
         return LeadFetchConfigResponse(
-            id=config.id,
-            role_id=config.role_id.value if config.role_id else None,
-            branch_id=config.branch_id,
-            per_request_limit=config.per_request_limit,
-            daily_call_limit=config.daily_call_limit,
-            last_fetch_limit=config.last_fetch_limit,
-            assignment_ttl_hours=config.assignment_ttl_hours,
-            old_lead_remove_days=config.old_lead_remove_days
+            id=cfg.id,
+            role_id=_role_id_value(cfg.role_id),
+            branch_id=cfg.branch_id,
+            per_request_limit=cfg.per_request_limit,
+            daily_call_limit=cfg.daily_call_limit,
+            last_fetch_limit=cfg.last_fetch_limit,
+            assignment_ttl_hours=cfg.assignment_ttl_hours,
+            old_lead_remove_days=cfg.old_lead_remove_days
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating fetch configuration: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error updating fetch configuration: {str(e)}")
 
 
 @router.delete("/{config_id}")
-def delete_fetch_config(
-    config_id: int,
-    db: Session = Depends(get_db),
-):
+def delete_fetch_config(config_id: int, db: Session = Depends(get_db)):
     """Delete a lead fetch configuration"""
     try:
-        config = db.query(LeadFetchConfig).filter_by(id=config_id).first()
-        if not config:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Fetch configuration not found"
-            )
-        
-        db.delete(config)
+        cfg = db.query(LeadFetchConfig).filter_by(id=config_id).first()
+        if not cfg:
+            raise HTTPException(status_code=404, detail="Fetch configuration not found")
+
+        db.delete(cfg)
         db.commit()
-        
         return {"message": "Fetch configuration deleted successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting fetch configuration: {str(e)}"
-        )
-    
-    
+        raise HTTPException(status_code=500, detail=f"Error deleting fetch configuration: {str(e)}")
+
+
+
