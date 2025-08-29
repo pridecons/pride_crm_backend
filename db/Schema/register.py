@@ -4,6 +4,15 @@ from pydantic import BaseModel, EmailStr, constr, validator, ConfigDict
 from typing import Optional, List
 from datetime import date, datetime
 
+class ProfileRoleOut(BaseModel):
+    id: int
+    name: str
+    hierarchy_level: Optional[int] = None
+
+class DepartmentOut(BaseModel):
+    id: int
+    name: Optional[str] = None
+
 class UserBase(BaseModel):
     phone_number: constr(strip_whitespace=True, min_length=10, max_length=10)
     email: EmailStr
@@ -134,6 +143,8 @@ class UserOut(BaseModel):
     vbc_user_username: Optional[str] = None
     vbc_user_password: Optional[str] = None
     permissions: Optional[List[str]] = None
+    profile_role: Optional[ProfileRoleOut] = None
+    department: Optional[DepartmentOut] = None
 
 # Response models for specific operations
 class UserCreateResponse(BaseModel):

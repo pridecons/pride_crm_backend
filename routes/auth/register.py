@@ -8,10 +8,11 @@ import bcrypt
 from typing import Optional
 
 from db.connection import get_db
-from db.models import UserDetails, ProfileRole, PermissionDetails 
+from db.models import UserDetails, ProfileRole, PermissionDetails , BranchDetails
 from db.Schema.register import UserCreate, UserUpdate
 from utils.validation_utils import validate_user_data
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(
     prefix="/users",
@@ -66,6 +67,21 @@ def serialize_user(user: UserDetails) -> dict:
         "vbc_user_password": getattr(user, "vbc_user_password", None),
         "created_at": user.created_at,
         "updated_at": user.updated_at,
+        "profile_role": (
+            {
+                "id": int(user.role_id),
+                "name": getattr(user, "role_name", None) or getattr(user.profile_role, "name", None),
+                "hierarchy_level": getattr(user.profile_role, "hierarchy_level", None),
+            }
+            if user.role_id is not None else None
+        ),
+        "department": (
+            {
+                "id": user.department_id,
+                "name": getattr(user.department, "name", None),
+            }
+            if user.department_id is not None else None
+        ),
     }
 
 # ---------------- CREATE ----------------
@@ -292,29 +308,102 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error updating user: {str(e)}")
 
-# ---------------- SOFT DELETE ----------------
+
 @router.delete("/{employee_code}")
-def delete_user(employee_code: str, db: Session = Depends(get_db)):
-    """Soft delete user (set is_active to False)"""
+def delete_user(
+    employee_code: str,
+    hard: bool = False,
+    force_unassign: bool = False,
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a user.
+
+    - Soft delete (default): sets is_active=False.
+      Example: DELETE /api/v1/users/EMP001
+
+    - Hard delete: removes the row from DB.
+      Example: DELETE /api/v1/users/EMP001?hard=true
+
+      FK safety:
+      - If the user is assigned as a Branch Manager (BranchDetails.manager_id)
+        or other users have this user as their senior (UserDetails.senior_profile_id),
+        the delete will fail unless:
+          * you pass force_unassign=true to auto-null these references, or
+          * you manually reassign/clear them first.
+
+      Example (auto-clear FKs):
+      DELETE /api/v1/users/EMP001?hard=true&force_unassign=true
+    """
     try:
         user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        user.is_active = False
-        user.updated_at = datetime.utcnow()
-        db.commit()
+        if not hard:
+            # ---- Soft delete ----
+            user.is_active = False
+            user.updated_at = datetime.utcnow()
+            db.commit()
+            return {
+                "message": f"User {employee_code} has been deactivated successfully",
+                "employee_code": employee_code,
+                "deleted_at": user.updated_at,
+                "mode": "soft",
+            }
 
+        # ---- Hard delete ----
+        # Check FK usages we know about
+        branches_managed = db.query(BranchDetails).filter(BranchDetails.manager_id == employee_code).all()
+        subordinates = db.query(UserDetails).filter(UserDetails.senior_profile_id == employee_code).all()
+
+        if (branches_managed or subordinates) and not force_unassign:
+            details = {
+                "branches_managed": len(branches_managed),
+                "subordinates": len(subordinates),
+            }
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot hard delete: user is referenced by other records. "
+                    "Reassign/clear references or call with force_unassign=true."
+                ),
+            )
+
+        # Auto-null references if requested
+        if force_unassign:
+            for b in branches_managed:
+                b.manager_id = None
+            for s in subordinates:
+                s.senior_profile_id = None
+
+        # Now delete the user row
+        db.delete(user)
+        db.commit()
         return {
-            "message": f"User {employee_code} has been deactivated successfully",
+            "message": f"User {employee_code} has been hard-deleted successfully",
             "employee_code": employee_code,
-            "deleted_at": user.updated_at
+            "mode": "hard",
+            "force_unassign": force_unassign,
+            "cleared_refs": {
+                "branches_managed": len(branches_managed),
+                "subordinates": len(subordinates),
+            },
         }
+
     except HTTPException:
         raise
+    except IntegrityError as ie:
+        db.rollback()
+        # If some other FK we didn't handle blocks deletion
+        raise HTTPException(
+            status_code=409,
+            detail=f"Integrity error while deleting user; reassign or clear related records first. {ie}",
+        )
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting user: {str(e)}")
+
 
 # ---------------- RESET PASSWORD ----------------
 @router.post("/{employee_code}/reset-password")
