@@ -99,6 +99,11 @@ departments_router = APIRouter(prefix="/departments", tags=["departments"])
 profiles_router = APIRouter(prefix="/profile-role", tags=["profiles"])
 
 
+@profiles_router.get("/recommendation-type", response_model=List[str])
+def get_recommendation_types():
+    return [r.value for r in RecommendationType]
+
+
 # =============================================================================
 # Departments CRUD
 # =============================================================================
@@ -345,13 +350,5 @@ def list_children_profiles(profile_id: int, db: Session = Depends(get_db)):
     if not pr:
         raise HTTPException(status_code=404, detail="ProfileRole not found")
     return pr.get_all_child_profiles(db)
-
-
-@profiles_router.get("/recommendation-type", response_model=List[str])
-def get_all_permissions(db: Session = Depends(get_db)):
-    """
-    Returns a list of all user roles.
-    """
-    return [role.value for role in RecommendationType]
 
 
