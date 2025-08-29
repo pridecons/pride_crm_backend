@@ -18,6 +18,101 @@ class RecommendationType(str, enum.Enum):
     mcx_bullion= "MCX Bullion"
     mcx_base_metal= "MCX Base Metal"
     mcx_energy= "MCX Energy"
+
+class PermissionDetails(str, enum.Enum):
+    # LEAD/[id]
+    lead_recording_view = "lead_recording_view"
+    lead_recording_upload   = "lead_recording_upload"
+    lead_story_view = "lead_story_view"
+    lead_transfer = "lead_transfer"
+    lead_branch_view = "lead_branch_view"
+
+    # LEAD SOURCE
+    create_lead = "create_lead"
+    edit_lead = "edit_lead"
+    delete_lead  = 'delete_lead'
+
+    # LEAD RESPONSE
+    create_new_lead_response  = "create_new_lead_response"
+    edit_response = "edit_response"
+    delete_response = "delete_response"
+
+    # USER 
+    user_add_user = "user_add_user"
+    user_all_roles = 'user_all_roles'
+    user_all_branches = "user_all_branches"
+    user_view_user_details = "user_view_user_details"
+    user_edit_user = "user_edit_user"
+    user_delete_user = "user_delete_user"
+
+    # FETCH LIMIT
+    fetch_limit_create_new = 'fetch_limit_create_new'
+    fetch_limit_edit = "fetch_limit_edit"
+    fetch_limit_delete = "fetch_limit_delete"
+
+    # PLANS
+    plans_create = "plans_create"
+    edit_plan = "edit_plan"
+    delete_plane = "delete_plane"
+
+    # CLIENT
+    client_select_branch = "client_select_branch"
+    client_invoice = "client_invoice"
+    client_story = "client_story"
+    client_comments = "client_comments"
+
+    # SIDEBAR
+    lead_manage_page = "lead_manage_page"
+    plane_page = "plane_page"
+    attandance_page = "attandance_page"
+    client_page = "client_page"
+    lead_source_page = "lead_source_page"
+    lead_response_page = "lead_response_page"
+    user_page = "user_page"
+    permission_page = "permission_page"
+    lead_upload_page = "lead_upload_page"
+    fetch_limit_page = "fetch_limit_page"
+
+
+    add_lead_page = "add_lead_page"
+    payment_page = "payment_page"
+    messanger_page = "messanger_page"
+    template = "template"
+    sms_page = "sms_page"
+    email_page = "email_page"
+    branch_page = "branch_page"
+    old_lead_page = "old_lead_page"
+    new_lead_page = "new_lead_page"
+
+    # MESSANGER
+    rational_download = "rational_download"
+    rational_pdf_model_download = "rational_pdf_model_download"
+    rational_pdf_model_view = "rational_pdf_model_view"
+    rational_graf_model_view = "rational_graf_model_view"
+    rational_status = "rational_status"
+    rational_edit = "rational_edit"
+    rational_add_recommadation = "rational_add_recommadation"
+
+    # EMAIL
+    email_add_temp = "email_add_temp"
+    email_view_temp = "email_view_temp"
+    email_edit_temp = "email_edit_temp"
+    email_delete_temp = "email_delete_temp"
+
+    # SMS
+    sms_add = "sms_add"
+    sms_edit = "sms_edit"
+    sms_delete = 'sms_delete'
+
+    # BRANCH
+    branch_add = "branch_add"
+    branch_edit = "branch_edit"
+    branch_details = "branch_details"
+    branch_agreement_view = "branch_agreement_view"
+
+    # header 
+    header_global_search = "header_global_search"
+
     
 class OTP(Base):
     __tablename__ = "crm_otps"
@@ -43,44 +138,6 @@ class Department(Base):
     profiles = relationship("ProfileRole", back_populates="department", cascade="all, delete-orphan")
     users = relationship("UserDetails", back_populates="department")
 
-    @classmethod
-    def create_default_departments(cls, db):
-        """Create default departments with their permissions"""
-        default_departments = [
-            {
-                "name": "ADMIN",
-                "description": "Administrative Department",
-            },
-            {
-                "name": "ACCOUNTING",
-                "description": "Accounting Department",
-            },
-            {
-                "name": "HR",
-                "description": "Human Resources Department",
-            },
-            {
-                "name": "SALES_TEAM",
-                "description": "Sales Team Department",
-            },
-            {
-                "name": "RESEARCH_TEAM",
-                "description": "Research Team Department",
-            },
-            {
-                "name": "COMPLIANCE_TEAM",
-                "description": "Compliance Team Department",
-            }
-        ]
-        
-        for dept_data in default_departments:
-            existing = db.query(cls).filter_by(name=dept_data["name"]).first()
-            if not existing:
-                dept = cls(**dept_data)
-                db.add(dept)
-        
-        db.commit()
-
 
 class ProfileRole(Base):
     __tablename__ = "crm_profile_roles"
@@ -105,91 +162,6 @@ class ProfileRole(Base):
         back_populates="profile_role", 
         foreign_keys="[UserDetails.role_id]"
     )
-
-
-    @classmethod
-    def create_default_profiles(cls, db):
-        """Create default profiles with hierarchy"""
-        from sqlalchemy.orm import sessionmaker
-        
-        # Get departments
-        admin_dept = db.query(Department).filter_by(name="ADMIN").first()
-        accounting_dept = db.query(Department).filter_by(name="ACCOUNTING").first()
-        hr_dept = db.query(Department).filter_by(name="HR").first()
-        sales_dept = db.query(Department).filter_by(name="SALES_TEAM").first()
-        
-        if not all([admin_dept, accounting_dept, hr_dept, sales_dept]):
-            raise Exception("Default departments must be created first")
-        
-        default_profiles = [
-            # Admin Department
-            {
-                "name": "SUPERADMIN",
-                "department_id": admin_dept.id,
-                "hierarchy_level": 1,
-                "default_permissions": admin_dept.available_permissions,
-                "description": "Super Administrator with full access"
-            },
-            {
-                "name": "BRANCH_MANAGER",
-                "department_id": admin_dept.id,
-                "hierarchy_level": 2,
-                "description": "Branch Manager"
-            },
-            
-            # HR Department
-            {
-                "name": "HR",
-                "department_id": hr_dept.id,
-                "hierarchy_level": 3,
-                "description": "Human Resources"
-            },
-            
-            # Sales Team Department
-            {
-                "name": "SALES_MANAGER",
-                "department_id": sales_dept.id,
-                "hierarchy_level": 3,
-                "description": "Sales Manager"
-            },
-            {
-                "name": "TL",
-                "department_id": sales_dept.id,
-                "hierarchy_level": 4,
-                "description": "Team Leader"
-            },
-            {
-                "name": "SBA",
-                "department_id": sales_dept.id,
-                "hierarchy_level": 5,
-                "description": "Senior Business Associate"
-            },
-            {
-                "name": "BA",
-                "department_id": sales_dept.id,
-                "hierarchy_level": 6,
-                "description": "Business Associate"
-            },
-            {
-                "name": "RESEARCHER",
-                "department_id": sales_dept.id,
-                "hierarchy_level": 4,
-                "description": "Research Analyst"
-            }
-        ]
-        
-        # Create profiles in hierarchy order
-        created_profiles = {}
-        
-        for profile_data in default_profiles:
-            existing = db.query(cls).filter_by(name=profile_data["name"]).first()
-            if not existing:
-                profile = cls(**profile_data)
-                db.add(profile)
-                db.flush()  # To get the ID
-                created_profiles[profile_data["name"]] = profile
-        
-        db.commit()
 
 
 
@@ -229,6 +201,11 @@ class UserDetails(Base):
     # Foreign Keys - Removed manager_id, kept
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
     senior_profile_id  = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    permissions = Column(ARRAY(String), nullable=True, default=[])
+
+    vbc_extension_id = Column(String(10), nullable=True)
+    vbc_user_username = Column(String(100), nullable=True)
+    vbc_user_password = Column(String(100), nullable=True)
 
     # Timestamps
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -267,13 +244,6 @@ class UserDetails(Base):
                          foreign_keys="[BranchDetails.manager_id]"
                        )
 
-    # Other relationships
-    permission        = relationship(
-                         "PermissionDetails",
-                         back_populates="user",
-                         uselist=False,
-                         cascade="all, delete-orphan"
-                       )
 
     audit_logs        = relationship(
                          "AuditLog",
@@ -369,108 +339,6 @@ class BranchDetails(Base):
                          back_populates="branch",
                          cascade="all, delete-orphan"
                        )
-
-
-class PermissionDetails(Base):
-    __tablename__ = "crm_permission_details"
-
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    user_id         = Column(String(100), ForeignKey("crm_user_details.employee_code"), unique=True, nullable=False)
-
-    # LEAD/[id]
-    lead_recording_view = Column(Boolean, default=False)
-    lead_recording_upload   = Column(Boolean, default=False)
-    lead_story_view = Column(Boolean, default=False)
-    lead_transfer = Column(Boolean, default=False)
-    lead_branch_view = Column(Boolean, default=False)
-
-    # LEAD SOURCE
-    create_lead = Column(Boolean, default=False)
-    edit_lead = Column(Boolean, default=False)
-    delete_lead  = Column(Boolean, default=False)
-
-    # LEAD RESPONSE
-    create_new_lead_response  = Column(Boolean, default=False)
-    edit_response = Column(Boolean, default=False)
-    delete_response = Column(Boolean, default=False)
-
-    # USER 
-    user_add_user = Column(Boolean, default=False)
-    user_all_roles = Column(Boolean, default=False)
-    user_all_branches = Column(Boolean, default=False)
-    user_view_user_details = Column(Boolean, default=False)
-    user_edit_user = Column(Boolean, default=False)
-    user_delete_user = Column(Boolean, default=False)
-
-    # FETCH LIMIT
-    fetch_limit_create_new = Column(Boolean, default=False)
-    fetch_limit_edit = Column(Boolean, default=False)
-    fetch_limit_delete = Column(Boolean, default=False)
-
-    # PLANS
-    plans_create = Column(Boolean, default=False)
-    edit_plan = Column(Boolean, default=False)
-    delete_plane = Column(Boolean, default=False)
-
-    # CLIENT
-    client_select_branch = Column(Boolean, default=False)
-    client_invoice = Column(Boolean, default=False)
-    client_story = Column(Boolean, default=False)
-    client_comments = Column(Boolean, default=False)
-
-    # SIDEBAR
-    lead_manage_page = Column(Boolean, default=False)
-    plane_page = Column(Boolean, default=False)
-    attandance_page = Column(Boolean, default=False)
-    client_page = Column(Boolean, default=False)
-    lead_source_page = Column(Boolean, default=False)
-    lead_response_page = Column(Boolean, default=False)
-    user_page = Column(Boolean, default=False)
-    permission_page = Column(Boolean, default=False)
-    lead_upload_page = Column(Boolean, default=False)
-    fetch_limit_page = Column(Boolean, default=False)
-
-
-    add_lead_page = Column(Boolean, default=False)
-    payment_page = Column(Boolean, default=False)
-    messanger_page = Column(Boolean, default=False)
-    template = Column(Boolean, default=False)
-    sms_page = Column(Boolean, default=False)
-    email_page = Column(Boolean, default=False)
-    branch_page = Column(Boolean, default=False)
-    old_lead_page = Column(Boolean, default=False)
-    new_lead_page = Column(Boolean, default=False)
-
-    # MESSANGER
-    rational_download = Column(Boolean, default=False)
-    rational_pdf_model_download = Column(Boolean, default=False)
-    rational_pdf_model_view = Column(Boolean, default=False)
-    rational_graf_model_view = Column(Boolean, default=False)
-    rational_status = Column(Boolean, default=False)
-    rational_edit = Column(Boolean, default=False)
-    rational_add_recommadation = Column(Boolean, default=False)
-
-    # EMAIL
-    email_add_temp = Column(Boolean, default=False)
-    email_view_temp = Column(Boolean, default=False)
-    email_edit_temp = Column(Boolean, default=False)
-    email_delete_temp = Column(Boolean, default=False)
-
-    # SMS
-    sms_add = Column(Boolean, default=False)
-    sms_edit = Column(Boolean, default=False)
-    sms_delete = Column(Boolean, default=False)
-
-    # BRANCH
-    branch_add = Column(Boolean, default=False)
-    branch_edit = Column(Boolean, default=False)
-    branch_details = Column(Boolean, default=False)
-    branch_agreement_view = Column(Boolean, default=False)
-
-    # header 
-    header_global_search = Column(Boolean, default=False)
-
-    user            = relationship("UserDetails", back_populates="permission")
 
 
 class LeadAssignment(Base):

@@ -1,11 +1,19 @@
 # routes/permissions.py
 
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
-from db.models import PermissionDetails, UserDetails
+from db.models import PermissionDetails, UserDetails, ProfileRole
+
+# NOTE: Your schema can define a model like:
+# class PermissionUpdate(BaseModel):
+#     permissions: Optional[List[str]] = None  # full replace
+#     add: Optional[List[str]] = None          # additive update
+#     remove: Optional[List[str]] = None       # subtractive update
 from db.Schema.permissions import PermissionUpdate
 
 router = APIRouter(
@@ -14,23 +22,34 @@ router = APIRouter(
 )
 
 
-# API Endpoints
+# ---------- helpers -----------------------------------------------------------
 
-@router.get("/")
+def _all_permission_values() -> List[str]:
+    """All valid permission strings from the Enum."""
+    return [p.value for p in PermissionDetails]
+
+def _validate_permissions_or_400(perms: List[str]) -> None:
+    valid = set(_all_permission_values())
+    invalid = [p for p in perms if p not in valid]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid permission(s): {invalid}. See /permissions/ for valid values."
+        )
+
+
+# ---------- API Endpoints -----------------------------------------------------
+
+@router.get("/", response_model=List[str])
 def get_all_permissions(
-    skip: int = 0,
-    limit: int = 100,
     db: Session = Depends(get_db),
 ):
-    """Get all user permissions"""
+    """
+    Return the canonical list of available permission keys (Enum values).
+    No DB query is needed; this is sourced from the Enum.
+    """
     try:
-        permissions = db.query(PermissionDetails).offset(skip).limit(limit).all()
-        return permissions
-    except (OperationalError, DisconnectionError):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection lost. Please try again."
-        )
+        return _all_permission_values()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -43,15 +62,20 @@ def get_user_permissions(
     employee_code: str,
     db: Session = Depends(get_db),
 ):
-    """Get permissions for a specific user"""
+    """
+    Get the permissions array stored on the user record.
+    """
     try:
-        permission = db.query(PermissionDetails).filter_by(user_id=employee_code).first()
-        if not permission:
+        user = db.query(UserDetails).filter(UserDetails.employee_code == employee_code).first()
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permissions not found for user {employee_code}"
+                detail=f"User {employee_code} not found"
             )
-        return permission
+        return {
+            "employee_code": employee_code,
+            "permissions": user.permissions or []
+        }
     except HTTPException:
         raise
     except (OperationalError, DisconnectionError):
@@ -72,24 +96,52 @@ def update_user_permissions(
     permission_in: PermissionUpdate,
     db: Session = Depends(get_db),
 ):
-    """Update permissions for a specific user"""
+    """
+    Update a user's permissions.
+
+    - If `permissions` is provided, it's treated as a full replace.
+    - Otherwise, apply `add` and/or `remove` against the current set.
+    """
     try:
-        # Get existing permissions
-        permission = db.query(PermissionDetails).filter_by(user_id=employee_code).first()
-        if not permission:
+        user = db.query(UserDetails).filter(UserDetails.employee_code == employee_code).first()
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permissions not found for user {employee_code}"
+                detail=f"User {employee_code} not found"
             )
 
-        # Update only provided fields
-        update_data = permission_in.dict(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(permission, field, value)
+        current = set(user.permissions or [])
+
+        # Full replace
+        if getattr(permission_in, "permissions", None) is not None:
+            new_perms = list(dict.fromkeys(permission_in.permissions or []))  # de-dupe, keep order
+            _validate_permissions_or_400(new_perms)
+            user.permissions = new_perms
+
+        else:
+            # Incremental update
+            to_add = list(dict.fromkeys((permission_in.add or [])))
+            to_remove = set(permission_in.remove or [])
+
+            if to_add:
+                _validate_permissions_or_400(to_add)
+                current.update(to_add)
+
+            if to_remove:
+                current.difference_update(to_remove)
+
+            # Keep only valid keys just in case historical data had junk
+            valid = set(_all_permission_values())
+            sanitized = [p for p in current if p in valid]
+            user.permissions = sanitized
 
         db.commit()
-        db.refresh(permission)
-        return permission
+        db.refresh(user)
+        return {
+            "message": f"Permissions updated for {employee_code}",
+            "employee_code": employee_code,
+            "permissions": user.permissions or []
+        }
 
     except HTTPException:
         raise
@@ -113,82 +165,43 @@ def toggle_single_permission(
     permission_name: str,
     db: Session = Depends(get_db),
 ):
-    """Toggle a single permission on/off"""
+    """
+    Toggle a single permission in the user's permissions ARRAY.
+    If present → remove; if absent → add.
+    """
     try:
         # Validate permission name
-        valid_permissions = {
-             # LEAD/[id]
-                'lead_recording_view' , 'lead_recording_upload',
-                'lead_story_view' , 'lead_transfer' ,"lead_branch_view"
-
-                # LEAD SOURCE
-                'create_lead' , 'edit_lead' , 'delete_lead'  ,
-
-                # LEAD RESPONSE
-                'create_new_lead_response' , 'edit_response' , 'delete_response' ,
-
-                # USER 
-                'user_add_user' , 'user_all_roles' , 'user_all_branches' ,
-                'user_view_user_details' , 'user_edit_user' , 'user_delete_user' ,
-
-                # FETCH LIMIT
-                'fetch_limit_create_new' , 'fetch_limit_edit' , 'fetch_limit_delete' ,
-
-                # PLANS
-                'plans_create' , 'edit_plan' , 'delete_plane' ,
-
-                # CLIENT
-                'client_select_branch' , 'client_invoice' , 'client_story' , 'client_comments' ,
-
-                # SIDEBAR
-                'lead_manage_page' , 'plane_page' , 'attandance_page' ,
-                'client_page' , 'lead_source_page' , 'lead_response_page' ,
-                'user_page' , 'permission_page' , 'lead_upload_page' , 'fetch_limit_page' ,
-
-                'add_lead_page' , 'payment_page' , 'messanger_page' , 'template' ,
-                'sms_page' , 'email_page' , 'branch_page' , 'old_lead_page' , 'new_lead_page' ,
-
-                # MESSANGER
-                'rational_download' , 'rational_pdf_model_download' , 'rational_pdf_model_view' ,
-                'rational_graf_model_view' , 'rational_status' , 'rational_edit' , 'rational_add_recommadation' ,
-
-                # EMAIL
-                'email_add_temp' , 'email_view_temp' , 'email_edit_temp' , 'email_delete_temp' ,
-
-                # SMS
-                'sms_add' , 'sms_edit' , 'sms_delete' ,
-
-                # BRANCH
-                'branch_add' , 'branch_edit' , 'branch_details' , 'branch_agreement_view'
-        }
-
-        if permission_name not in valid_permissions:
+        if permission_name not in _all_permission_values():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid permission name: {permission_name}"
             )
 
-        # Get existing permissions
-        permission = db.query(PermissionDetails).filter_by(user_id=employee_code).first()
-        if not permission:
+        user = db.query(UserDetails).filter(UserDetails.employee_code == employee_code).first()
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permissions not found for user {employee_code}"
+                detail=f"User {employee_code} not found"
             )
 
-        # Toggle the permission
-        current_value = getattr(permission, permission_name)
-        new_value = not current_value
-        setattr(permission, permission_name, new_value)
+        current = set(user.permissions or [])
+        if permission_name in current:
+            current.remove(permission_name)
+            new_value = False
+        else:
+            current.add(permission_name)
+            new_value = True
 
+        user.permissions = list(current)
         db.commit()
+        db.refresh(user)
 
         return {
             "message": f"Permission '{permission_name}' {'enabled' if new_value else 'disabled'} for user {employee_code}",
             "permission": permission_name,
-            "old_value": current_value,
             "new_value": new_value,
-            "user_id": employee_code
+            "employee_code": employee_code,
+            "permissions": user.permissions or []
         }
 
     except HTTPException:
@@ -212,32 +225,38 @@ def reset_to_default_permissions(
     employee_code: str,
     db: Session = Depends(get_db),
 ):
-    """Reset user permissions to role_id defaults"""
+    """
+    Reset user's permissions to their role's default_permissions
+    (from ProfileRole.default_permissions).
+    """
     try:
-        # Get user to determine role_id
-        user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
+        user = db.query(UserDetails).filter(UserDetails.employee_code == employee_code).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User {employee_code} not found"
             )
 
-        # Get existing permissions
-        permission = db.query(PermissionDetails).filter_by(user_id=employee_code).first()
-        if not permission:
+        role = db.query(ProfileRole).filter(ProfileRole.id == user.role_id).first()
+        if not role:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permissions not found for user {employee_code}"
+                detail=f"ProfileRole id {user.role_id} not found for user {employee_code}"
             )
 
+        # Sanitize against current valid Enum values (in case defaults drifted)
+        valid = set(_all_permission_values())
+        defaults = [p for p in (role.default_permissions or []) if p in valid]
 
+        user.permissions = defaults
         db.commit()
-        db.refresh(permission)
+        db.refresh(user)
 
         return {
-            "message": f"Permissions reset to {user.role_id.value} defaults for user {employee_code}",
-            "user_id": employee_code,
-            "role_id": user.role_id.value
+            "message": f"Permissions reset to role defaults for user {employee_code}",
+            "employee_code": employee_code,
+            "role_id": user.role_id,
+            "permissions": user.permissions or []
         }
 
     except HTTPException:
@@ -254,4 +273,3 @@ def reset_to_default_permissions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error resetting permissions: {str(e)}"
         )
-

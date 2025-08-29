@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
-from db.models import BranchDetails, UserDetails, PermissionDetails, ProfileRole
+from db.models import BranchDetails, UserDetails, ProfileRole
 from passlib.context import CryptContext
 
 # Import validation functions

@@ -1,7 +1,7 @@
 # db/Schema/register.py - Fixed Pydantic V2 warnings
 
 from pydantic import BaseModel, EmailStr, constr, validator, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import date, datetime
 from enum import Enum
 
@@ -52,6 +52,11 @@ class UserCreate(UserBase):
     branch_id: Optional[int] = None
     senior_profile_id: Optional[int] = None
 
+    vbc_extension_id: Optional[str] = None
+    vbc_user_username: Optional[str] = None
+    vbc_user_password: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
 
 class UserUpdate(BaseModel):
     phone_number: Optional[constr(strip_whitespace=True, min_length=10, max_length=10)] = None
@@ -73,6 +78,11 @@ class UserUpdate(BaseModel):
     role_id: Optional[str] = None
     branch_id: Optional[int] = None
     senior_profile_id: Optional[int] = None
+
+    vbc_extension_id: Optional[str] = None
+    vbc_user_username: Optional[str] = None
+    vbc_user_password: Optional[str] = None
+    permissions: Optional[List[str]] = None
 
     @validator('phone_number')
     def validate_phone(cls, v):
@@ -124,6 +134,10 @@ class UserOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     senior_profile_id: Optional[int] = None
+    vbc_extension_id: Optional[str] = None
+    vbc_user_username: Optional[str] = None
+    vbc_user_password: Optional[str] = None
+    permissions: Optional[List[str]] = None
 
 # Response models for specific operations
 class UserCreateResponse(BaseModel):

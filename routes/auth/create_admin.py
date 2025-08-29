@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from db.connection import get_db, engine
-    from db.models import UserDetails, PermissionDetails, ProfileRole, Base
+    from db.models import UserDetails, ProfileRole, Base
     from passlib.context import CryptContext
 except ImportError as e:
     print(f"❌ Import error: {e}")

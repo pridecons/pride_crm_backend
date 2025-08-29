@@ -7,8 +7,10 @@ from jose import JWTError
 import logging
 
 from db.connection import get_db
-from db.models import UserDetails
+from db.models import UserDetails, PermissionDetails
 from routes.auth.JWTSecurity import verify_token
+from typing import Union
+
 
 logger = logging.getLogger(__name__)
 
@@ -138,26 +140,35 @@ def require_role(*allowed_roles):
     return role_checker
 
 # Permission-based access control
-def require_permission(permission_name: str):
+# routes/auth/auth_dependency.py
+
+def require_permission(permission: Union[str, PermissionDetails]):
     """
-    Require specific permission
-    Usage: @require_permission('add_lead')
+    Require a specific permission.
+    Usage:
+      @router.get(..., dependencies=[Depends(require_permission('lead_manage_page'))])
+      @router.post(..., dependencies=[Depends(require_permission(PermissionDetails.lead_manage_page))])
     """
-    def permission_checker(
-        current_user: UserDetails = Depends(get_current_user)
-    ) -> UserDetails:
-        # if not current_user.permission:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail="User permissions not found"
-        #     )
-        
-        # if not getattr(current_user.permission, permission_name, False):
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail=f"Permission '{permission_name}' required"
-        #     )
-        
+    def permission_checker(current_user: UserDetails = Depends(get_current_user)) -> UserDetails:
+        # Normalize to string on each request (lazy validation to avoid import-time crashes)
+        perm_value = permission.value if isinstance(permission, PermissionDetails) else str(permission).strip()
+
+        # Validate against enum
+        valid = {p.value for p in PermissionDetails}
+        if perm_value not in valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown permission '{perm_value}'. Valid permissions are: {sorted(valid)}"
+            )
+
+        user_perms = set(current_user.permissions or [])
+        if perm_value not in user_perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{perm_value}' required"
+            )
         return current_user
-    
+
     return permission_checker
+
+

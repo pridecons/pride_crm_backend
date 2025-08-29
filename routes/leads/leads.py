@@ -17,7 +17,7 @@ from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
-
+from sqlalchemy import or_
 from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
 
 
@@ -375,7 +375,6 @@ def create_lead(
                 conditions.append(Lead.mobile == lead_in.mobile)
             
             if conditions:
-                from sqlalchemy import or_
                 existing_lead = query.filter(or_(*conditions)).first()
                 if existing_lead:
                     raise HTTPException(

@@ -20,7 +20,7 @@ from db.Schema.payment import  PaymentOut  # keep using your existing request ty
 from routes.auth.auth_dependency import get_current_user
 from sqlalchemy.exc import SQLAlchemyError
 from config import PAYMENT_LIMIT
-
+from sqlalchemy.orm import load_only
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,19 @@ async def get_payment_history_rich(
         user_ids = {r.user_id for r in records if r.user_id}
         employee_map: Dict[str, UserDetails] = {}
         if user_ids:
-            users = db.query(UserDetails).filter(UserDetails.employee_code.in_(list(user_ids))).all()
+            users = (
+                db.query(UserDetails)
+                .options(load_only(
+                    UserDetails.employee_code,
+                    UserDetails.name,
+                    UserDetails.phone_number,
+                    UserDetails.email,
+                    UserDetails.role_id,
+                    UserDetails.role_name,   # ← add this
+                ))
+                .filter(UserDetails.employee_code.in_(list(user_ids)))
+                .all()
+            )
             employee_map = {u.employee_code: u for u in users}
 
     except SQLAlchemyError as e:
@@ -282,7 +294,10 @@ async def get_payment_history_rich(
         employee = employee_map.get(r.user_id) if r.user_id else None
         if employee:
             data["raised_by"] = getattr(employee, "name", None) or getattr(employee, "full_name", None)
-            data["raised_by_role"] = getattr(employee, "role_id", None)
+            data["raised_by_role"] = (
+                getattr(employee, "role_name", None)
+                or (str(employee.role_id) if getattr(employee, "role_id", None) is not None else None)
+            )
             data["raised_by_phone"] = getattr(employee, "phone_number", None)
             data["raised_by_email"] = getattr(employee, "email", None)
         else:
