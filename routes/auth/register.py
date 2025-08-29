@@ -135,7 +135,7 @@ def get_all_users(
     active_only: bool = False,
     branch_id: Optional[int] = None,
     role_id: Optional[str] = None,
-    senior_profile_id: Optional[int] = None,  # <--- new optional filter
+    senior_profile_id: Optional[str] = None,  # <--- new optional filter
     search: Optional[str] = None,
     db: Session = Depends(get_db),
 ):

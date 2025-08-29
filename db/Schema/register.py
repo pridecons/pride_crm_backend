@@ -1,9 +1,8 @@
-# db/Schema/register.py - Fixed Pydantic V2 warnings
+# db/Schema/register.py
 
 from pydantic import BaseModel, EmailStr, constr, validator, ConfigDict
 from typing import Optional, List
 from datetime import date, datetime
-from enum import Enum
 
 class UserBase(BaseModel):
     phone_number: constr(strip_whitespace=True, min_length=10, max_length=10)
@@ -48,15 +47,14 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: constr(min_length=6)
-    role_id: str = 0
+    role_id: str = "0"                      # keep as string input; we will coerce to int when saving
     branch_id: Optional[int] = None
-    senior_profile_id: Optional[int] = None
+    senior_profile_id: Optional[str] = None # <-- STRING employee_code
 
     vbc_extension_id: Optional[str] = None
     vbc_user_username: Optional[str] = None
     vbc_user_password: Optional[str] = None
     permissions: Optional[List[str]] = None
-
 
 class UserUpdate(BaseModel):
     phone_number: Optional[constr(strip_whitespace=True, min_length=10, max_length=10)] = None
@@ -75,9 +73,9 @@ class UserUpdate(BaseModel):
     pincode: Optional[constr(strip_whitespace=True, min_length=6, max_length=6)] = None
     comment: Optional[str] = None
     password: Optional[constr(min_length=6)] = None
-    role_id: Optional[str] = None
+    role_id: Optional[str] = None          # we’ll coerce to int in the route
     branch_id: Optional[int] = None
-    senior_profile_id: Optional[int] = None
+    senior_profile_id: Optional[str] = None# <-- STRING employee_code
 
     vbc_extension_id: Optional[str] = None
     vbc_user_username: Optional[str] = None
@@ -108,8 +106,6 @@ class UserUpdate(BaseModel):
             raise ValueError('Pincode must be exactly 6 digits')
         return v
 
-
-# Simple response model without complex relationships
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -117,7 +113,7 @@ class UserOut(BaseModel):
     phone_number: str
     email: str
     name: str
-    role_id: str  # String instead of enum for easier serialization
+    role_id: str
     father_name: str
     is_active: bool
     experience: float
@@ -133,7 +129,7 @@ class UserOut(BaseModel):
     branch_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
-    senior_profile_id: Optional[int] = None
+    senior_profile_id: Optional[str] = None   # <-- STRING employee_code
     vbc_extension_id: Optional[str] = None
     vbc_user_username: Optional[str] = None
     vbc_user_password: Optional[str] = None
