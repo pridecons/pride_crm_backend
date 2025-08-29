@@ -69,8 +69,6 @@ class BranchManagerCreateForm(BaseModel):
     branch_name: constr(strip_whitespace=True, min_length=1, max_length=100)
     branch_address: str
     authorized_person: constr(strip_whitespace=True, min_length=1, max_length=100)
-    branch_pan: constr(strip_whitespace=True, min_length=10, max_length=10)
-    branch_aadhaar: constr(strip_whitespace=True, min_length=12, max_length=12)
     branch_active: bool = True
     
     # Manager Details
@@ -95,18 +93,6 @@ class BranchManagerCreateForm(BaseModel):
     def validate_phone(cls, v):
         if not v.isdigit():
             raise ValueError('Phone number must contain only digits')
-        return v
-
-    @validator('branch_pan', 'manager_pan')
-    def validate_pan(cls, v):
-        if v and len(v) != 10:
-            raise ValueError('PAN must be exactly 10 characters')
-        return v.upper() if v else v
-
-    @validator('branch_aadhaar', 'manager_aadhaar')
-    def validate_aadhaar(cls, v):
-        if v and (len(v) != 12 or not v.isdigit()):
-            raise ValueError('Aadhaar must be exactly 12 digits')
         return v
 
     @validator('manager_pincode')

@@ -304,8 +304,6 @@ class BranchDetails(Base):
     name              = Column(String(100), nullable=False, unique=True, index=True)
     address           = Column(Text, nullable=False)
     authorized_person = Column(String(100), nullable=False)
-    pan               = Column(String(10), nullable=False)
-    aadhaar           = Column(String(12), nullable=False)
     agreement_url     = Column(String(255), nullable=True)
     active            = Column(Boolean, nullable=False, default=True)
 
