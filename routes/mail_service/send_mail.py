@@ -36,83 +36,85 @@ Website: www.pridecons.com
             """
             
             # Create HTML version
-            html_content = f"""
+            html_content = f"""\
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{subject}</title>
-    <style>
-        body {{
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            text-align: center;
-            border-radius: 10px 10px 0 0;
-        }}
-        .content {{
-            background: #f9f9f9;
-            padding: 30px;
-            border-radius: 0 0 10px 10px;
-        }}
-        .footer {{
-            background: #fff;
-            color: white;
-            padding: 20px;
-            text-align: center;
-            font-size: 12px;
-            margin-top: 20px;
-            border-radius: 5px;
-        }}
-        .btn {{
-            display: inline-block;
-            background-color: #3498db;
-            color: white;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: bold;
-            margin: 20px 0;
-        }}
-        .btn:hover {{
-            background-color: #2980b9;
-        }}
-        .warning {{
-            background-color: #f8f9fa;
-            border-left: 4px solid #17a2b8;
-            padding: 15px;
-            margin: 20px 0;
-        }}
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Hint to clients that both themes are supported -->
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>{subject}</title>
+  <style>
+    /* ===== Base (light) ===== */
+    body {{
+      margin:0; padding:0;
+      background:#ffffff; color:#333333;
+      font-family: Arial, sans-serif; line-height:1.6;
+    }}
+    .wrap {{ max-width:600px; margin:0 auto; }}
+    .content {{
+      background:#f9f9f9; padding:30px;
+      border-radius:0 0 10px 10px;
+    }}
+    .footer {{
+      background:#ffffff; color:#333333;
+      padding:20px; text-align:center; font-size:12px; margin-top:20px; border-radius:5px;
+    }}
+    /* Buttons & links in light */
+    a {{ color:#1d4ed8; }}
+    .btn {{
+      display:inline-block; background:#3498db; color:#ffffff !important;
+      padding:15px 30px; text-decoration:none; border-radius:5px; font-weight:bold;
+    }}
+    .btn:hover {{ background:#2980b9; }}
+    .warning {{
+      background:#f8f9fa; border-left:4px solid #17a2b8;
+      padding:15px; margin:20px 0; color:#555555;
+    }}
+
+    /* ===== Dark mode overrides ===== */
+    @media (prefers-color-scheme: dark) {{
+      body {{ background:#0b0e14 !important; color:#e5e7eb !important; }}
+      .content {{ background:#121723 !important; color:#e5e7eb !important; }}
+      .footer {{ background:#0b0e14 !important; color:#cbd5e1 !important; }}
+      a {{ color:#93c5fd !important; }}
+      .btn {{ background:#60a5fa !important; color:#0b0e14 !important; }}
+      .btn:hover {{ background:#93c5fd !important; }}
+      .warning {{
+        background:#0f172a !important; border-left-color:#38bdf8 !important; color:#cbd5e1 !important;
+      }}
+    }}
+
+    /* Outlook.com / Office 365 dark mode hint */
+    [data-ogsc] body,
+    [data-ogsc] .content {{ background:#0b0e14 !important; color:#e5e7eb !important; }}
+    [data-ogsc] .footer {{ background:#0b0e14 !important; color:#cbd5e1 !important; }}
+    [data-ogsc] a {{ color:#93c5fd !important; }}
+    [data-ogsc] .btn {{ background:#60a5fa !important; color:#0b0e14 !important; }}
+  </style>
 </head>
-<body>   
+<body>
+  <div class="wrap">
+    <!-- Your same content goes here, unchanged -->
     <div class="content">
-        {content}
+      {content}
     </div>
-    
+
     <div class="footer">
-        <strong>Pride Trading Consultancy Pvt. Ltd.</strong><br>
-        <strong>Sebi Registered Research Analyst</strong><br>
-        <strong>Sebi Registration No.: INH000010362</strong><br>
-        📧 Email: compliance@pridecons.com<br>
-        📞 Phone: +91-9981919424<br>
-        🌐 Website: www.pridecons.com<br>
-        <br>
-        <small>This is an automated email. Please do not reply directly to this email.</small>
+      <strong>Pride Trading Consultancy Pvt. Ltd.</strong><br>
+      <strong>Sebi Registered Research Analyst</strong><br>
+      <strong>Sebi Registration No.: INH000010362</strong><br>
+      📧 Email: compliance@pridecons.com<br>
+      📞 Phone: +91-9981919424<br>
+      🌐 Website: www.pridecons.com<br><br>
+      <small>This is an automated email. Please do not reply directly to this email.</small>
     </div>
+  </div>
 </body>
-</html>
-            """
-            
+</html>"""
+
             # Attach parts
             part1 = MIMEText(text_content, 'plain')
             part2 = MIMEText(html_content, 'html')
