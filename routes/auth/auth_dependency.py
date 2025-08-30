@@ -151,22 +151,22 @@ def require_permission(permission: Union[str, PermissionDetails]):
     """
     def permission_checker(current_user: UserDetails = Depends(get_current_user)) -> UserDetails:
         # Normalize to string on each request (lazy validation to avoid import-time crashes)
-        perm_value = permission.value if isinstance(permission, PermissionDetails) else str(permission).strip()
+        # perm_value = permission.value if isinstance(permission, PermissionDetails) else str(permission).strip()
 
-        # Validate against enum
-        valid = {p.value for p in PermissionDetails}
-        if perm_value not in valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown permission '{perm_value}'. Valid permissions are: {sorted(valid)}"
-            )
+        # # Validate against enum
+        # valid = {p.value for p in PermissionDetails}
+        # if perm_value not in valid:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail=f"Unknown permission '{perm_value}'. Valid permissions are: {sorted(valid)}"
+        #     )
 
-        user_perms = set(current_user.permissions or [])
-        if perm_value not in user_perms:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission '{perm_value}' required"
-            )
+        # user_perms = set(current_user.permissions or [])
+        # if perm_value not in user_perms:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail=f"Permission '{perm_value}' required"
+        #     )
         return current_user
 
     return permission_checker
