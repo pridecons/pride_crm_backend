@@ -99,7 +99,7 @@ async def sign_pdf(pdf_bytes: bytes) -> bytes:
                 sig_field_spec = SigFieldSpec(
                     'Signature1',
                     on_page=-1,
-                    box=(340, 480, 490, 420)
+                    box=(340, 540, 490, 480)
                 )
 
                 # (left, bottom, right, top)
@@ -1107,7 +1107,7 @@ async def generate_kyc_pdf(data,mobile:str,employee_code:str , db:Session = Depe
             {
                 "page_num": 13,
                 "x_coord": 380,
-                "y_coord": 100
+                "y_coord": 130
             }
         ]
     }
@@ -1150,25 +1150,25 @@ async def generate_kyc_pdf(data,mobile:str,employee_code:str , db:Session = Depe
     return data
 
 
-if __name__ == "__main__":
-    import asyncio
-    from db.connection import get_db
+# if __name__ == "__main__":
+#     import asyncio
+#     from db.connection import get_db
 
-    # 1) Static input payload
-    data = {
-        "mobile": "7869615290",
-        "platform": "pridebuzz",
-        "full_name": "Dheeraj Malviya",
-        "city": "Manawar",
-        "date": "2025-08-07"
-    }
-    employee_code = "Admin001"
+#     # 1) Static input payload
+#     data = {
+#         "mobile": "7869615290",
+#         "platform": "pridebuzz",
+#         "full_name": "Dheeraj Malviya",
+#         "city": "Manawar",
+#         "date": "2025-08-07"
+#     }
+#     employee_code = "Admin001"
 
-    # 2) Grab a DB session
-    db = next(get_db())
+#     # 2) Grab a DB session
+#     db = next(get_db())
 
-    # 3) Run the async function
-    result = asyncio.run(generate_kyc_pdf(data, data["mobile"], employee_code, db))
+#     # 3) Run the async function
+#     result = asyncio.run(generate_kyc_pdf(data, data["mobile"], employee_code, db))
 
-    # 4) Print out whatever Zoop returns
-    print(json.dumps(result, indent=2))
+#     # 4) Print out whatever Zoop returns
+#     print(json.dumps(result, indent=2))
