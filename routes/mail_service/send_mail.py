@@ -65,7 +65,7 @@ Website: www.pridecons.com
             border-radius: 0 0 10px 10px;
         }}
         .footer {{
-            background: #2c3e50;
+            background: #fff;
             color: white;
             padding: 20px;
             text-align: center;
