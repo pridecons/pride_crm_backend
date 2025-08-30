@@ -104,7 +104,7 @@ async def update_kyc_details(
     <div style="text-align: center; margin: 30px 0;">
         <a href="{signing_url}" 
            style="background-color: #3498db; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            Click Here to Onboarding Process
+            Onboarding Process
         </a>
     </div>
     
