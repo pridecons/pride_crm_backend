@@ -1,27 +1,26 @@
 # routes/notification/notification_scheduler.py
 import asyncio
-from datetime import datetime
 import logging
+import os
+from datetime import datetime, timezone
 from urllib.parse import quote_plus
-from config import DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.util import utc
 
 from routes.notification.notification_service import notification_service
+from config import DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD
 
 logger = logging.getLogger(__name__)
 
-
 pw_quoted = quote_plus(str(DB_PASSWORD))
+JOBSTORE_URL = f"postgresql+psycopg2://{DB_USERNAME}:{pw_quoted}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Configure jobstore to persist across restarts; adjust connection string to match your DB config
-JOBSTORE_URL = f"postgresql+psycopg2://{DB_USERNAME}:{pw_quoted}@{DB_HOST}:{DB_PORT}/{DB_NAME}"  # replace with your actual DSN
+jobstores = {"default": SQLAlchemyJobStore(url=JOBSTORE_URL)}
 
-jobstores = {
-    "default": SQLAlchemyJobStore(url=JOBSTORE_URL)
-}
-scheduler = AsyncIOScheduler(jobstores=jobstores)
+# IMPORTANT: force UTC timezone so run_date with tz-aware UTC works predictably
+scheduler = AsyncIOScheduler(jobstores=jobstores, timezone=utc)
 
 
 async def send_callback_reminder(user_id: str, lead_id: int, mobile: str):
@@ -34,22 +33,31 @@ async def send_callback_reminder(user_id: str, lead_id: int, mobile: str):
         await notification_service.notify(user_id=user_id, title=title, message=message)
         logger.info("Sent callback reminder to user %s for lead %s", user_id, lead_id)
     except Exception as e:
-        logger.exception("Failed to send callback reminder to %s for lead %s: %s", user_id, lead_id, e)
+        logger.exception("Failed to send callback reminder to %s for lead %s: %s",
+                        user_id, lead_id, e)
 
 
 def schedule_callback(user_id: str, lead_id: int, callback_dt: datetime, mobile: str):
     """
     Schedule (or reschedule) the reminder job.
-    Uses a deterministic job id so updating replaces existing.
+    Uses deterministic job id so updating replaces existing.
     """
-    job_id = f"callback_notify_{lead_id}"
-    # Remove existing if any (replace_existing=True also works, but explicit is safer)
-    if scheduler.get_job(job_id):
-        try:
-            scheduler.remove_job(job_id)
-        except Exception:
-            logger.warning("Failed to remove existing job %s before rescheduling", job_id)
+    # Normalize to aware UTC
+    if callback_dt.tzinfo is None:
+        callback_dt = callback_dt.replace(tzinfo=timezone.utc)
+    else:
+        callback_dt = callback_dt.astimezone(timezone.utc)
 
+    job_id = f"callback_notify_{lead_id}"
+
+    # Remove existing job if present
+    try:
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+    except Exception:
+        logger.warning("Failed to remove existing job %s before rescheduling", job_id)
+
+    # NOTE: AsyncIOScheduler can run coroutine functions directly
     scheduler.add_job(
         send_callback_reminder,
         trigger="date",
@@ -57,12 +65,36 @@ def schedule_callback(user_id: str, lead_id: int, callback_dt: datetime, mobile:
         args=[user_id, lead_id, mobile],
         id=job_id,
         replace_existing=True,
-        misfire_grace_time=300,  # if a little late, still attempt within 5 minutes
+        misfire_grace_time=600,  # 10 mins grace
+        coalesce=True,
+        max_instances=1,
     )
-    logger.info("Scheduled callback reminder job %s at %s for user %s", job_id, callback_dt.isoformat(), user_id)
+    logger.info("Scheduled callback job %s at %s for user %s",
+                job_id, callback_dt.isoformat(), user_id)
 
 
 def start_scheduler():
+    """
+    Start once per process. Safe to call multiple times.
+    """
     if not scheduler.running:
+        # Optional: more verbose logging to see scheduling clearly
+        logging.getLogger('apscheduler').setLevel(logging.INFO)
         scheduler.start()
-        logger.info("Callback scheduler started")
+        logger.info("Callback scheduler started (UTC timezone).")
+
+
+async def shutdown_scheduler():
+    """
+    Clean shutdown on app exit.
+    """
+    try:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+            logger.info("Callback scheduler stopped.")
+    except Exception:
+        logger.exception("Error while stopping scheduler")
+
+def is_scheduler_running() -> bool:
+    return scheduler.running
+

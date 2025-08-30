@@ -32,61 +32,65 @@ from routes.attendance import attendance
 from routes.Rational import Rational
 from routes.notification import notifiaction_websocket, send_notification
 from routes.Send_client_message import Client_mail_service, sms_templates
-from routes.notification.notification_scheduler import start_scheduler
+from routes.notification.notification_scheduler import start_scheduler, shutdown_scheduler, is_scheduler_running
 from routes.payments import Get_Invoice, payment
 from db.complete_initialization import setup_complete_system
+from routes.VBC_Calling import Create_Call
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
     logger.info("🚀 Starting CRM Backend...")
-    
+
     try:
-        lead_scheduler.start()
-        # Initialize FastAPI Cache
-        FastAPICache.init(
-            backend=InMemoryBackend(),
-            prefix="fastapi-cache"
-        )
+        # 1) Start all schedulers ONCE here
+        lead_scheduler.start()          # your existing lead scheduler
+        start_scheduler()               # notification (APS) scheduler
+
+        # 2) Init cache
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
         logger.info("✅ Cache initialized")
-        
-        # Check database connection
+
+        # 3) DB check + tables
         if not check_database_connection():
-            logger.error("❌ Database connection failed!")
             raise Exception("Database connection failed")
         logger.info("✅ Database connection verified")
-        
-        # Create database tables
         models.Base.metadata.create_all(engine)
         logger.info("✅ Database tables created/verified")
-        
-        # SINGLE FUNCTION CALL - This will create everything
+
+        # 4) Bootstrap system
         if setup_complete_system():
             logger.info("✅ Complete system setup successful!")
         else:
             logger.error("❌ System setup failed!")
-        
-        # Create static directories
+
+        # 5) Static dirs
         os.makedirs("static/agreements", exist_ok=True)
         os.makedirs("static/lead_documents", exist_ok=True)
         logger.info("✅ Static directories created")
-        
+
         logger.info("🎉 Application startup completed successfully!")
-        
+
     except Exception as e:
-        logger.error(f"❌ Application startup failed: {str(e)}")
-        raise e
-    
+        logger.error(f"❌ Application startup failed: {e}")
+        raise
+
+    # Hand control back to FastAPI
     yield
-    
-    # Shutdown
-    lead_scheduler.stop()
+
+    # === Graceful shutdown ===
+    try:
+        lead_scheduler.stop()
+    except Exception as e:
+        logger.warning(f"Lead scheduler stop error: {e}")
+
+    try:
+        await shutdown_scheduler()  # notification APS shutdown
+    except Exception as e:
+        logger.warning(f"Notification scheduler stop error: {e}")
+
     logger.info("🛑 Shutting down CRM Backend...")
-
-
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
@@ -104,10 +108,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def on_startup():
-    start_scheduler()
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -140,6 +140,7 @@ def health_check():
 
 # Register all your existing routes
 try:
+    app.include_router(Create_Call.router, prefix="/api/v1")
     app.include_router(ProfileRole.departments_router, prefix="/api/v1")
     app.include_router(ProfileRole.profiles_router, prefix="/api/v1")
     app.include_router(register.router, prefix="/api/v1")
