@@ -138,7 +138,7 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
 @router.post("/fetch", response_model=dict)
 def fetch_leads(
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(get_current_user()),
+    current_user: UserDetails = Depends(get_current_user),
 ):
     try:
         # Load config and check per‐user active assignments
