@@ -9,16 +9,6 @@ import ssl
 from config import COM_SMTP_SERVER, COM_SMTP_PORT, COM_SMTP_USER, COM_SMTP_PASSWORD
 
 async def send_mail(email, name, subject, content, is_html=False):
-    """
-    Send email with support for both plain text and HTML content
-    
-    Args:
-        email: Recipient email address
-        name: Recipient name
-        subject: Email subject
-        content: Email content (plain text or HTML)
-        is_html: Boolean flag to indicate if content is HTML
-    """
     smtp_server = COM_SMTP_SERVER
     smtp_port = COM_SMTP_PORT
     smtp_user = COM_SMTP_USER
@@ -104,22 +94,18 @@ Website: www.pridecons.com
         }}
     </style>
 </head>
-<body>
-    <div class="header">
-        <h1>Pride Trading Consultancy Pvt. Ltd.</h1>
-        <p>SEBI Registered Research Analyst - INH000010362</p>
-    </div>
-    
+<body>   
     <div class="content">
         {content}
     </div>
     
     <div class="footer">
         <strong>Pride Trading Consultancy Pvt. Ltd.</strong><br>
+        <strong>Sebi Registered Research Analyst</strong><br>
+        <strong>Sebi Registration No.: INH000010362</strong><br>
         📧 Email: compliance@pridecons.com<br>
         📞 Phone: +91-9981919424<br>
         🌐 Website: www.pridecons.com<br>
-        📍 Address: 410-411, Serene Centrum Sevasi Road, Vadodara, Gujarat 390021<br>
         <br>
         <small>This is an automated email. Please do not reply directly to this email.</small>
     </div>

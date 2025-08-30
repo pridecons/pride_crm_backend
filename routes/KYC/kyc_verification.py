@@ -96,9 +96,7 @@ async def update_kyc_details(
             if signing_url:
                 # Create proper email content with HTML formatting
                 email_content = f"""
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-    <h2 style="color: #2c3e50;">KYC Document Signing</h2>
-    
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">   
     <p>Dear {kyc_user.full_name},</p>
     
     <p>Your KYC document is ready for digital signature. Please click the link below to review and sign your agreement:</p>
@@ -106,7 +104,7 @@ async def update_kyc_details(
     <div style="text-align: center; margin: 30px 0;">
         <a href="{signing_url}" 
            style="background-color: #3498db; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            Click Here to Sign KYC Document
+            Click Here to Onboarding Process
         </a>
     </div>
     
