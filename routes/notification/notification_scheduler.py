@@ -28,7 +28,7 @@ async def send_callback_reminder(user_id: str, lead_id: int, mobile: str):
     The actual task that runs at call_back_date to notify the employee.
     """
     title = "Call Back Reminder"
-    message = f"Lead {mobile} के लिए call back का समय आ गया है। कृपया कॉल करें।"
+    message = f"The callback time for lead {mobile} has arrived. Please call now."
     try:
         await notification_service.notify(user_id=user_id, title=title, message=message)
         logger.info("Sent callback reminder to user %s for lead %s", user_id, lead_id)
