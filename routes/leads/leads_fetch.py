@@ -14,7 +14,7 @@ from db.models import (
     LeadFetchHistory,
     UserDetails,
 )
-from routes.auth.auth_dependency import require_permission
+from routes.auth.auth_dependency import get_current_user
 from utils.AddLeadStory import AddLeadStory
 
 router = APIRouter(
@@ -138,7 +138,7 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
 @router.post("/fetch", response_model=dict)
 def fetch_leads(
     db: Session = Depends(get_db),
-    current_user: UserDetails = Depends(require_permission("fetch_lead")),
+    current_user: UserDetails = Depends(get_current_user()),
 ):
     try:
         # Load config and check per‐user active assignments
