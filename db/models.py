@@ -749,8 +749,10 @@ class SMSLog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     template_id = Column(Integer, ForeignKey("crm_sms_templates.id"), nullable=False)
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
     recipient_phone_number = Column(String(320), nullable=False, index=True)
     body = Column(Text, nullable=False)
+    sms_type = Column(String(50), nullable=True)
     status = Column(String(50), nullable=True)
     sent_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     user_id = Column(String(50), nullable=False, index=True)
@@ -761,8 +763,10 @@ class EmailLog(Base):
     __tablename__ = "crm_email_logs"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    template_id     = Column(Integer, ForeignKey("crm_email_templates.id"), nullable=False)
+    template_id     = Column(Integer, ForeignKey("crm_email_templates.id"), nullable=True)
     recipient_email = Column(String(320), nullable=False, index=True)
+    sender_email = Column(String(320), nullable=True)
+    mail_type = Column(String(50), nullable=True)
     subject         = Column(String(200), nullable=False)
     body            = Column(Text, nullable=False)
     user_id         = Column(String(50), nullable=False, index=True)

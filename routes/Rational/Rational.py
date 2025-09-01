@@ -217,13 +217,23 @@ async def create_recommendation(
                 detail="Database error occurred while creating recommendation"
             )
         
+        stock_details={
+            'entry_price':entry_price,
+            'stop_loss':stop_loss,
+            'targets':targets,
+            'targets2':targets2,
+            'targets3':targets3,
+            'stock_name':stock_name,
+            'recommendation_type':recommendation_type
+        }
+        
         background_tasks.add_task(
             distribution_rational,
             recommendation.id,
             templateId,
             message,
+            stock_details
         )
-
 
         # Generate PDF if rationale provided
         if rational and rational.strip():

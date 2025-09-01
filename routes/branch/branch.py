@@ -59,8 +59,6 @@ class BranchOut(BaseModel):
     name: str
     address: str
     authorized_person: str
-    pan: Optional[str] = None
-    aadhaar: Optional[str] = None
     agreement_url: Optional[str] = None
     active: bool
     manager_id: Optional[str] = None
@@ -204,8 +202,6 @@ def get_branch_details(branch_id: int, db: Session = Depends(get_db)):
             "name": branch.name,
             "address": branch.address,
             "authorized_person": branch.authorized_person,
-            "pan": branch.pan,
-            "aadhaar": branch.aadhaar,
             "agreement_url": branch.agreement_url,
             "active": branch.active,
             "manager_id": branch.manager_id,
