@@ -667,8 +667,7 @@ async def distribution_rational(
     Also sends an email (if lead.email exists) and logs it to crm_email_logs.
     """
     logger.info("distribution_rational: recommendation_id=%s template_id=%s", recommendation_id, template_id)
-
-    mail_sub = "Recomensation"
+    
         # ------ Email subject + HTML & text bodies ------
     stock_name        = _sd_get(stock_details, "stock_name")
     rec_type_display  = _fmt_rec_type(_sd_get(stock_details, "recommendation_type"))
