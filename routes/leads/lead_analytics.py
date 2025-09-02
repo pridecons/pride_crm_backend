@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_, desc, func, text, case, extract
+from sqlalchemy import (
+    and_, or_, desc, func, text, case, extract, exists, select, literal
+)
 from typing import List, Optional, Dict, Any, Tuple, Literal
 from datetime import datetime, date, timedelta
 from pydantic import BaseModel
@@ -28,7 +30,7 @@ class LeadStatsModel(BaseModel):
     unassigned_leads: int
     called_leads: int
     uncalled_leads: int
-    converted_leads: int  # leads with payments
+    converted_leads: int
     conversion_rate: float
 
 class PaymentStatsModel(BaseModel):
@@ -97,7 +99,6 @@ class AdminAnalyticsResponse(BaseModel):
     source_analytics: List[SourceAnalyticsModel]
     branch_performance: List[Dict[str, Any]]
     top_performers: List[EmployeePerformanceModel]
-    # new: return filters for UI
     filters: Optional[FiltersMeta] = None
 
 class ResponseAnalyticsSummary(BaseModel):
@@ -108,13 +109,11 @@ class ResponseAnalyticsSummary(BaseModel):
 # Helpers
 # ===========================
 def get_date_range_filter(days: int = 30):
-    """Get date filter for last N days"""
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=days)
     return start_date, end_date
 
 def calculate_conversion_rate(total_leads: int, converted_leads: int) -> float:
-    """Calculate conversion rate percentage"""
     if total_leads == 0:
         return 0.0
     return round((converted_leads / total_leads) * 100, 2)
@@ -125,7 +124,6 @@ def get_employee_leads_query(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ):
-    """Get base query for employee's leads (LeadAssignment scoped)"""
     query = (
         db.query(Lead)
         .join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
@@ -136,17 +134,14 @@ def get_employee_leads_query(
             )
         )
     )
-
     if date_from:
         query = query.filter(Lead.created_at >= date_from)
     if date_to:
         query = query.filter(Lead.created_at <= date_to)
-
     return query
 
 def _branch_id_for_manager(u: UserDetails) -> Optional[int]:
-    """Prefer managed branch; fallback to own branch_id"""
-    if u.manages_branch:
+    if getattr(u, "manages_branch", None):
         return u.manages_branch.id
     return u.branch_id
 
@@ -158,33 +153,23 @@ def apply_visibility_to_leads(
     view: Literal["self", "other", "all"] = "all",
     team_member: Optional[str] = None,
 ):
-    """
-    Apply role-based scope to a Lead base query.
-    - SUPERADMIN: no restriction
-    - BRANCH_MANAGER: restrict by branch
-    - Others: self / subordinates via LeadAssignment
-    Returns: (scoped_query, FiltersMeta|None)
-    """
-    role = (current_user.role_name or "").upper()
+    role = (getattr(current_user, "role_name", "") or "").upper()
 
-    # SUPERADMIN -> no restriction
     if role == "SUPERADMIN":
         return base_leads_q, None
 
-    # BRANCH_MANAGER -> branch scope
     if role == "BRANCH_MANAGER":
         b_id = _branch_id_for_manager(current_user)
         if b_id is None:
             return base_leads_q.filter(Lead.id == -1), None
         return base_leads_q.filter(Lead.branch_id == b_id), None
 
-    # Other employees -> self/subordinates via LeadAssignment
     subs: List[str] = get_subordinate_ids(db, current_user.employee_code)
     if view == "self":
         allowed = [current_user.employee_code]
     elif view == "other":
         allowed = [team_member] if (team_member and team_member in subs) else subs
-    else:  # "all"
+    else:
         allowed = [current_user.employee_code] + subs
 
     scoped = (
@@ -217,13 +202,7 @@ def apply_visibility_to_payments_from_leads_scope(
     view: Literal["self", "other", "all"] = "all",
     team_member: Optional[str] = None,
 ):
-    """
-    Apply visibility to Payments analogous to Leads visibility:
-    - SUPERADMIN: none
-    - BRANCH_MANAGER: by branch (Payment.branch_id else Lead.branch_id)
-    - Others: by user_id in (self + subs) because payments are raised by users
-    """
-    role = (current_user.role_name or "").upper()
+    role = (getattr(current_user, "role_name", "") or "").upper()
 
     if role == "SUPERADMIN":
         return base_payments_q
@@ -234,8 +213,8 @@ def apply_visibility_to_payments_from_leads_scope(
             return base_payments_q.filter(Payment.id == -1)
         return base_payments_q.filter(
             or_(
-                Payment.branch_id == str(b_id),          # when stored as string
-                and_(Payment.branch_id == None, Lead.branch_id == b_id),  # fallback via Lead
+                Payment.branch_id == str(b_id),
+                and_(Payment.branch_id == None, Lead.branch_id == b_id),
             )
         )
 
@@ -261,14 +240,11 @@ def get_admin_leads_query(
     view: Literal["self","other","all"] = "all",
     team_member: Optional[str] = None,
 ) -> Tuple[Any, Optional[FiltersMeta]]:
-    """Get base query for admin-accessible leads with role-based scoping & filters meta."""
     q = db.query(Lead).filter(Lead.is_delete.is_(False))
-
     if date_from:
         q = q.filter(Lead.created_at >= date_from)
     if date_to:
         q = q.filter(Lead.created_at <= date_to)
-
     q, filters_meta = apply_visibility_to_leads(
         db=db,
         current_user=current_user,
@@ -281,10 +257,6 @@ def get_admin_leads_query(
 def _compute_response_analytics_from_leads_query(
     db: Session, leads_base_q
 ) -> Tuple[int, List[ResponseAnalyticsModel]]:
-    """
-    Given a base Lead query (already filtered for role/date/branch),
-    return (overall_total_leads, breakdown_by_response)
-    """
     leads_subq = (
         leads_base_q.with_entities(
             Lead.id.label("id"),
@@ -316,6 +288,49 @@ def _compute_response_analytics_from_leads_query(
         )
     return overall_total, breakdown
 
+# ---------- EXISTS helpers (explicit correlation keeps SQLA happy) ----------
+def _exists_any_assignment_for_lead():
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(LeadAssignment.lead_id == Lead.id)
+        .correlate(Lead)
+        .exists()
+    )
+
+def _exists_called_assignment_for_lead():
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(and_(LeadAssignment.lead_id == Lead.id, LeadAssignment.is_call.is_(True)))
+        .correlate(Lead)
+        .exists()
+    )
+
+def _exists_assignment_for_users(user_codes_selectable):
+    """
+    user_codes_selectable: a selectable that yields one column (employee_code)
+    """
+    # ensure we have a selectable that can be used in IN (...)
+    if hasattr(user_codes_selectable, "c") and "employee_code" in user_codes_selectable.c:
+        col_sel = select(user_codes_selectable.c.employee_code)
+    else:
+        # assume it's already a Select of a single column
+        col_sel = user_codes_selectable
+
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(
+            and_(
+                LeadAssignment.lead_id == Lead.id,
+                LeadAssignment.user_id.in_(col_sel),
+            )
+        )
+        .correlate(Lead)
+        .exists()
+    )
+
 # ===========================
 # Employee Analytics
 # ===========================
@@ -325,20 +340,14 @@ async def get_employee_analytics(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Get comprehensive analytics for the current employee (self only).
-    """
     start_date, end_date = get_date_range_filter(days)
 
-    # Base query for employee's leads
     leads_query = get_employee_leads_query(
         db, current_user.employee_code, start_date, end_date
     )
 
-    # Lead Statistics
     total_leads = leads_query.count()
 
-    # Date-based lead counts
     today = datetime.now().date()
     new_leads_today = leads_query.filter(func.date(Lead.created_at) == today).count()
 
@@ -348,7 +357,6 @@ async def get_employee_analytics(
     month_start = today.replace(day=1)
     new_leads_this_month = leads_query.filter(Lead.created_at >= month_start).count()
 
-    # Assignment statistics
     assignments_query = db.query(LeadAssignment).filter(
         LeadAssignment.user_id == current_user.employee_code
     )
@@ -357,7 +365,6 @@ async def get_employee_analytics(
     called_leads = assignments_query.filter(LeadAssignment.is_call.is_(True)).count()
     uncalled_leads = assigned_leads - called_leads
 
-    # Conversion statistics
     converted_leads_query = (
         leads_query.join(Payment, Lead.id == Payment.lead_id)
         .filter(Payment.paid_amount > 0)
@@ -371,14 +378,13 @@ async def get_employee_analytics(
         new_leads_this_week=new_leads_this_week,
         new_leads_this_month=new_leads_this_month,
         assigned_leads=assigned_leads,
-        unassigned_leads=0,  # not applicable for employee card
+        unassigned_leads=0,
         called_leads=called_leads,
         uncalled_leads=uncalled_leads,
         converted_leads=converted_leads,
         conversion_rate=calculate_conversion_rate(total_leads, converted_leads),
     )
 
-    # Payment Statistics
     payments_query = (
         db.query(Payment)
         .join(Lead, Payment.lead_id == Lead.id)
@@ -403,7 +409,6 @@ async def get_employee_analytics(
 
     avg_payment = (total_revenue / total_payments) if total_payments > 0 else 0
 
-    # Revenue by time periods
     revenue_today = (
         payments_query.filter(func.date(Payment.created_at) == today)
         .with_entities(func.sum(Payment.paid_amount))
@@ -437,7 +442,6 @@ async def get_employee_analytics(
         revenue_this_month=float(revenue_this_month),
     )
 
-    # Daily Activity Trends
     daily_activity: List[DailyActivityModel] = []
     for i in range(days):
         activity_date = end_date - timedelta(days=i)
@@ -476,9 +480,8 @@ async def get_employee_analytics(
             )
         )
 
-    daily_activity.reverse()  # oldest->newest
+    daily_activity.reverse()
 
-    # Source Breakdown
     source_analytics = (
         db.query(
             LeadSource.name,
@@ -514,7 +517,6 @@ async def get_employee_analytics(
             )
         )
 
-    # Response Breakdown
     response_analytics = (
         db.query(LeadResponse.name, func.count(Lead.id).label("total_leads"))
         .select_from(Lead)
@@ -545,7 +547,6 @@ async def get_employee_analytics(
             )
         )
 
-    # Recent Activities
     recent_activities: List[Dict[str, Any]] = []
     recent_stories = (
         db.query(LeadStory)
@@ -566,7 +567,6 @@ async def get_employee_analytics(
             }
         )
 
-    # Targets vs Achievement (placeholder)
     targets_vs_achievement = {
         "monthly_lead_target": 100,
         "monthly_leads_achieved": new_leads_this_month,
@@ -597,16 +597,8 @@ async def get_admin_analytics(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Get comprehensive analytics for admin dashboard
-    Visibility:
-      - SUPERADMIN: all
-      - BRANCH_MANAGER: their branch
-      - Others: self + subordinates (with view filters)
-    """
     start_date, end_date = get_date_range_filter(days)
 
-    # Base query for accessible leads with visibility
     leads_query, filters_meta = get_admin_leads_query(
         db, current_user, start_date, end_date, view=view, team_member=team_member
     )
@@ -614,7 +606,6 @@ async def get_admin_analytics(
     if branch_id:
         leads_query = leads_query.filter(Lead.branch_id == branch_id)
 
-    # Overall Lead Statistics
     total_leads = leads_query.count()
 
     today = datetime.now().date()
@@ -626,24 +617,12 @@ async def get_admin_analytics(
     month_start = today.replace(day=1)
     new_leads_this_month = leads_query.filter(Lead.created_at >= month_start).count()
 
-    # Assignment statistics
-    assigned_leads = (
-        leads_query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
-        .distinct()
-        .count()
-    )
+    # ---- FIX: use correlated EXISTS (no extra JOIN) ----
+    assigned_leads = leads_query.filter(_exists_any_assignment_for_lead()).count()
+    called_leads = leads_query.filter(_exists_called_assignment_for_lead()).count()
     unassigned_leads = total_leads - assigned_leads
-
-    called_leads = (
-        leads_query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
-        .filter(LeadAssignment.is_call.is_(True))
-        .distinct()
-        .count()
-    )
-
     uncalled_leads = assigned_leads - called_leads
 
-    # Conversion statistics
     converted_leads = (
         leads_query.join(Payment, Lead.id == Payment.lead_id)
         .filter(Payment.paid_amount > 0)
@@ -664,7 +643,6 @@ async def get_admin_analytics(
         conversion_rate=calculate_conversion_rate(total_leads, converted_leads),
     )
 
-    # Payment Statistics (scoped like leads)
     payments_query = db.query(Payment).join(Lead, Payment.lead_id == Lead.id)
     payments_query = apply_visibility_to_payments_from_leads_scope(
         db, current_user, payments_query, view=view, team_member=team_member
@@ -721,13 +699,12 @@ async def get_admin_analytics(
         revenue_this_month=float(revenue_this_month),
     )
 
-    # Employee Performance (respect visibility)
     employees_query = (
         db.query(UserDetails)
         .options(joinedload(UserDetails.branch))
         .filter(UserDetails.is_active.is_(True))
     )
-    role = (current_user.role_name or "").upper()
+    role = (getattr(current_user, "role_name", "") or "").upper()
     if role == "BRANCH_MANAGER":
         b_id = _branch_id_for_manager(current_user)
         if b_id:
@@ -792,7 +769,6 @@ async def get_admin_analytics(
             )
         )
 
-    # Daily Trends (limit to 30 for performance)
     daily_trends: List[DailyActivityModel] = []
     for i in range(min(days, 30)):
         trend_date = end_date - timedelta(days=i)
@@ -812,7 +788,6 @@ async def get_admin_analytics(
                 )
             )
         )
-        # branch_id filter already in leads_query; no extra here unless provided:
         if branch_id:
             leads_called_count = leads_called_count.filter(Lead.branch_id == branch_id)
 
@@ -835,7 +810,6 @@ async def get_admin_analytics(
 
     daily_trends.reverse()
 
-    # Source Analytics (respect branch filter + visibility already via leads_query scope for counts)
     source_analytics_query = (
         db.query(
             LeadSource.name,
@@ -854,7 +828,6 @@ async def get_admin_analytics(
             )
         )
     )
-    # apply same visibility here
     if role == "SUPERADMIN":
         pass
     elif role == "BRANCH_MANAGER":
@@ -862,11 +835,21 @@ async def get_admin_analytics(
         if b_id:
             source_analytics_query = source_analytics_query.filter(Lead.branch_id == b_id)
     else:
-        # restrict to self + subs via LeadAssignment
         team_codes = [current_user.employee_code] + get_subordinate_ids(db, current_user.employee_code)
-        source_analytics_query = (
-            source_analytics_query.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
-            .filter(LeadAssignment.user_id.in_(team_codes if team_codes else [current_user.employee_code]))
+        # Use EXISTS to avoid accidental duplicate joins
+        source_analytics_query = source_analytics_query.filter(
+            (
+                select(literal(1))
+                .select_from(LeadAssignment)
+                .where(
+                    and_(
+                        LeadAssignment.lead_id == Lead.id,
+                        LeadAssignment.user_id.in_(team_codes if team_codes else [current_user.employee_code]),
+                    )
+                )
+                .correlate(Lead)
+                .exists()
+            )
         )
 
     if branch_id:
@@ -888,7 +871,6 @@ async def get_admin_analytics(
             )
         )
 
-    # Branch Performance (SUPERADMIN only)
     branch_performance: List[Dict[str, Any]] = []
     if role == "SUPERADMIN":
         branches = db.query(BranchDetails).filter(BranchDetails.active.is_(True)).all()
@@ -951,7 +933,6 @@ async def get_admin_analytics(
                 }
             )
 
-    # Top Performers
     top_performers = sorted(
         employee_performance,
         key=lambda x: (x.conversion_rate, x.total_revenue),
@@ -981,12 +962,6 @@ async def get_admin_dashboard_card(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    A lightweight “card” summary for admin:
-      - overall: total_leads, total_clients, old_leads, new_leads
-      - source_wise: same metrics, grouped by lead source
-    Respects role visibility and view filters.
-    """
     start_date, end_date = get_date_range_filter(days)
 
     base_q, filters_meta = get_admin_leads_query(
@@ -1061,9 +1036,6 @@ async def get_employee_response_analytics(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Response-wise breakdown ONLY for the current employee, plus overall total leads.
-    """
     start_date, end_date = get_date_range_filter(days)
 
     leads_q = get_employee_leads_query(
@@ -1092,12 +1064,6 @@ async def get_admin_response_analytics(
     current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Response-wise breakdown for admin views with extra filters (and overall total):
-      - branch_id, employee_role (id or name), from_date, to_date, source_id, user_id
-    Respects role visibility and self/other/all scope.
-    """
-    # resolve date range
     if from_date and to_date and from_date > to_date:
         from_date, to_date = to_date, from_date
 
@@ -1123,16 +1089,16 @@ async def get_admin_response_analytics(
     if source_id:
         leads_q = leads_q.filter(Lead.lead_source_id == source_id)
 
-    # user/role scoping (intersect with current visibility)
+    # Intersect with extra user/role filter WITHOUT re-joining
     if user_id or employee_role:
         emp_q = db.query(UserDetails.employee_code)
-        role = (current_user.role_name or "").upper()
-        if role == "BRANCH_MANAGER" and current_user.manages_branch:
+        role = (getattr(current_user, "role_name", "") or "").upper()
+        if role == "BRANCH_MANAGER" and getattr(current_user, "manages_branch", None):
             emp_q = emp_q.filter(UserDetails.branch_id == current_user.manages_branch.id)
         emp_q = emp_q.filter(UserDetails.is_active.is_(True))
 
         if employee_role:
-            if employee_role.isdigit():
+            if str(employee_role).isdigit():
                 emp_q = emp_q.filter(UserDetails.role_id == int(employee_role))
             else:
                 emp_q = emp_q.filter(UserDetails.role_name == employee_role)
@@ -1142,9 +1108,8 @@ async def get_admin_response_analytics(
 
         accessible_users_subq = emp_q.subquery()
 
-        leads_q = (
-            leads_q.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
-            .filter(LeadAssignment.user_id.in_(accessible_users_subq))
+        leads_q = leads_q.filter(
+            _exists_assignment_for_users(accessible_users_subq)
         )
 
     total, breakdown = _compute_response_analytics_from_leads_query(db, leads_q)
