@@ -55,7 +55,24 @@ def create_client_consent(
     if kyc_user.email:
         consent["email"] = kyc_user.email
         consent["mail_sent"] = True
-        send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=payload.consent_text, show_pdf=False)
+        send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=f"""
+        <h2>Pre Payment Consent Confirmation</h2>
+        <p>{payload.consent_text}</p>
+
+        <h3>Consent Details</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+        <tr><td><b>Channel</b></td><td>{payload.channel}</td></tr>
+        <tr><td><b>Purpose</b></td><td>{payload.purpose}</td></tr>
+        <tr><td><b>IP Address</b></td><td>{ip}</td></tr>
+        <tr><td><b>User Agent</b></td><td>{ua}</td></tr>
+        <tr><td><b>Device Info</b></td><td><pre>{payload.device_info or {} }</pre></td></tr>
+        <tr><td><b>Timezone Offset (minutes)</b></td><td>{payload.tz_offset_minutes}</td></tr>
+        <tr><td><b>Consented At (UTC)</b></td><td>{now_utc}</td></tr>
+        <tr><td><b>Consented At (IST)</b></td><td>{now_ist}</td></tr>
+        <tr><td><b>Reference ID</b></td><td>{consent.ref_id}</td></tr>
+        </table>
+        """
+        , show_pdf=False)
 
     try:
         db.add(consent)

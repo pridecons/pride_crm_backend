@@ -672,9 +672,25 @@ def update_lead(
                 send_mail_by_client_with_file(
                     to_email=update_data["email"],
                     subject="Pre Payment Consent",
-                    html_content=client_consent.consent_text,
-                    # pdf_file_path=None,  # include only if your function expects it
-                    # remove `show_pdf` if your function doesn't support it
+                    # html_content=client_consent.consent_text,
+                     html_content=f"""
+                        <h2>Pre Payment Consent Confirmation</h2>
+                        <p>{client_consent.consent_text}</p>
+
+                        <h3>Consent Details</h3>
+                        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+                        <tr><td><b>Channel</b></td><td>{client_consent.channel}</td></tr>
+                        <tr><td><b>Purpose</b></td><td>{client_consent.purpose}</td></tr>
+                        <tr><td><b>IP Address</b></td><td>{client_consent.ip_address}</td></tr>
+                        <tr><td><b>User Agent</b></td><td>{client_consent.user_agent}</td></tr>
+                        <tr><td><b>Device Info</b></td><td><pre>{client_consent.device_info or {} }</pre></td></tr>
+                        <tr><td><b>Timezone Offset (minutes)</b></td><td>{client_consent.tz_offset_minutes}</td></tr>
+                        <tr><td><b>Consented At (UTC)</b></td><td>{client_consent.consented_at_utc}</td></tr>
+                        <tr><td><b>Consented At (IST)</b></td><td>{client_consent.consented_at_ist}</td></tr>
+                        <tr><td><b>Reference ID</b></td><td>{client_consent.ref_id}</td></tr>
+                        </table>
+                        """,
+                    show_pdf=False
                 )
 
                 # ORM attribute assignment (not dict-style)
