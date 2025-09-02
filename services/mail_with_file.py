@@ -9,8 +9,8 @@ from config import COM_SMTP_SERVER, COM_SMTP_PORT, COM_SMTP_USER, COM_SMTP_PASSW
 logger = logging.getLogger(__name__)
 
 # ---- Resolve the PDF path RELIABLY (relative to this file) ----
-MODULE_DIR = Path(__file__).resolve().parent
-CHARTER_PATH = MODULE_DIR / "Files" / "Investor Charter for Research Analyst.pdf"
+MODULE_DIR = Path(__file__).resolve()
+CHARTER_PATH =  Path("Files/Investor Charter for Research Analyst.pdf")
 CHARTER_NAME = "Investor Charter for Research Analyst.pdf"  # filename shown to recipient
 
 def send_mail_by_client_with_file(
@@ -99,3 +99,28 @@ def send_mail_by_client_with_file(
     return {"status":"error","message":f"Failed to send email after {max_retries} attempts",
             "error":str(last_error) if last_error else "Unknown","recipient":to_email,"subject":subject,
             "attempts":max_retries,"timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
+
+# if __name__ == "__main__":
+#     # ---- Static test data ----
+#     test_to_email = "aanand.garg0709@gmail.com"
+#     test_subject  = "Test Email from Pride Trading Consultancy"
+#     test_html     = """
+#     <h2 style="color:#2b6cb0;">Hello, Investor!</h2>
+#     <p>This is a <b>test email</b> generated for validation purposes.</p>
+#     <p>Please find the mandatory Investor Charter attached.</p>
+#     """
+
+#     # You can point this to any PDF on your system for testing
+#     test_pdf_path = CHARTER_PATH
+
+#     result = send_mail_by_client_with_file(
+#         to_email=test_to_email,
+#         subject=test_subject,
+#         html_content=test_html,
+#         pdf_file_path=test_pdf_path,
+#         max_retries=1,   # reduce retries for quick testing
+#     )
+
+#     print("=== Mail Send Result ===")
+#     for k, v in result.items():
+#         print(f"{k}: {v}")
