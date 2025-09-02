@@ -50,3 +50,5 @@ htmlcov/
 certificate.pfx
 
 static/
+
+vbc_token_cache*
