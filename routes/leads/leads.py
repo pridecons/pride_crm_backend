@@ -387,6 +387,8 @@ def create_lead(
         validate_lead_data(db, lead_data)
         if is_old:
            lead_data["is_old_lead"] = True
+        if current_user.branch_id:
+            lead_data["branch_id"] = current_user.branch_id
         
         # Create lead
         lead = Lead(**lead_data)
