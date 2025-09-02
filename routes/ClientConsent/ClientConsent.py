@@ -33,15 +33,6 @@ def create_client_consent(
     - Otherwise create and return 201.
     """
     kyc_user = db.query(Lead).filter(Lead.id == payload.lead_id).first()
-    email= kyc_user.email
-    # # Check existing (unique on lead_id)
-    # existing: Optional[ClientConsent] = (
-    #     db.query(ClientConsent).filter(ClientConsent.lead_id == payload.lead_id).one_or_none()
-    # )
-    # if existing:
-    #     request.scope["state"] = getattr(request, "scope", {})
-    #     return existing  # FastAPI will still respond 201 by default
-
 
     ip = _get_client_ip(request)
     ua = request.headers.get("user-agent", "-")[:1024]  # avoid overly long UA strings
@@ -49,7 +40,6 @@ def create_client_consent(
 
     consent = ClientConsent(
         lead_id=payload.lead_id,
-        email=email,
         consent_text=payload.consent_text,
         channel=payload.channel,
         purpose=payload.purpose,
@@ -62,11 +52,15 @@ def create_client_consent(
         ref_id=gen_ref(),
     )
 
+    if kyc_user.email:
+        consent["email"] = kyc_user.email
+        consent["mail_sent"] = True
+        send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=payload.consent_text, show_pdf=False)
+
     try:
         db.add(consent)
         db.commit()
         db.refresh(consent)
-        send_mail_by_client_with_file(to_email=email,subject= "Pre Paymnet Consent", html_content=payload.consent_text, show_pdf=False)
         return consent
     except SQLAlchemyError as e:
         db.rollback()

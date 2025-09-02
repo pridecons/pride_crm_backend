@@ -12,7 +12,7 @@ from sqlalchemy.sql import exists  # optional if you prefer sqlalchemy.exists()
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
-    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
+    UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig, ClientConsent
 )
 from utils.AddLeadStory import AddLeadStory
 from routes.auth.auth_dependency import get_current_user
@@ -20,6 +20,7 @@ from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
 from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
 from utils.user_tree import get_subordinate_users, get_subordinate_ids  # <— add this import
+from services.mail_with_file import send_mail_by_client_with_file
 
 router = APIRouter(
     prefix="/leads",
@@ -397,6 +398,7 @@ def create_lead(
             
             if lead_in.email:
                 conditions.append(Lead.email == lead_in.email)
+
             if lead_in.mobile:
                 conditions.append(Lead.mobile == lead_in.mobile)
             
@@ -655,6 +657,14 @@ def update_lead(
         
         # Check for duplicates if updating email or mobile
         if "email" in update_data and update_data["email"]:
+            client_consent = db.query(ClientConsent).filter(ClientConsent.lead_id==lead_id and ClientConsent.mail_sent == False).first()
+            if client_consent:
+                send_mail_by_client_with_file(to_email=update_data["email"],subject= "Pre Paymnet Consent", html_content=client_consent.consent_text, show_pdf=False)
+                client_consent["email"] = update_data["email"]
+                client_consent["mail_sent"] = True
+                db.commit()
+                db.refresh(client_consent)
+
             existing_lead = db.query(Lead).filter(
                 Lead.email == update_data["email"],
                 Lead.id != lead_id

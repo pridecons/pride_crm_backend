@@ -803,7 +803,7 @@ class ClientConsent(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, unique=True)
-    email = Column(String(255), nullable=False)
+    email = Column(String(255), nullable=True)
     consent_text = Column(String, nullable=False)
     channel = Column(String(20), nullable=False, default="WEB")
     purpose = Column(String(50), nullable=False, default="PAYMENT")
@@ -816,4 +816,5 @@ class ClientConsent(Base):
     consented_at_ist = Column(DateTime(timezone=True), nullable=False)
 
     ref_id = Column(String(40), unique=True, nullable=False)
+    mail_sent = Column(Boolean, nullable=True, default=False)
 
