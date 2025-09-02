@@ -657,13 +657,36 @@ def update_lead(
         
         # Check for duplicates if updating email or mobile
         if "email" in update_data and update_data["email"]:
-            client_consent = db.query(ClientConsent).filter(ClientConsent.lead_id==lead_id and ClientConsent.mail_sent == False).first()
+
+            client_consent = (
+                db.query(ClientConsent)
+                .filter(
+                    ClientConsent.lead_id == lead_id,
+                    ClientConsent.mail_sent.is_(False)
+                )
+                .first()
+            )
+
             if client_consent:
-                send_mail_by_client_with_file(to_email=update_data["email"],subject= "Pre Paymnet Consent", html_content=client_consent.consent_text, show_pdf=False)
-                client_consent["email"] = update_data["email"]
-                client_consent["mail_sent"] = True
+                # call your mailer with the correct signature
+                send_mail_by_client_with_file(
+                    to_email=update_data["email"],
+                    subject="Pre Payment Consent",
+                    html_content=client_consent.consent_text,
+                    # pdf_file_path=None,  # include only if your function expects it
+                    # remove `show_pdf` if your function doesn't support it
+                )
+
+                # ORM attribute assignment (not dict-style)
+                client_consent.email = update_data["email"]
+                client_consent.mail_sent = True
+                # if you have timestamps:
+                # client_consent.updated_at = datetime.utcnow()
+
+                db.add(client_consent)  # optional but fine
                 db.commit()
                 db.refresh(client_consent)
+
 
             existing_lead = db.query(Lead).filter(
                 Lead.email == update_data["email"],
