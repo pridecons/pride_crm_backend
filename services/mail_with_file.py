@@ -3,12 +3,15 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 import smtplib, ssl, time, logging, os
 from typing import Dict, Any, Optional
+from pathlib import Path
 from config import COM_SMTP_SERVER, COM_SMTP_PORT, COM_SMTP_USER, COM_SMTP_PASSWORD
 
 logger = logging.getLogger(__name__)
 
-INVESTOR_CHARTER_PATH = "Investor Charter for Research Analyst.pdf"
-INVESTOR_CHARTER_NAME = "Investor Charter for Research Analyst.pdf"  # keep extension
+# ---- Resolve the PDF path RELIABLY (relative to this file) ----
+MODULE_DIR = Path(__file__).resolve().parent
+CHARTER_PATH = MODULE_DIR / "Files" / "Investor Charter for Research Analyst.pdf"
+CHARTER_NAME = "Investor Charter for Research Analyst.pdf"  # filename shown to recipient
 
 def send_mail_by_client_with_file(
     to_email: str,
@@ -27,7 +30,6 @@ def send_mail_by_client_with_file(
     if not all([smtp_server, smtp_port, smtp_user, smtp_pass]):
         return {"status":"error","message":"Missing SMTP configuration parameters","timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
 
-    # Root container for attachments
     msg = MIMEMultipart("mixed")
     msg["From"] = "Pride Trading Consultancy <compliance@pridecons.com>"
     msg["To"] = to_email
@@ -36,47 +38,44 @@ def send_mail_by_client_with_file(
     msg["X-Priority"] = "1"
     msg["X-MSMail-Priority"] = "High"
 
-    # Create the alternative part (plain + HTML)
     alt = MIMEMultipart("alternative")
-    text_fallback = "Please view this email in an HTML-capable email client."
-    alt.attach(MIMEText(text_fallback, "plain"))
+    alt.attach(MIMEText("Please view this email in an HTML-capable email client.", "plain"))
 
-    html_wrapper = f"""\
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{subject}</title></head>
+    html_wrapper = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{subject}</title></head>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
   <div>{html_content}</div>
 </body></html>"""
     alt.attach(MIMEText(html_wrapper, "html"))
     msg.attach(alt)
 
-    # Optional: attach the user-provided PDF
+    # Optional user-provided PDF
     if pdf_file_path:
         try:
-            if not os.path.isfile(pdf_file_path):
-                raise FileNotFoundError(f"Attachment not found: {pdf_file_path}")
-            with open(pdf_file_path, "rb") as f:
+            user_pdf = Path(pdf_file_path)
+            if not user_pdf.is_file():
+                raise FileNotFoundError(f"Attachment not found: {user_pdf}")
+            with user_pdf.open("rb") as f:
                 part = MIMEApplication(f.read(), _subtype="pdf")
-            part.add_header("Content-Disposition", 'attachment', filename=os.path.basename(pdf_file_path))
+            part.add_header("Content-Disposition", "attachment", filename=user_pdf.name)
             msg.attach(part)
-            logger.info(f"Attached PDF '{os.path.basename(pdf_file_path)}'")
+            logger.info(f"Attached PDF '{user_pdf.name}' from '{user_pdf.resolve()}'")
         except Exception as e:
             logger.error(f"Failed to attach provided PDF: {e}")
             return {"status":"error","message":f"Could not attach PDF: {e}","timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
 
-    # Always attach Investor Charter (with extension)
+    # Always attach Investor Charter
     try:
-        if not os.path.isfile(INVESTOR_CHARTER_PATH):
-            raise FileNotFoundError(f"Attachment not found: {INVESTOR_CHARTER_PATH}")
-        with open(INVESTOR_CHARTER_PATH, "rb") as f:
+        if not CHARTER_PATH.is_file():
+            raise FileNotFoundError(f"Attachment not found: {CHARTER_PATH}")
+        with CHARTER_PATH.open("rb") as f:
             charter = MIMEApplication(f.read(), _subtype="pdf")
-        charter.add_header("Content-Disposition", "attachment", filename=INVESTOR_CHARTER_NAME)
+        charter.add_header("Content-Disposition", "attachment", filename=CHARTER_NAME)
         msg.attach(charter)
-        logger.info(f"Attached PDF '{INVESTOR_CHARTER_NAME}'")
+        logger.info(f"Attached Investor Charter '{CHARTER_NAME}' from '{CHARTER_PATH}'")
     except Exception as e:
         logger.error(f"Failed to attach Investor Charter: {e}")
-        # If this must be mandatory, return error; else just log and continue.
+        # If mandatory, return an error; otherwise continue:
         # return {"status":"error","message":f"Could not attach Investor Charter: {e}","timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
 
     last_error = None
@@ -93,6 +92,7 @@ def send_mail_by_client_with_file(
                     "email_type":"Enhanced HTML with PDF attachment","attempt":attempt,"timestamp":time.strftime("%Y-%m-%d %H:%M:%S")}
         except Exception as e:
             last_error = e
+            logger.exception(f"SMTP send attempt {attempt} failed: {e}")
             if attempt < max_retries:
                 time.sleep(attempt * 2)
 

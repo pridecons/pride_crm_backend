@@ -112,7 +112,7 @@ def _is_paid_status(status: Optional[str]) -> bool:
 def format_client_response(lead: Lead, db: Session) -> ClientResponse:
     payments = (
         db.query(Payment)
-        .filter(Payment.lead_id == lead.id)
+        .filter(Payment.lead_id == lead.id and Payment.status == "PAID")
         .order_by(desc(Payment.created_at))
         .all()
     )
@@ -286,7 +286,7 @@ async def get_clients(
             exists().where(
                 and_(
                     Payment.lead_id == Lead.id,
-                    func.upper(Payment.status) == status.upper(),
+                    func.upper(Payment.status) == "PAID",
                 )
             )
         )

@@ -19,7 +19,7 @@ from utils.user_tree import get_subordinate_users, get_subordinate_ids
 router = APIRouter(prefix="/analytics/leads", tags=["Lead Analytics"])
 
 # ===========================
-# Pydantic Models for Responses
+# Pydantic Models
 # ===========================
 class LeadStatsModel(BaseModel):
     total_leads: int
@@ -118,13 +118,42 @@ def calculate_conversion_rate(total_leads: int, converted_leads: int) -> float:
         return 0.0
     return round((converted_leads / total_leads) * 100, 2)
 
+def _branch_id_for_manager(u: UserDetails) -> Optional[int]:
+    if getattr(u, "manages_branch", None):
+        return u.manages_branch.id
+    return u.branch_id
+
+def _allowed_codes_for_employee_scope(
+    db: Session,
+    current_user: UserDetails,
+    view: Literal["self", "other", "all"],
+) -> Optional[List[str]]:
+    """
+    SUPERADMIN / BRANCH_MANAGER -> None (no per-user restriction)
+    EMPLOYEE:
+      - self  -> [me]
+      - other -> [all my juniors]
+      - all   -> [me + all my juniors]
+    """
+    role = (getattr(current_user, "role_name", "") or "").upper()
+    if role in ("SUPERADMIN", "BRANCH_MANAGER"):
+        return None
+
+    subs: List[str] = get_subordinate_ids(db, current_user.employee_code)
+    if view == "self":
+        return [current_user.employee_code]
+    elif view == "other":
+        return subs
+    else:  # "all"
+        return [current_user.employee_code] + subs
+
 def get_employee_leads_query(
     db: Session,
     employee_code: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ):
-    query = (
+    q = (
         db.query(Lead)
         .join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
         .filter(
@@ -135,46 +164,105 @@ def get_employee_leads_query(
         )
     )
     if date_from:
-        query = query.filter(Lead.created_at >= date_from)
+        q = q.filter(Lead.created_at >= date_from)
     if date_to:
-        query = query.filter(Lead.created_at <= date_to)
-    return query
+        q = q.filter(Lead.created_at <= date_to)
+    return q
 
-def _branch_id_for_manager(u: UserDetails) -> Optional[int]:
-    if getattr(u, "manages_branch", None):
-        return u.manages_branch.id
-    return u.branch_id
+def _exists_any_assignment_for_lead():
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(LeadAssignment.lead_id == Lead.id)
+        .correlate(Lead)
+        .exists()
+    )
 
+def _exists_called_assignment_for_lead():
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(and_(LeadAssignment.lead_id == Lead.id, LeadAssignment.is_call.is_(True)))
+        .correlate(Lead)
+        .exists()
+    )
+
+def _exists_assignment_for_allowed(allowed_codes: List[str]):
+    if not allowed_codes:
+        return select(literal(1)).where(literal(False)).exists()
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(
+            and_(
+                LeadAssignment.lead_id == Lead.id,
+                LeadAssignment.user_id.in_(allowed_codes),
+            )
+        )
+        .correlate(Lead)
+        .exists()
+    )
+
+def _exists_assignment_for_users(user_codes_selectable):
+    """
+    Accepts a selectable/subquery that yields one column `employee_code`.
+    Returns a correlated EXISTS against LeadAssignment for those users.
+    """
+    # Normalize to a selectable of one column named employee_code
+    if hasattr(user_codes_selectable, "c") and "employee_code" in user_codes_selectable.c:
+        col_sel = select(user_codes_selectable.c.employee_code)
+    else:
+        # assume already a Select of a single column
+        col_sel = user_codes_selectable
+
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(
+            and_(
+                LeadAssignment.lead_id == Lead.id,
+                LeadAssignment.user_id.in_(col_sel),
+            )
+        )
+        .correlate(Lead)
+        .exists()
+    )
+
+
+# ---- Visibility helpers for LEADS and PAYMENTS ----
 def apply_visibility_to_leads(
     db: Session,
     current_user: UserDetails,
     base_leads_q,
     *,
     view: Literal["self", "other", "all"] = "all",
-    team_member: Optional[str] = None,
 ):
     role = (getattr(current_user, "role_name", "") or "").upper()
 
+    # SUPERADMIN -> no branch/assignee restriction
     if role == "SUPERADMIN":
-        return base_leads_q, None
+        filters_meta = None
+        return base_leads_q.filter(Lead.is_delete.is_(False)), filters_meta
 
+    # BRANCH_MANAGER -> restrict by branch
     if role == "BRANCH_MANAGER":
         b_id = _branch_id_for_manager(current_user)
         if b_id is None:
             return base_leads_q.filter(Lead.id == -1), None
-        return base_leads_q.filter(Lead.branch_id == b_id), None
+        return base_leads_q.filter(
+            and_(Lead.is_delete.is_(False), Lead.branch_id == b_id)
+        ), None
 
-    subs: List[str] = get_subordinate_ids(db, current_user.employee_code)
-    if view == "self":
-        allowed = [current_user.employee_code]
-    elif view == "other":
-        allowed = [team_member] if (team_member and team_member in subs) else subs
-    else:
-        allowed = [current_user.employee_code] + subs
-
+    # EMPLOYEE -> self / subs / self+subs via LeadAssignment
+    allowed = _allowed_codes_for_employee_scope(db, current_user, view) or []
     scoped = (
         base_leads_q.join(LeadAssignment, Lead.id == LeadAssignment.lead_id)
-        .filter(LeadAssignment.user_id.in_(allowed))
+        .filter(
+            and_(
+                Lead.is_delete.is_(False),
+                LeadAssignment.user_id.in_(allowed),
+            )
+        )
         .distinct()
     )
 
@@ -183,53 +271,48 @@ def apply_visibility_to_leads(
         view=view,
         available_views=["self", "other", "all"],
         available_team_members=[
-            {
-                "employee_code": u.employee_code,
-                "name": u.name,
-                "role_id": str(u.role_id),
-            }
+            {"employee_code": u.employee_code, "name": u.name, "role_id": str(u.role_id)}
             for u in subs_users
         ],
-        selected_team_member=team_member if view == "other" else None,
+        selected_team_member=None,  # "other" aggregates ALL juniors
     )
     return scoped, filters_meta
 
-def apply_visibility_to_payments_from_leads_scope(
+def apply_visibility_to_payments(
     db: Session,
     current_user: UserDetails,
     base_payments_q,
     *,
     view: Literal["self", "other", "all"] = "all",
-    team_member: Optional[str] = None,
+    branch_id: Optional[int] = None,
 ):
+    """
+    Scope payments independently (don't over-constrain by intersecting with a pre-filtered lead set).
+    - SUPERADMIN: all
+    - BRANCH_MANAGER: only their branch (via Lead join; we already join Lead before calling)
+    - EMPLOYEE: Payment.user_id in allowed (self/other/all)
+    """
     role = (getattr(current_user, "role_name", "") or "").upper()
 
     if role == "SUPERADMIN":
-        return base_payments_q
-
-    if role == "BRANCH_MANAGER":
+        q = base_payments_q
+    elif role == "BRANCH_MANAGER":
         b_id = _branch_id_for_manager(current_user)
         if b_id is None:
-            return base_payments_q.filter(Payment.id == -1)
-        return base_payments_q.filter(
-            or_(
-                Payment.branch_id == str(b_id),
-                and_(Payment.branch_id == None, Lead.branch_id == b_id),
-            )
-        )
-
-    subs: List[str] = get_subordinate_ids(db, current_user.employee_code)
-    if view == "self":
-        allowed = [current_user.employee_code]
-    elif view == "other":
-        allowed = [team_member] if (team_member and team_member in subs) else subs
+            q = base_payments_q.filter(Payment.id == -1)
+        else:
+            q = base_payments_q.filter(Lead.branch_id == b_id)
     else:
-        allowed = [current_user.employee_code] + subs
+        allowed = _allowed_codes_for_employee_scope(db, current_user, view) or []
+        if not allowed:
+            q = base_payments_q.filter(Payment.id == -1)
+        else:
+            q = base_payments_q.filter(Payment.user_id.in_(allowed))
 
-    if not allowed:
-        return base_payments_q.filter(Payment.id == -1)
+    if branch_id is not None:
+        q = q.filter(Lead.branch_id == branch_id)
 
-    return base_payments_q.filter(Payment.user_id.in_(allowed))
+    return q
 
 def get_admin_leads_query(
     db: Session,
@@ -238,9 +321,8 @@ def get_admin_leads_query(
     date_to: Optional[date] = None,
     *,
     view: Literal["self","other","all"] = "all",
-    team_member: Optional[str] = None,
 ) -> Tuple[Any, Optional[FiltersMeta]]:
-    q = db.query(Lead).filter(Lead.is_delete.is_(False))
+    q = db.query(Lead)
     if date_from:
         q = q.filter(Lead.created_at >= date_from)
     if date_to:
@@ -250,7 +332,6 @@ def get_admin_leads_query(
         current_user=current_user,
         base_leads_q=q,
         view=view,
-        team_member=team_member,
     )
     return q, filters_meta
 
@@ -275,7 +356,6 @@ def _compute_response_analytics_from_leads_query(
     )
 
     overall_total = sum(int(r.total_leads or 0) for r in rows) or 0
-
     breakdown: List[ResponseAnalyticsModel] = []
     for rname, total in rows:
         pct = (float(total) / overall_total * 100.0) if overall_total > 0 else 0.0
@@ -288,48 +368,378 @@ def _compute_response_analytics_from_leads_query(
         )
     return overall_total, breakdown
 
-# ---------- EXISTS helpers (explicit correlation keeps SQLA happy) ----------
-def _exists_any_assignment_for_lead():
-    return (
-        select(literal(1))
-        .select_from(LeadAssignment)
-        .where(LeadAssignment.lead_id == Lead.id)
-        .correlate(Lead)
-        .exists()
+# ===========================
+# Admin Analytics
+# ===========================
+@router.get("/admin/dashboard", response_model=AdminAnalyticsResponse)
+async def get_admin_analytics(
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
+    branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
+    view: Literal["self","other","all"] = Query("all", description="For employees: self/other/all"),
+    current_user: UserDetails = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Visibility:
+      1) SUPERADMIN -> all branches, all employees
+      2) BRANCH_MANAGER -> only their branch
+      3) EMPLOYEE -> self / juniors / both via `view`
+    'other' = ALL juniors aggregated (no team_member param).
+    """
+    start_date, end_date = get_date_range_filter(days)
+
+    # ------- Leads base (role-scoped) -------
+    leads_query, filters_meta = get_admin_leads_query(
+        db, current_user, start_date, end_date, view=view
+    )
+    if branch_id:
+        leads_query = leads_query.filter(Lead.branch_id == branch_id)
+
+    total_leads = leads_query.count()
+
+    today = datetime.now().date()
+    week_start = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    new_leads_today = leads_query.filter(func.date(Lead.created_at) == today).count()
+    new_leads_this_week = leads_query.filter(Lead.created_at >= week_start).count()
+    new_leads_this_month = leads_query.filter(Lead.created_at >= month_start).count()
+
+    assigned_leads = leads_query.filter(_exists_any_assignment_for_lead()).count()
+    called_leads = leads_query.filter(_exists_called_assignment_for_lead()).count()
+    unassigned_leads = total_leads - assigned_leads
+    uncalled_leads = assigned_leads - called_leads
+
+    converted_leads = (
+        leads_query.join(Payment, Lead.id == Payment.lead_id)
+        .filter(Payment.paid_amount > 0)
+        .distinct()
+        .count()
     )
 
-def _exists_called_assignment_for_lead():
-    return (
-        select(literal(1))
-        .select_from(LeadAssignment)
-        .where(and_(LeadAssignment.lead_id == Lead.id, LeadAssignment.is_call.is_(True)))
-        .correlate(Lead)
-        .exists()
+    overall_stats = LeadStatsModel(
+        total_leads=total_leads,
+        new_leads_today=new_leads_today,
+        new_leads_this_week=new_leads_this_week,
+        new_leads_this_month=new_leads_this_month,
+        assigned_leads=assigned_leads,
+        unassigned_leads=unassigned_leads,
+        called_leads=called_leads,
+        uncalled_leads=uncalled_leads,
+        converted_leads=converted_leads,
+        conversion_rate=calculate_conversion_rate(total_leads, converted_leads),
     )
 
-def _exists_assignment_for_users(user_codes_selectable):
-    """
-    user_codes_selectable: a selectable that yields one column (employee_code)
-    """
-    # ensure we have a selectable that can be used in IN (...)
-    if hasattr(user_codes_selectable, "c") and "employee_code" in user_codes_selectable.c:
-        col_sel = select(user_codes_selectable.c.employee_code)
+    # ------- Payments base (role-scoped independently) -------
+    payments_base = db.query(Payment).join(Lead, Payment.lead_id == Lead.id)
+
+    payments_query = apply_visibility_to_payments(
+        db=db,
+        current_user=current_user,
+        base_payments_q=payments_base,
+        view=view,
+        branch_id=branch_id,
+    ).filter(
+        and_(
+            Payment.created_at >= datetime.combine(start_date, datetime.min.time()),
+            Payment.created_at <= datetime.combine(end_date, datetime.max.time()),
+            Lead.is_delete.is_(False),
+        )
+    )
+
+    total_payments = payments_query.count()
+
+    # Revenue is SUM of PAID
+    total_revenue = (
+        payments_query.filter(Payment.status == "PAID")
+        .with_entities(func.sum(Payment.paid_amount))
+        .scalar()
+        or 0.0
+    )
+
+    successful_payments = payments_query.filter(Payment.status == "PAID").count()
+    pending_payments = payments_query.filter(Payment.status == "ACTIVE").count()
+    failed_payments = payments_query.filter(Payment.status == "EXPIRED").count()
+    avg_payment = float(total_revenue) / successful_payments if successful_payments > 0 else 0.0
+
+    revenue_today = (
+        payments_query.filter(func.date(Payment.created_at) == today)
+        .with_entities(func.sum(Payment.paid_amount))
+        .scalar() or 0.0
+    )
+    revenue_this_week = (
+        payments_query.filter(Payment.created_at >= week_start)
+        .with_entities(func.sum(Payment.paid_amount))
+        .scalar() or 0.0
+    )
+    revenue_this_month = (
+        payments_query.filter(Payment.created_at >= month_start)
+        .with_entities(func.sum(Payment.paid_amount))
+        .scalar() or 0.0
+    )
+
+    payment_stats = PaymentStatsModel(
+        total_revenue=float(total_revenue),
+        total_payments=total_payments,
+        successful_payments=successful_payments,
+        pending_payments=pending_payments,
+        failed_payments=failed_payments,
+        average_payment_amount=float(avg_payment),
+        revenue_today=float(revenue_today),
+        revenue_this_week=float(revenue_this_week),
+        revenue_this_month=float(revenue_this_month),
+    )
+
+    # ------- Employee performance (respect role + view) -------
+    employees_query = (
+        db.query(UserDetails)
+        .options(joinedload(UserDetails.branch))
+        .filter(UserDetails.is_active.is_(True))
+    )
+    role = (getattr(current_user, "role_name", "") or "").upper()
+
+    if role == "SUPERADMIN":
+        pass
+    elif role == "BRANCH_MANAGER":
+        b_id = _branch_id_for_manager(current_user)
+        if b_id:
+            employees_query = employees_query.filter(UserDetails.branch_id == b_id)
     else:
-        # assume it's already a Select of a single column
-        col_sel = user_codes_selectable
+        allowed = _allowed_codes_for_employee_scope(db, current_user, view) or []
+        if not allowed:
+            employees_query = employees_query.filter(UserDetails.employee_code == "__none__")
+        else:
+            employees_query = employees_query.filter(UserDetails.employee_code.in_(allowed))
 
-    return (
-        select(literal(1))
-        .select_from(LeadAssignment)
-        .where(
-            and_(
-                LeadAssignment.lead_id == Lead.id,
-                LeadAssignment.user_id.in_(col_sel),
+    employees = employees_query.all()
+
+    employee_performance: List[EmployeePerformanceModel] = []
+    for employee in employees:
+        emp_leads_query = get_employee_leads_query(db, employee.employee_code, start_date, end_date)
+        emp_total_leads = emp_leads_query.count()
+
+        emp_called_leads = (
+            db.query(LeadAssignment)
+            .filter(
+                and_(
+                    LeadAssignment.user_id == employee.employee_code,
+                    LeadAssignment.is_call.is_(True),
+                    LeadAssignment.fetched_at >= datetime.combine(start_date, datetime.min.time()),
+                    LeadAssignment.fetched_at <= datetime.combine(end_date, datetime.max.time()),
+                )
+            )
+            .count()
+        )
+
+        emp_converted_leads = (
+            emp_leads_query.join(Payment, Lead.id == Payment.lead_id)
+            .filter(Payment.paid_amount > 0)
+            .distinct()
+            .count()
+        )
+
+        emp_revenue = (
+            db.query(func.sum(Payment.paid_amount))
+            .filter(
+                Payment.user_id == employee.employee_code,
+                Payment.created_at >= datetime.combine(start_date, datetime.min.time()),
+                Payment.created_at <= datetime.combine(end_date, datetime.max.time()),
+                Payment.status == "PAID",
+            )
+            .scalar() or 0.0
+        )
+
+        employee_performance.append(
+            EmployeePerformanceModel(
+                employee_code=employee.employee_code,
+                employee_name=employee.name,
+                role_id=int(employee.role_id),
+                role_name=getattr(employee, "role_name", None),
+                branch_name=employee.branch.name if employee.branch else None,
+                total_leads=emp_total_leads,
+                called_leads=emp_called_leads,
+                converted_leads=emp_converted_leads,
+                total_revenue=float(emp_revenue),
+                conversion_rate=calculate_conversion_rate(emp_total_leads, emp_converted_leads),
+                call_rate=calculate_conversion_rate(emp_total_leads, emp_called_leads),
             )
         )
-        .correlate(Lead)
-        .exists()
+
+    # ------- Daily trends -------
+    daily_trends: List[DailyActivityModel] = []
+    allowed_for_trends = _allowed_codes_for_employee_scope(db, current_user, view)
+
+    for i in range(min(days, 30)):
+        trend_date = end_date - timedelta(days=i)
+
+        leads_created = leads_query.filter(func.date(Lead.created_at) == trend_date).count()
+
+        leads_called_q = (
+            db.query(LeadAssignment)
+            .join(Lead, LeadAssignment.lead_id == Lead.id)
+            .filter(
+                and_(
+                    LeadAssignment.is_call.is_(True),
+                    func.date(LeadAssignment.fetched_at) == trend_date,
+                    Lead.is_delete.is_(False),
+                )
+            )
+        )
+
+        if branch_id:
+            leads_called_q = leads_called_q.filter(Lead.branch_id == branch_id)
+
+        if role not in ("SUPERADMIN", "BRANCH_MANAGER"):
+            allowed = allowed_for_trends or []
+            if allowed:
+                leads_called_q = leads_called_q.filter(LeadAssignment.user_id.in_(allowed))
+            else:
+                leads_called_q = leads_called_q.filter(literal(False))
+
+        leads_called = leads_called_q.count()
+
+        day_payments = payments_query.filter(func.date(Payment.created_at) == trend_date)
+        payments_made = day_payments.count()
+        revenue = day_payments.with_entities(func.sum(Payment.paid_amount)).scalar() or 0.0
+
+        daily_trends.append(
+            DailyActivityModel(
+                date=trend_date.strftime("%Y-%m-%d"),
+                leads_created=leads_created,
+                leads_called=leads_called,
+                payments_made=payments_made,
+                revenue=float(revenue),
+            )
+        )
+
+    daily_trends.reverse()
+
+    # ------- Source analytics (respect role/view) -------
+    source_analytics_q = (
+        db.query(
+            LeadSource.name,
+            func.count(Lead.id).label("total_leads"),
+            func.count(Payment.id).label("converted_leads"),
+            func.sum(Payment.paid_amount).label("total_revenue"),
+        )
+        .select_from(Lead)
+        .outerjoin(LeadSource, Lead.lead_source_id == LeadSource.id)
+        .outerjoin(Payment, Lead.id == Payment.lead_id)
+        .filter(
+            and_(
+                Lead.created_at >= start_date,
+                Lead.created_at <= end_date,
+                Lead.is_delete.is_(False),
+            )
+        )
     )
+
+    if role == "SUPERADMIN":
+        pass
+    elif role == "BRANCH_MANAGER":
+        b_id = _branch_id_for_manager(current_user)
+        if b_id:
+            source_analytics_q = source_analytics_q.filter(Lead.branch_id == b_id)
+    else:
+        allowed = allowed_for_trends or []
+        if allowed:
+            source_analytics_q = source_analytics_q.filter(
+                or_(
+                    Lead.assigned_to_user.in_(allowed),  # direct column if you keep it
+                    _exists_assignment_for_allowed(allowed),
+                )
+            )
+        else:
+            source_analytics_q = source_analytics_q.filter(literal(False))
+
+    if branch_id:
+        source_analytics_q = source_analytics_q.filter(Lead.branch_id == branch_id)
+
+    src_rows = source_analytics_q.group_by(LeadSource.name).all()
+
+    source_analytics: List[SourceAnalyticsModel] = [
+        SourceAnalyticsModel(
+            source_name=(source_name or "Unknown"),
+            total_leads=int(total or 0),
+            converted_leads=int(converted or 0),
+            conversion_rate=calculate_conversion_rate(int(total or 0), int(converted or 0)),
+            total_revenue=float(revenue or 0),
+        )
+        for source_name, total, converted, revenue in src_rows
+    ]
+
+    # ------- Branch performance (SUPERADMIN only) -------
+    branch_performance: List[Dict[str, Any]] = []
+    if role == "SUPERADMIN":
+        branches = db.query(BranchDetails).filter(BranchDetails.active.is_(True)).all()
+        for branch in branches:
+            branch_leads = (
+                db.query(Lead)
+                .filter(
+                    and_(
+                        Lead.branch_id == branch.id,
+                        Lead.created_at >= start_date,
+                        Lead.created_at <= end_date,
+                        Lead.is_delete.is_(False),
+                    )
+                ).count()
+            )
+            branch_revenue = (
+                db.query(func.sum(Payment.paid_amount))
+                .join(Lead, Payment.lead_id == Lead.id)
+                .filter(
+                    and_(
+                        Lead.branch_id == branch.id,
+                        Payment.created_at >= start_date,
+                        Payment.created_at <= end_date,
+                        Payment.status == "PAID",
+                    )
+                ).scalar() or 0.0
+            )
+            branch_converted = (
+                db.query(Lead)
+                .join(Payment, Lead.id == Payment.lead_id)
+                .filter(
+                    and_(
+                        Lead.branch_id == branch.id,
+                        Lead.created_at >= start_date,
+                        Lead.created_at <= end_date,
+                        Lead.is_delete.is_(False),
+                        Payment.paid_amount > 0,
+                    )
+                ).distinct().count()
+            )
+            branch_performance.append(
+                {
+                    "branch_id": branch.id,
+                    "branch_name": branch.name,
+                    "manager_name": branch.manager.name if branch.manager else "No Manager",
+                    "total_leads": branch_leads,
+                    "converted_leads": branch_converted,
+                    "total_revenue": float(branch_revenue),
+                    "conversion_rate": calculate_conversion_rate(branch_leads, branch_converted),
+                }
+            )
+
+    # ------- Top performers -------
+    top_performers = sorted(
+        employee_performance,
+        key=lambda x: (x.conversion_rate, x.total_revenue),
+        reverse=True,
+    )[:10]
+
+    return AdminAnalyticsResponse(
+        overall_stats=overall_stats,
+        payment_stats=payment_stats,
+        employee_performance=employee_performance,
+        daily_trends=daily_trends,
+        source_analytics=source_analytics,
+        branch_performance=branch_performance,
+        top_performers=top_performers,
+        filters=filters_meta,
+    )
+
+
 
 # ===========================
 # Employee Analytics
@@ -585,371 +995,6 @@ async def get_employee_analytics(
         targets_vs_achievement=targets_vs_achievement,
     )
 
-# ===========================
-# Admin Analytics
-# ===========================
-@router.get("/admin/dashboard", response_model=AdminAnalyticsResponse)
-async def get_admin_analytics(
-    days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
-    branch_id: Optional[int] = Query(None, description="Filter by branch ID"),
-    view: Literal["self","other","all"] = Query("all", description="Scope for non-managers"),
-    team_member: Optional[str] = Query(None, description="When view='other', restrict to this subordinate"),
-    current_user: UserDetails = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    start_date, end_date = get_date_range_filter(days)
-
-    leads_query, filters_meta = get_admin_leads_query(
-        db, current_user, start_date, end_date, view=view, team_member=team_member
-    )
-
-    if branch_id:
-        leads_query = leads_query.filter(Lead.branch_id == branch_id)
-
-    total_leads = leads_query.count()
-
-    today = datetime.now().date()
-    new_leads_today = leads_query.filter(func.date(Lead.created_at) == today).count()
-
-    week_start = today - timedelta(days=today.weekday())
-    new_leads_this_week = leads_query.filter(Lead.created_at >= week_start).count()
-
-    month_start = today.replace(day=1)
-    new_leads_this_month = leads_query.filter(Lead.created_at >= month_start).count()
-
-    # ---- FIX: use correlated EXISTS (no extra JOIN) ----
-    assigned_leads = leads_query.filter(_exists_any_assignment_for_lead()).count()
-    called_leads = leads_query.filter(_exists_called_assignment_for_lead()).count()
-    unassigned_leads = total_leads - assigned_leads
-    uncalled_leads = assigned_leads - called_leads
-
-    converted_leads = (
-        leads_query.join(Payment, Lead.id == Payment.lead_id)
-        .filter(Payment.paid_amount > 0)
-        .distinct()
-        .count()
-    )
-
-    overall_stats = LeadStatsModel(
-        total_leads=total_leads,
-        new_leads_today=new_leads_today,
-        new_leads_this_week=new_leads_this_week,
-        new_leads_this_month=new_leads_this_month,
-        assigned_leads=assigned_leads,
-        unassigned_leads=unassigned_leads,
-        called_leads=called_leads,
-        uncalled_leads=uncalled_leads,
-        converted_leads=converted_leads,
-        conversion_rate=calculate_conversion_rate(total_leads, converted_leads),
-    )
-
-    payments_query = db.query(Payment).join(Lead, Payment.lead_id == Lead.id)
-    payments_query = apply_visibility_to_payments_from_leads_scope(
-        db, current_user, payments_query, view=view, team_member=team_member
-    )
-    payments_query = payments_query.filter(
-        and_(
-            Payment.created_at >= start_date,
-            Payment.created_at <= end_date,
-            Lead.is_delete.is_(False),
-        )
-    )
-    if branch_id:
-        payments_query = payments_query.filter(Lead.branch_id == branch_id)
-
-    total_payments = payments_query.count()
-    total_revenue = (
-        payments_query.with_entities(func.sum(Payment.paid_amount)).scalar() or 0
-    )
-    successful_payments = payments_query.filter(Payment.status == "PAID").count()
-    pending_payments = payments_query.filter(Payment.status == "ACTIVE").count()
-    failed_payments = payments_query.filter(Payment.status == "EXPIRED").count()
-
-    avg_payment = (total_revenue / total_payments) if total_payments > 0 else 0
-
-    revenue_today = (
-        payments_query.filter(func.date(Payment.created_at) == today)
-        .with_entities(func.sum(Payment.paid_amount))
-        .scalar()
-        or 0
-    )
-
-    revenue_this_week = (
-        payments_query.filter(Payment.created_at >= week_start)
-        .with_entities(func.sum(Payment.paid_amount))
-        .scalar()
-        or 0
-    )
-    revenue_this_month = (
-        payments_query.filter(Payment.created_at >= month_start)
-        .with_entities(func.sum(Payment.paid_amount))
-        .scalar()
-        or 0
-    )
-
-    payment_stats = PaymentStatsModel(
-        total_revenue=float(total_revenue),
-        total_payments=total_payments,
-        successful_payments=successful_payments,
-        pending_payments=pending_payments,
-        failed_payments=failed_payments,
-        average_payment_amount=float(avg_payment),
-        revenue_today=float(revenue_today),
-        revenue_this_week=float(revenue_this_week),
-        revenue_this_month=float(revenue_this_month),
-    )
-
-    employees_query = (
-        db.query(UserDetails)
-        .options(joinedload(UserDetails.branch))
-        .filter(UserDetails.is_active.is_(True))
-    )
-    role = (getattr(current_user, "role_name", "") or "").upper()
-    if role == "BRANCH_MANAGER":
-        b_id = _branch_id_for_manager(current_user)
-        if b_id:
-            employees_query = employees_query.filter(UserDetails.branch_id == b_id)
-    elif role not in ("SUPERADMIN", "BRANCH_MANAGER"):
-        team_codes = [current_user.employee_code] + get_subordinate_ids(db, current_user.employee_code)
-        if not team_codes:
-            employees_query = employees_query.filter(UserDetails.employee_code == current_user.employee_code)
-        else:
-            employees_query = employees_query.filter(UserDetails.employee_code.in_(team_codes))
-
-    employees = employees_query.all()
-
-    employee_performance: List[EmployeePerformanceModel] = []
-    for employee in employees:
-        emp_leads_query = get_employee_leads_query(
-            db, employee.employee_code, start_date, end_date
-        )
-        emp_total_leads = emp_leads_query.count()
-
-        emp_assignments = db.query(LeadAssignment).filter(
-            LeadAssignment.user_id == employee.employee_code
-        )
-        emp_called_leads = emp_assignments.filter(
-            LeadAssignment.is_call.is_(True)
-        ).count()
-
-        emp_converted_leads = (
-            emp_leads_query.join(Payment, Lead.id == Payment.lead_id)
-            .filter(Payment.paid_amount > 0)
-            .distinct()
-            .count()
-        )
-
-        emp_revenue = (
-            db.query(func.sum(Payment.paid_amount))
-            .filter(
-                Payment.user_id == employee.employee_code,
-                Payment.created_at >= start_date,
-                Payment.created_at <= end_date,
-                Payment.status == "PAID",
-            )
-            .scalar()
-            or 0
-        )
-
-        employee_performance.append(
-            EmployeePerformanceModel(
-                employee_code=employee.employee_code,
-                employee_name=employee.name,
-                role_id=int(employee.role_id),
-                role_name=getattr(employee, "role_name", None),
-                branch_name=employee.branch.name if employee.branch else None,
-                total_leads=emp_total_leads,
-                called_leads=emp_called_leads,
-                converted_leads=emp_converted_leads,
-                total_revenue=float(emp_revenue),
-                conversion_rate=calculate_conversion_rate(
-                    emp_total_leads, emp_converted_leads
-                ),
-                call_rate=calculate_conversion_rate(emp_total_leads, emp_called_leads),
-            )
-        )
-
-    daily_trends: List[DailyActivityModel] = []
-    for i in range(min(days, 30)):
-        trend_date = end_date - timedelta(days=i)
-
-        leads_created = (
-            leads_query.filter(func.date(Lead.created_at) == trend_date).count()
-        )
-
-        leads_called_count = (
-            db.query(LeadAssignment)
-            .join(Lead, LeadAssignment.lead_id == Lead.id)
-            .filter(
-                and_(
-                    LeadAssignment.is_call.is_(True),
-                    func.date(LeadAssignment.fetched_at) == trend_date,
-                    Lead.is_delete.is_(False),
-                )
-            )
-        )
-        if branch_id:
-            leads_called_count = leads_called_count.filter(Lead.branch_id == branch_id)
-
-        leads_called = leads_called_count.count()
-
-        day_payments = payments_query.filter(func.date(Payment.created_at) == trend_date)
-
-        payments_made = day_payments.count()
-        revenue = day_payments.with_entities(func.sum(Payment.paid_amount)).scalar() or 0
-
-        daily_trends.append(
-            DailyActivityModel(
-                date=trend_date.strftime("%Y-%m-%d"),
-                leads_created=leads_created,
-                leads_called=leads_called,
-                payments_made=payments_made,
-                revenue=float(revenue),
-            )
-        )
-
-    daily_trends.reverse()
-
-    source_analytics_query = (
-        db.query(
-            LeadSource.name,
-            func.count(Lead.id).label("total_leads"),
-            func.count(Payment.id).label("converted_leads"),
-            func.sum(Payment.paid_amount).label("total_revenue"),
-        )
-        .select_from(Lead)
-        .outerjoin(LeadSource, Lead.lead_source_id == LeadSource.id)
-        .outerjoin(Payment, Lead.id == Payment.lead_id)
-        .filter(
-            and_(
-                Lead.created_at >= start_date,
-                Lead.created_at <= end_date,
-                Lead.is_delete.is_(False),
-            )
-        )
-    )
-    if role == "SUPERADMIN":
-        pass
-    elif role == "BRANCH_MANAGER":
-        b_id = _branch_id_for_manager(current_user)
-        if b_id:
-            source_analytics_query = source_analytics_query.filter(Lead.branch_id == b_id)
-    else:
-        team_codes = [current_user.employee_code] + get_subordinate_ids(db, current_user.employee_code)
-        # Use EXISTS to avoid accidental duplicate joins
-        source_analytics_query = source_analytics_query.filter(
-            (
-                select(literal(1))
-                .select_from(LeadAssignment)
-                .where(
-                    and_(
-                        LeadAssignment.lead_id == Lead.id,
-                        LeadAssignment.user_id.in_(team_codes if team_codes else [current_user.employee_code]),
-                    )
-                )
-                .correlate(Lead)
-                .exists()
-            )
-        )
-
-    if branch_id:
-        source_analytics_query = source_analytics_query.filter(Lead.branch_id == branch_id)
-
-    source_analytics_data = source_analytics_query.group_by(LeadSource.name).all()
-
-    source_analytics: List[SourceAnalyticsModel] = []
-    for source_name, total, converted, revenue in source_analytics_data:
-        source_analytics.append(
-            SourceAnalyticsModel(
-                source_name=source_name or "Unknown",
-                total_leads=int(total or 0),
-                converted_leads=int(converted or 0),
-                conversion_rate=calculate_conversion_rate(
-                    int(total or 0), int(converted or 0)
-                ),
-                total_revenue=float(revenue or 0),
-            )
-        )
-
-    branch_performance: List[Dict[str, Any]] = []
-    if role == "SUPERADMIN":
-        branches = db.query(BranchDetails).filter(BranchDetails.active.is_(True)).all()
-
-        for branch in branches:
-            branch_leads = (
-                db.query(Lead)
-                .filter(
-                    and_(
-                        Lead.branch_id == branch.id,
-                        Lead.created_at >= start_date,
-                        Lead.created_at <= end_date,
-                        Lead.is_delete.is_(False),
-                    )
-                )
-                .count()
-            )
-
-            branch_revenue = (
-                db.query(func.sum(Payment.paid_amount))
-                .join(Lead, Payment.lead_id == Lead.id)
-                .filter(
-                    and_(
-                        Lead.branch_id == branch.id,
-                        Payment.created_at >= start_date,
-                        Payment.created_at <= end_date,
-                    )
-                )
-                .scalar()
-                or 0
-            )
-
-            branch_converted = (
-                db.query(Lead)
-                .join(Payment, Lead.id == Payment.lead_id)
-                .filter(
-                    and_(
-                        Lead.branch_id == branch.id,
-                        Lead.created_at >= start_date,
-                        Lead.created_at <= end_date,
-                        Lead.is_delete.is_(False),
-                        Payment.paid_amount > 0,
-                    )
-                )
-                .distinct()
-                .count()
-            )
-
-            branch_performance.append(
-                {
-                    "branch_id": branch.id,
-                    "branch_name": branch.name,
-                    "manager_name": branch.manager.name if branch.manager else "No Manager",
-                    "total_leads": branch_leads,
-                    "converted_leads": branch_converted,
-                    "total_revenue": float(branch_revenue),
-                    "conversion_rate": calculate_conversion_rate(
-                        branch_leads, branch_converted
-                    ),
-                }
-            )
-
-    top_performers = sorted(
-        employee_performance,
-        key=lambda x: (x.conversion_rate, x.total_revenue),
-        reverse=True,
-    )[:10]
-
-    return AdminAnalyticsResponse(
-        overall_stats=overall_stats,
-        payment_stats=payment_stats,
-        employee_performance=employee_performance,
-        daily_trends=daily_trends,
-        source_analytics=source_analytics,
-        branch_performance=branch_performance,
-        top_performers=top_performers,
-        filters=filters_meta,
-    )
-
 # ===============================
 # Lightweight admin dashboard card
 # ===============================
@@ -965,8 +1010,9 @@ async def get_admin_dashboard_card(
     start_date, end_date = get_date_range_filter(days)
 
     base_q, filters_meta = get_admin_leads_query(
-        db, current_user, start_date, end_date, view=view, team_member=team_member
+        db, current_user, start_date, end_date, view=view
     )
+
     if branch_id:
         base_q = base_q.filter(Lead.branch_id == branch_id)
 
@@ -1079,7 +1125,6 @@ async def get_admin_response_analytics(
         date_from=start_date,
         date_to=end_date,
         view=view,
-        team_member=team_member,
     )
     leads_q = leads_q.filter(Lead.is_delete.is_(False))
 
