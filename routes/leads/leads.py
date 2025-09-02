@@ -655,6 +655,8 @@ def update_lead(
                     detail=f"Lead response with ID {update_data['lead_response_id']} not found"
                 )
         
+        validate_lead_data(db, update_data, exclude_lead_id=lead_id)
+        
         # Check for duplicates if updating email or mobile
         if "email" in update_data and update_data["email"]:
 
@@ -725,7 +727,6 @@ def update_lead(
                     detail="Another lead with this mobile already exists"
                 )
             
-        validate_lead_data(db, update_data, exclude_lead_id=lead_id)
 
         
         # Apply updates
