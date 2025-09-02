@@ -1,29 +1,25 @@
 import os
 import uuid
 import json
-from typing import Optional, List, Any, Dict, Union
+from typing import Optional, List, Any, Dict, Union, Literal, Tuple
 from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 from pydantic import BaseModel, constr, validator
+from sqlalchemy import and_, or_, select, literal  # <— add and_, select, literal
+from sqlalchemy.sql import exists  # optional if you prefer sqlalchemy.exists()
 from db.connection import get_db
 from db.models import (
     Lead, LeadSource, LeadResponse, BranchDetails, 
     UserDetails, Payment, LeadComment, LeadStory, LeadAssignment, LeadFetchConfig
 )
 from utils.AddLeadStory import AddLeadStory
-from db.connection import get_db
 from routes.auth.auth_dependency import get_current_user
 from routes.notification.notification_scheduler import schedule_callback
 from routes.leads.leads_fetch import load_fetch_config
-from sqlalchemy import or_
 from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
-
-
-
-
-
+from utils.user_tree import get_subordinate_users, get_subordinate_ids  # <— add this import
 
 router = APIRouter(
     prefix="/leads",
@@ -32,44 +28,45 @@ router = APIRouter(
 
 UPLOAD_DIR = "static/lead_documents"
 
+# ----------------- NEW: Filters + Response wrappers -----------------
+class FiltersMeta(BaseModel):
+    view: Literal["self", "other", "all"]
+    available_views: List[str]
+    available_team_members: List[Dict[str, str]] = []
+    selected_team_member: Optional[str] = None
+
+class LeadsListResponse(BaseModel):
+    leads: List["LeadOut"]
+    filters: Optional[FiltersMeta] = None
+
+# ----------------- Models (unchanged from your code) -----------------
 class LeadBase(BaseModel):
-    # Personal Information
+    # ... (same as your current LeadBase)
     full_name: Optional[str] = None
     director_name: Optional[str] = None
     father_name: Optional[str] = None
     gender: Optional[str] = None
     marital_status: Optional[str] = None
-    
-    # Contact Information
     email: Optional[str] = None
     mobile: Optional[str] = None
     alternate_mobile: Optional[str] = None
-    
-    # Documents
     aadhaar: Optional[str] = None
     pan: Optional[str] = None
     gstin: Optional[str] = None
-    
-    # Address Information
     state: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None
-    
-    # Additional Information
     dob: Optional[date] = None
     occupation: Optional[str] = None
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
     ft_service_type: Optional[str] = None
-    
-    # Lead Management
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
-    
     branch_id: Optional[int] = None
     ft_to_date: Optional[str] = None
     ft_from_date: Optional[str] = None
@@ -79,51 +76,37 @@ class LeadBase(BaseModel):
     assigned_for_conversion: Optional[bool] = False
     conversion_deadline: Optional[datetime] = None
 
-
 class LeadCreate(LeadBase):
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
 
-
 class LeadUpdate(BaseModel):
-    # Personal Information
+    # ... (same as your current LeadUpdate)
     full_name: Optional[str] = None
     director_name: Optional[str] = None
     father_name: Optional[str] = None
     gender: Optional[str] = None
     marital_status: Optional[str] = None
-    
-    # Contact Information
     email: Optional[str] = None
     mobile: Optional[str] = None
     alternate_mobile: Optional[str] = None
-    
-    # Documents
     aadhaar: Optional[str] = None
     pan: Optional[str] = None
     gstin: Optional[str] = None
-    
-    # Address Information
     state: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None
-    
-    # Additional Information
     dob: Optional[date] = None
     occupation: Optional[str] = None
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
     ft_service_type: Optional[str] = None
-    
-    # Lead Management
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
-    
-    # Status Management
     lead_status: Optional[str] = None
     call_back_date: Optional[datetime] = None
     kyc: Optional[bool] = None
@@ -136,58 +119,40 @@ class LeadUpdate(BaseModel):
     assigned_for_conversion: Optional[bool] = False
     conversion_deadline: Optional[datetime] = None
 
-
 class LeadOut(BaseModel):
+    # ... (same as your current LeadOut)
     id: int
-    
-    # Personal Information
     full_name: Optional[str] = None
     director_name: Optional[str] = None
     father_name: Optional[str] = None
     gender: Optional[str] = None
     marital_status: Optional[str] = None
-    
-    # Contact Information
     email: Optional[str] = None
     mobile: Optional[str] = None
     alternate_mobile: Optional[str] = None
-    
-    # Documents
     aadhaar: Optional[str] = None
     pan: Optional[str] = None
     gstin: Optional[str] = None
-    
-    # Address Information
     state: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
     address: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None
-    
-    # Additional Information
     dob: Optional[date] = None
     occupation: Optional[str] = None
     segment: Optional[List[str]] = None
     experience: Optional[str] = None
     investment: Optional[str] = None
     ft_service_type: Optional[str] = None
-    
-    # Lead Management
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
     branch_id: Optional[int] = None
-    
-    # Metadata
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
-    
-    # File uploads
     aadhar_front_pic: Optional[str] = None
     aadhar_back_pic: Optional[str] = None
     pan_pic: Optional[str] = None
-    
-    # Status fields
     kyc: Optional[bool] = False
     kyc_id: Optional[str] = None
     is_old_lead: Optional[bool] = False
@@ -200,28 +165,22 @@ class LeadOut(BaseModel):
     response_changed_at: Optional[datetime] = None
     assigned_for_conversion: Optional[bool] = False
     conversion_deadline: Optional[datetime] = None
-    
-    # Timestamps
     created_at: datetime
-    
+
     @validator('segment', pre=True, always=True)
     def parse_segment(cls, v):
-        """Parse segment field safely"""
         if v is None:
             return None
-        
         if isinstance(v, str):
             try:
                 parsed = json.loads(v)
                 return parsed if isinstance(parsed, list) else [parsed]
             except json.JSONDecodeError:
                 return [v] if v.strip() else None
-        
         if isinstance(v, list):
             return v
-        
         return [str(v)] if v is not None else None
-    
+
     class Config:
         from_attributes = True
 
@@ -235,44 +194,29 @@ class CommentOut(BaseModel):
     class Config:
         from_attributes = True
 
-# Utility Functions
+# ----------------- Helpers (unchanged + new visibility helpers) -----------------
 def save_uploaded_file(file: UploadFile, lead_id: int, file_type: str) -> str:
-    """Save uploaded file and return file path"""
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Generate unique filename
     file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
     filename = f"lead_{lead_id}_{file_type}_{uuid.uuid4().hex}.{file_extension}"
     file_path = os.path.join(UPLOAD_DIR, filename)
-    
-    # Save file
     with open(file_path, "wb") as buffer:
         content = file.file.read()
         buffer.write(content)
-    
     return f"/{UPLOAD_DIR}/{filename}"
 
-
 def prepare_lead_data_for_db(data: dict) -> dict:
-    """Prepare lead data for database insertion"""
-    # Convert segments to JSON string if it's a list
     if 'segment' in data and isinstance(data['segment'], list):
         data['segment'] = json.dumps(data['segment'])
-    
-    # Convert PAN to uppercase if provided
     if 'pan' in data and data['pan']:
         data['pan'] = data['pan'].upper()
-    
     return data
 
-
 def safe_convert_lead_to_dict(lead) -> dict:
-    """Safely convert Lead model to dictionary with proper JSON handling"""
     try:
         lead_dict = {}
         for column in lead.__table__.columns:
             value = getattr(lead, column.name, None)
-            
             if column.name == 'segment':
                 if value is not None:
                     try:
@@ -282,15 +226,10 @@ def safe_convert_lead_to_dict(lead) -> dict:
                         lead_dict[column.name] = [value] if value else []
                 else:
                     lead_dict[column.name] = None
-                    
             else:
                 lead_dict[column.name] = value
-        
         return lead_dict
-        
-    except Exception as e:
-        print(f"Error converting lead to dict: {str(e)}")
-        # Return minimal safe data
+    except Exception:
         return {
             "id": getattr(lead, 'id', None),
             "full_name": getattr(lead, 'full_name', None),
@@ -332,10 +271,97 @@ def safe_convert_lead_to_dict(lead) -> dict:
             "call_back_date": getattr(lead, 'call_back_date', None),
         }
 
+def _branch_id_for_manager(u: UserDetails) -> Optional[int]:
+    if getattr(u, "manages_branch", None):
+        return u.manages_branch.id
+    return u.branch_id
 
+def _exists_assignment_for_users(allowed_codes: List[str]):
+    """
+    Correlated EXISTS(LeadAssignment...) for allowed user codes.
+    """
+    if not allowed_codes:
+        # produce FALSE condition if empty
+        return literal(False)
+    return (
+        select(literal(1))
+        .select_from(LeadAssignment)
+        .where(
+            and_(
+                LeadAssignment.lead_id == Lead.id,
+                LeadAssignment.user_id.in_(allowed_codes),
+            )
+        )
+        .correlate(Lead)
+        .exists()
+    )
 
-# API Endpoints
+def apply_visibility_to_leads_list(
+    db: Session,
+    current_user: UserDetails,
+    base_q,
+    *,
+    view: Literal["self", "other", "all"] = "all",
+    team_member: Optional[str] = None,
+) -> Tuple[Any, Optional[FiltersMeta]]:
+    """
+    Apply role-based visibility on Lead list:
+    - SUPERADMIN: no restriction
+    - BRANCH_MANAGER: branch filter
+    - Others: self/other/all by assignment (Lead.assigned_to_user OR LeadAssignment)
+    Returns (scoped_query, filters_meta|None)
+    """
+    role = (getattr(current_user, "role_name", "") or "").upper()
 
+    # SUPERADMIN
+    if role == "SUPERADMIN":
+        return base_q, None
+
+    # BRANCH_MANAGER
+    if role == "BRANCH_MANAGER":
+        b_id = _branch_id_for_manager(current_user)
+        if not b_id:
+            return base_q.filter(Lead.id == -1), None
+        return base_q.filter(Lead.branch_id == b_id), None
+
+    # OTHER EMPLOYEES
+    subs: List[str] = get_subordinate_ids(db, current_user.employee_code)
+
+    if view == "self":
+        allowed = [current_user.employee_code]
+    elif view == "other":
+        # If team_member specified and is under this user, restrict to that
+        if team_member and team_member in subs:
+            allowed = [team_member]
+        else:
+            allowed = subs
+    else:  # "all"
+        allowed = [current_user.employee_code] + subs
+
+    # Assigned via column OR via LeadAssignment mapping
+    assignment_exists = _exists_assignment_for_users(allowed)
+
+    scoped = base_q.filter(
+        or_(
+            Lead.assigned_to_user.in_(allowed),
+            assignment_exists
+        )
+    )
+
+    # Build filters meta for UI (list of direct subordinates)
+    subs_users = get_subordinate_users(db, current_user.employee_code)
+    filters_meta = FiltersMeta(
+        view=view,
+        available_views=["self", "other", "all"],
+        available_team_members=[
+            {"employee_code": u.employee_code, "name": u.name, "role_id": str(u.role_id)}
+            for u in subs_users
+        ],
+        selected_team_member=team_member if view == "other" else None,
+    )
+    return scoped, filters_meta
+
+# ----------------- API Endpoint (UPDATED) -----------------
 @router.post("/", response_model=LeadOut, status_code=status.HTTP_201_CREATED)
 def create_lead(
     lead_in: LeadCreate,
@@ -437,7 +463,7 @@ def create_lead(
             detail=f"Error creating lead: {str(e)}"
         )
 
-@router.get("/", response_model=List[LeadOut])
+@router.get("/", response_model=LeadsListResponse)  # <— changed response model
 def get_all_leads(
     # Pagination
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -445,7 +471,7 @@ def get_all_leads(
 
     # Existing filters
     branch_id:      Optional[int]  = Query(None),
-    lead_status:    Optional[str]  = Query(None, description="old, new, client"), # old, new, client
+    lead_status:    Optional[str]  = Query(None, description="old, new, client"),
     lead_source_id: Optional[int]  = Query(None),
     created_by:     Optional[str]  = Query(None),
     kyc_only:       bool           = Query(False, description="Only leads with kyc=True"),
@@ -453,101 +479,105 @@ def get_all_leads(
     city:           Optional[str]  = Query(None),
     state:          Optional[str]  = Query(None),
 
-    # New filters
+    # New/extra filters
     from_date:           Optional[date]          = Query(None, description="created_at ≥ this date (YYYY-MM-DD)"),
     to_date:             Optional[date]          = Query(None, description="created_at ≤ this date (YYYY-MM-DD)"),
     search:              Optional[str]           = Query(None, description="global search on name/email/mobile"),
     response_id:         Optional[int]           = Query(None, description="Filter by lead_response_id"),
     assigned_to_user:    Optional[str]           = Query(None, description="Filter by assigned_to_user"),
-    assigned_roles:      Optional[List[str]] = Query(
-                             None,
-                             description="Filter by role_id of assigned_to_user; e.g. ['TL','BA']"
-                         ),
+    assigned_roles:      Optional[List[str]]     = Query(None, description="Filter by role_id of assigned_to_user; e.g. ['3','4']"),
 
+    # Visibility controls for non-admin employees
+    view: Literal["self", "other", "all"] = Query("all", description="For employees: restrict to self/other/all"),
+    team_member: Optional[str] = Query(None, description="When view='other', choose a specific subordinate"),
+
+    current_user: UserDetails = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get all leads with extended filtering options."""
+    """Get all leads with extended filtering options + role-based visibility."""
     try:
-        query = db.query(Lead)
+        base_q = db.query(Lead).filter(Lead.is_delete.is_(False))
 
-        # core filters
-        query = query.filter(Lead.is_delete == False)
+        # ----- Role-based visibility -----
+        scoped_q, filters_meta = apply_visibility_to_leads_list(
+            db=db,
+            current_user=current_user,
+            base_q=base_q,
+            view=view,
+            team_member=team_member,
+        )
+
+        # ----- Core filters -----
         if branch_id:
-            query = query.filter(Lead.branch_id == branch_id)
+            scoped_q = scoped_q.filter(Lead.branch_id == branch_id)
 
-        if lead_status=="client":
-            query = query.filter(Lead.is_client == True)
-
-        if lead_status=="old":
-            query = query.filter(Lead.is_old_lead == True, Lead.is_client == False)
-        
-        if lead_status=="new":
-            query = query.filter(Lead.is_old_lead == False, Lead.is_client == False)
-
+        if lead_status == "client":
+            scoped_q = scoped_q.filter(Lead.is_client.is_(True))
+        elif lead_status == "old":
+            scoped_q = scoped_q.filter(Lead.is_old_lead.is_(True), Lead.is_client.is_(False))
+        elif lead_status == "new":
+            scoped_q = scoped_q.filter(Lead.is_old_lead.is_(False), Lead.is_client.is_(False))
 
         if lead_source_id:
-            query = query.filter(Lead.lead_source_id == lead_source_id)
+            scoped_q = scoped_q.filter(Lead.lead_source_id == lead_source_id)
         if created_by:
-            query = query.filter(Lead.created_by == created_by)
+            scoped_q = scoped_q.filter(Lead.created_by == created_by)
         if kyc_only:
-            query = query.filter(Lead.kyc.is_(True))
+            scoped_q = scoped_q.filter(Lead.kyc.is_(True))
         if gender:
-            query = query.filter(Lead.gender == gender)
+            scoped_q = scoped_q.filter(Lead.gender == gender)
         if city:
-            query = query.filter(Lead.city.ilike(f"%{city}%"))
+            scoped_q = scoped_q.filter(Lead.city.ilike(f"%{city}%"))
         if state:
-            query = query.filter(Lead.state.ilike(f"%{state}%"))
+            scoped_q = scoped_q.filter(Lead.state.ilike(f"%{state}%"))
 
-        # date range
+        # Date range
         if from_date:
-            query = query.filter(Lead.created_at.cast(date) >= from_date)
+            scoped_q = scoped_q.filter(Lead.created_at.cast(date) >= from_date)
         if to_date:
-            query = query.filter(Lead.created_at.cast(date) <= to_date)
+            scoped_q = scoped_q.filter(Lead.created_at.cast(date) <= to_date)
 
-        # global search
+        # Global search
         if search:
             term = f"%{search.strip()}%"
-            query = query.filter(
+            scoped_q = scoped_q.filter(
                 or_(
                     Lead.full_name.ilike(term),
                     Lead.email.ilike(term),
-                    Lead.mobile.ilike(term)
+                    Lead.mobile.ilike(term),
                 )
             )
 
-        # response-wise
+        # Response-wise
         if response_id is not None:
-            query = query.filter(Lead.lead_response_id == response_id)
+            scoped_q = scoped_q.filter(Lead.lead_response_id == response_id)
 
-        # employee-wise
+        # Assigned-to specific
         if assigned_to_user:
-            query = query.filter(Lead.assigned_to_user == assigned_to_user)
+            scoped_q = scoped_q.filter(Lead.assigned_to_user == assigned_to_user)
 
-        # role_id-wise (join to UserDetails)
+        # Role filter of assignee (join to UserDetails)
         if assigned_roles:
-            query = query.join(
-                UserDetails,
-                Lead.assigned_to_user == UserDetails.employee_code
-            ).filter(
-                UserDetails.role_id.in_(assigned_roles)
-            )
+            scoped_q = scoped_q.join(
+                UserDetails, Lead.assigned_to_user == UserDetails.employee_code
+            ).filter(UserDetails.role_id.in_(assigned_roles))
 
-        # pagination & ordering
+        # ----- Ordering + Pagination -----
         leads = (
-            query
+            scoped_q
             .order_by(Lead.created_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
         )
 
-        # convert to Pydantic
-        result = []
+        # Pydantic conversion
+        result_leads: List[LeadOut] = []
         for lead in leads:
             lead_dict = safe_convert_lead_to_dict(lead)
-            result.append(LeadOut(**lead_dict))
+            result_leads.append(LeadOut(**lead_dict))
 
-        return result
+        return LeadsListResponse(leads=result_leads, filters=filters_meta)
 
     except Exception as e:
         raise HTTPException(
