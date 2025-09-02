@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, date
-from typing import Any, Optional, List, Union, Dict
+from typing import Any, Optional, List, Union, Dict, Literal, Set
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -9,24 +9,25 @@ from fastapi import (
     Query,
 )
 from httpx import AsyncClient
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy.orm import Session, load_only
+from sqlalchemy import func, desc, or_, and_
 from pydantic import BaseModel, ConfigDict
 
-from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY
+from config import CASHFREE_APP_ID, CASHFREE_SECRET_KEY, PAYMENT_LIMIT
 from db.connection import get_db
 from db.models import Payment, Lead, UserDetails
-from db.Schema.payment import  PaymentOut  # keep using your existing request types
+from db.Schema.payment import PaymentOut  # keep using your existing request types
 from routes.auth.auth_dependency import get_current_user
 from sqlalchemy.exc import SQLAlchemyError
-from config import PAYMENT_LIMIT
-from sqlalchemy.orm import load_only
+from utils.user_tree import get_subordinate_users, get_subordinate_ids
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/payment", tags=["payment"])
 
+# -------------------------------------------------------
 # Cashfree helpers
+# -------------------------------------------------------
 def _base_url() -> str:
     return "https://api.cashfree.com/pg"
 
@@ -67,17 +68,28 @@ async def refresh_active_status(payment: Payment) -> str:
             logger.debug("Failed to refresh Cashfree status for order %s", payment.order_id)
     return current_status
 
-
-# ---------------------- Schemas ----------------------
+# -------------------------------------------------------
+# Schemas
+# -------------------------------------------------------
+class FiltersMeta(BaseModel):
+    view: Literal["self", "other", "all"]
+    available_views: List[str]
+    available_team_members: List[Dict[str, str]] = []
+    selected_team_member: Optional[str] = None
 
 class PaginatedPayments(BaseModel):
     limit: int
     offset: int
     total: int
     payments: List[PaymentOut]
+    # extra metadata for UI filters (only filled for non-managers)
+    filters: Optional[FiltersMeta] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+# -------------------------------------------------------
+# Endpoints (kept your two simple ones as-is)
+# -------------------------------------------------------
 @router.get(
     "/history/{phone}",
     status_code=status.HTTP_200_OK,
@@ -92,42 +104,28 @@ async def get_payment_history_by_phone(
     ),
     db: Session = Depends(get_db),
 ):
-    """
-    Fetch all payments for the given phone.
-    - If `?date=` is provided, filters to that date.
-    - ACTIVE statuses are refreshed from Cashfree.
-    """
-    # 1) Base query
     query = db.query(Payment).filter(Payment.phone_number == phone)
-
-    # 2) Date filter
     if on_date is not None:
         query = query.filter(func.date(Payment.created_at) == on_date)
 
-    # 3) Fetch records
     try:
         records = query.order_by(Payment.created_at.desc()).all()
     except SQLAlchemyError as e:
         logger.error("DB error fetching history for phone %s: %s", phone, e)
         raise HTTPException(500, "Database error")
 
-    # 4) Process and refresh statuses
     results = []
     for r in records:
         current_status = await refresh_active_status(r)
-        logger.debug("Payment record: %s, status after refresh: %s", r.id, current_status)
-
         data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
         data["status"] = current_status
-
         for dt_field in ("created_at", "updated_at"):
             val = getattr(r, dt_field, None)
             if isinstance(val, datetime):
                 data[dt_field] = val.isoformat()
-
         results.append(data)
-
     return results
+
 
 @router.get(
     "/employee/history",
@@ -143,13 +141,7 @@ async def get_employee_payment_history(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
-    """
-    Fetch all payments made/raised by current user.
-    - If `?date=` is provided, filters to that date.
-    - ACTIVE statuses are refreshed from Cashfree.
-    """
     query = db.query(Payment).filter(Payment.user_id == current_user.employee_code)
-
     if on_date is not None:
         query = query.filter(func.date(Payment.created_at) == on_date)
 
@@ -162,24 +154,23 @@ async def get_employee_payment_history(
     results = []
     for r in records:
         current_status = await refresh_active_status(r)
-        logger.debug("Employee payment record: %s, status after refresh: %s", r.id, current_status)
-
         data = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_instance_state")}
         data["status"] = current_status
-
         for dt_field in ("created_at", "updated_at"):
             val = getattr(r, dt_field, None)
             if isinstance(val, datetime):
                 data[dt_field] = val.isoformat()
-
         results.append(data)
-
     return results
 
+
+# -------------------------------------------------------
+# The rich endpoint with role-based visibility
+# -------------------------------------------------------
 @router.get(
     "/all/employee/history",
     status_code=status.HTTP_200_OK,
-    summary="Get payment history with rich filters",
+    summary="Get payment history with rich filters + role-based visibility",
     response_model=PaginatedPayments,
 )
 async def get_payment_history_rich(
@@ -196,16 +187,86 @@ async def get_payment_history_rich(
     order_id: Optional[str] = Query(None, description="Order ID to filter"),
     date_from: Optional[date] = Query(None, description="YYYY-MM-DD start date (inclusive)"),
     date_to: Optional[date] = Query(None, description="YYYY-MM-DD end date (inclusive)"),
+    # 👇 new visibility filters for 'other employees'
+    view: Literal["self", "other", "all"] = Query("all", description="Scope for non-managers: self | other | all"),
+    team_member: Optional[str] = Query(None, description="When view='other', restrict to this subordinate employee_code"),
     limit: int = Query(100, ge=1, le=500, description="Max records to return (capped at 500)"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: Session = Depends(get_db),
+    current_user: UserDetails = Depends(get_current_user),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=400, detail="date_from cannot be after date_to")
 
     try:
-        q = db.query(Payment)
+        # ---- Base query (outerjoin Lead so branch filter can fallback on Lead.branch_id) ----
+        q = db.query(Payment).outerjoin(Lead, Lead.id == Payment.lead_id)
 
+        # ---- Role-based scope ----
+        role = (current_user.role_name or "").upper()
+        filters_meta: Optional[FiltersMeta] = None
+
+        if role == "SUPERADMIN":
+            # see everything
+            pass
+
+        elif role == "BRANCH_MANAGER":
+            # Managed branch preferred, else own branch_id
+            b_id = None
+            if current_user.manages_branch:
+                b_id = current_user.manages_branch.id
+            elif current_user.branch_id:
+                b_id = current_user.branch_id
+
+            if b_id is None:
+                # No branch info -> no data
+                q = q.filter(Payment.id == -1)
+            else:
+                b_id_str = str(b_id)
+                q = q.filter(
+                    or_(
+                        Payment.branch_id == b_id_str,                     # direct payment branch
+                        and_(Payment.branch_id == None, Lead.branch_id == b_id)  # fallback to lead's branch
+                    )
+                )
+
+        else:
+            # Other employees: self + subordinates by default
+            team_codes = get_subordinate_ids(db, current_user.employee_code)
+            allowed: Set[str] = set([current_user.employee_code]) | set(team_codes)
+
+            if view == "self":
+                q = q.filter(Payment.user_id == current_user.employee_code)
+            elif view == "other":
+                if not team_codes:
+                    q = q.filter(Payment.id == -1)  # no subordinates
+                else:
+                    if team_member:
+                        q = q.filter(
+                            Payment.user_id == team_member if team_member in team_codes else Payment.id == -1
+                        )
+                    else:
+                        q = q.filter(Payment.user_id.in_(team_codes))
+            else:  # "all"
+                q = q.filter(Payment.user_id.in_(allowed))
+
+            # Build filters metadata (list subordinates for UI)
+            subs = get_subordinate_users(db, current_user.employee_code)
+            filters_meta = FiltersMeta(
+                view=view,
+                available_views=["self", "other", "all"],
+                available_team_members=[
+                    {
+                        "employee_code": u.employee_code,
+                        "name": u.name,
+                        "role_id": str(u.role_id),
+                    }
+                    for u in subs
+                ],
+                selected_team_member=team_member if view == "other" else None,
+            )
+
+        # ---- Field-level filters (your existing ones) ----
         if service:
             q = q.filter(func.array_to_string(Payment.Service, " ").ilike(f"%{service}%"))
 
@@ -214,7 +275,7 @@ async def get_payment_history_rich(
                 plan_id_val = int(plan_id)
                 q = q.filter(Payment.plan.contains([{"id": plan_id_val}]))
             except ValueError:
-                q = q.filter(Payment.plan.contains([{"id": plan_id}]))  # fallback if not int
+                q = q.filter(Payment.plan.contains([{"id": plan_id}]))
 
         if name:
             q = q.filter(Payment.name.ilike(f"%{name}%"))
@@ -229,7 +290,8 @@ async def get_payment_history_rich(
         if user_id:
             q = q.filter(Payment.user_id == user_id)
         if branch_id:
-            q = q.filter(Payment.branch_id == branch_id)
+            # keep explicit branch_id filter if caller passes it
+            q = q.filter(or_(Payment.branch_id == str(branch_id), Lead.branch_id == int(branch_id)))
         if lead_id is not None:
             q = q.filter(Payment.lead_id == lead_id)
         if order_id:
@@ -246,12 +308,11 @@ async def get_payment_history_rich(
             q = q.filter(func.date(Payment.created_at) <= date_to)
 
         total = q.count()
-
         records = (
             q.order_by(Payment.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .all()
+             .limit(limit)
+             .offset(offset)
+             .all()
         )
 
         # Prefetch employee/user details to avoid N+1
@@ -266,7 +327,7 @@ async def get_payment_history_rich(
                     UserDetails.phone_number,
                     UserDetails.email,
                     UserDetails.role_id,
-                    UserDetails.role_name,   # ← add this
+                    UserDetails.role_name,
                 ))
                 .filter(UserDetails.employee_code.in_(list(user_ids)))
                 .all()
@@ -309,11 +370,7 @@ async def get_payment_history_rich(
         try:
             payment_obj = PaymentOut(**data)
         except Exception as e:
-            logger.error(
-                "Serialization of payment record failed (id=%s): %s",
-                getattr(r, "id", "<unknown>"),
-                e,
-            )
+            logger.error("Serialization failed (payment id=%s): %s", getattr(r, "id", "<unknown>"), e)
             continue
 
         payments_out.append(payment_obj)
@@ -323,6 +380,7 @@ async def get_payment_history_rich(
         offset=offset,
         total=total,
         payments=payments_out,
+        filters=filters_meta,
     )
 
 
@@ -332,7 +390,7 @@ async def get_payment_history_rich(
     summary="Total paid amount for a lead (status=PAID only)",
 )
 async def get_total_payment_limit(
-    lead_id: int,                     # ← Lead.id int hota hai
+    lead_id: int,
     db: Session = Depends(get_db),
 ):
     # Check lead exists
@@ -340,7 +398,6 @@ async def get_total_payment_limit(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Sum only PAID payments for this lead
     total_paid = (
         db.query(func.coalesce(func.sum(Payment.paid_amount), 0.0))
         .filter(
@@ -350,7 +407,6 @@ async def get_total_payment_limit(
         .scalar()
     )
 
-    # Optionally: count of paid payments
     paid_count = (
         db.query(func.count(Payment.id))
         .filter(
@@ -362,13 +418,8 @@ async def get_total_payment_limit(
 
     return {
         "lead_id": lead_id,
-        "total_paid": float(total_paid),  # ensure JSON serializable
+        "total_paid": float(total_paid),
         "paid_payments_count": int(paid_count),
         "total_paid_limit": PAYMENT_LIMIT,
-        "remaining_limit": PAYMENT_LIMIT-float(total_paid)
+        "remaining_limit": PAYMENT_LIMIT - float(total_paid),
     }
-
-
-
-
-

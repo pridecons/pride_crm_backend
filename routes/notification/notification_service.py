@@ -6,6 +6,7 @@ from typing import Dict, List, Any, Optional
 
 from fastapi import WebSocket
 from collections import defaultdict
+import asyncio
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -117,6 +118,54 @@ class NotificationService:
         if at_time:
             payload["timestamp"] = at_time
         return await self.send_to_user(user_id, payload)
+
+
+    async def send_to_all_connected(self, data: Dict[str, Any]) -> int:
+        """
+        Ultra-fast broadcast: ek hi payload sab sockets ko, asyncio.gather se parallel.
+        Returns: successful send count.
+        """
+        # snapshot to avoid "dict changed size" issues
+        sockets: List[WebSocket] = []
+        for bucket in list(self.active_connections.values()):
+            sockets.extend(list(bucket))
+
+        if not sockets:
+            logger.warning("No active WebSocket connections to broadcast")
+            return 0
+
+        payload = {
+            "id":        str(uuid4()),
+            "timestamp": datetime.utcnow().isoformat(),
+            "type":      "notification",
+            **data,
+        }
+        text = json.dumps(payload)
+
+        results = await asyncio.gather(
+            *(ws.send_text(text) for ws in sockets),
+            return_exceptions=True,
+        )
+
+        ok = 0
+        for ws, res in zip(sockets, results):
+            if isinstance(res, Exception):
+                logger.error(f"Broadcast: dropping dead socket ({self.connection_info.get(ws)}) -> {res}")
+                self.disconnect(ws)  # clean up bad socket
+            else:
+                ok += 1
+
+        logger.info(f"Broadcast complete: success={ok} / total={len(sockets)}")
+        return ok
+
+    async def notify_all(self, title: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Convenience wrapper: title/message ke saath sab ko bhejo.
+        """
+        data = {"title": title, "message": message}
+        if extra:
+            data.update(extra)
+        return await self.send_to_all_connected(data)
 
 # singleton instance
 notification_service = NotificationService()

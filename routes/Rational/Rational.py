@@ -28,6 +28,7 @@ from typing import Literal
 from typing import Union
 from db.Schema.Rational import RecommendationNotFoundError, FileUploadError, PDFGenerationError,DatabaseOperationError,  StatusType, NarrationCreate, NarrationUpdate, NarrationResponse, AnalyticsResponse, ErrorResponse
 from services.service_manager import distribution_rational
+from routes.notification.notification_service import notification_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
@@ -234,6 +235,8 @@ async def create_recommendation(
             message,
             stock_details
         )
+
+        await notification_service.notify_all("Recommendation", message, {})
 
         # Generate PDF if rationale provided
         if rational and rational.strip():
