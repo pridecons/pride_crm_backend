@@ -1,6 +1,7 @@
-# routes/VBC_Calling/Crete_call.py
+# routes/VBC_Calling/Create_call.py
 from __future__ import annotations
 
+import os
 from typing import Optional, Literal, Dict, Any
 import re
 import httpx
@@ -32,10 +33,19 @@ def _normalize_dst(num: str) -> str:
         )
     return num
 
+def _token_cache_file_for(user: UserDetails) -> str:
+    """
+    Per-user token cache file (persists access/refresh tokens & expiry).
+    """
+    cache_dir = os.path.join(os.getcwd(), "vbc_token_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"{user.employee_code}.json")
+
 def _build_vbc_client_for_user(user: UserDetails) -> VBCClient:
     """
     Build a fresh VBC client using the current user's Vonage username/password.
     Account/client id/secret come from env (config).
+    Uses on-disk token cache so tokens survive process restarts.
     """
     if not user.vbc_user_username or not user.vbc_user_password:
         raise HTTPException(
@@ -49,7 +59,7 @@ def _build_vbc_client_for_user(user: UserDetails) -> VBCClient:
         client_id=API_CLIENT_ID,
         client_secret=API_CLIENT_SECRET,
     )
-    return VBCClient(env)
+    return VBCClient(env, token_cache_path=_token_cache_file_for(user))
 
 def _raise_for_httpx(e: httpx.HTTPStatusError, msg: str):
     try:
@@ -116,6 +126,8 @@ def create_call_api(
     Uses the logged-in user's:
       - vbc_extension_id as the 'from' extension
       - vbc_user_username / vbc_user_password to authenticate against VBC
+
+    Tokens are fetched/refreshed automatically and cached on disk per user.
     """
     if not current_user.vbc_extension_id:
         raise HTTPException(status_code=400, detail="VBC extension is not configured for this user.")
@@ -442,7 +454,6 @@ def cr_company_list_api(
         "extension": extension,
         "order": order,
     }
-    # drop None
     filters = {k: v for k, v in filters.items() if v is not None}
 
     try:
@@ -502,7 +513,6 @@ def cr_company_audio_api(
         audio_bytes = client.cr_company_audio(recording_id)
         fname = filename or f"recording_{recording_id}.bin"
         headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
-        # content-type unknown; safest is binary stream
         return StreamingResponse(iter([audio_bytes]), media_type="application/octet-stream", headers=headers)
     except httpx.HTTPStatusError as e:
         _raise_for_httpx(e, "Failed to download recording audio")

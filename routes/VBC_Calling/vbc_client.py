@@ -1,8 +1,9 @@
-# vbc_client.py
+# routes/VBC_Calling/vbc_client.py
 from __future__ import annotations
 
 import os
 import json
+import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Callable
@@ -121,11 +122,20 @@ class VBCClient:
         timeout: float = 30.0,
         cred_getter: Optional[CredGetter] = None,
         ext_getter: Optional[ExtGetter] = None,
+        token_cache_path: Optional[str] = None,   # NEW: persistent cache per user
     ):
         self.env = env
         self.http = httpx.Client(timeout=timeout, follow_redirects=False)
         self.cred_getter = cred_getter
         self.ext_getter = ext_getter
+        self.token_cache_path = token_cache_path
+
+        # NEW: prevent parallel refresh stampede
+        self._lock = threading.Lock()
+
+        # auto-load cached tokens if provided
+        if self.token_cache_path:
+            self.load_tokens(self.token_cache_path)
 
     # ---------- Token management ----------
     def _ensure_user_creds(self) -> None:
@@ -143,6 +153,14 @@ class VBCClient:
         self.env.refresh_token = data.get("refresh_token", self.env.refresh_token)
         expires_in = data.get("expires_in", 3600)
         self.env.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+        # auto-save if cache path configured
+        if self.token_cache_path:
+            try:
+                self.save_tokens(self.token_cache_path)
+            except Exception:
+                # do not break request if disk write fails
+                pass
 
     def authenticate(self) -> None:
         self._ensure_user_creds()
@@ -177,13 +195,30 @@ class VBCClient:
         r.raise_for_status()
         self._set_tokens(r.json())
 
-    def ensure_token(self, skew_seconds: int = 60) -> None:
+    def ensure_token(self, skew_seconds: int = 120) -> None:
+        """
+        Ensure a valid token exists. Refresh a little before real expiry (skew).
+        Thread-safe to avoid multiple refreshes in parallel.
+        """
         now = datetime.now(timezone.utc)
-        if (
+        needs_refresh = (
             not self.env.token
             or not self.env.token_expires_at
             or (self.env.token_expires_at - now).total_seconds() < skew_seconds
-        ):
+        )
+        if not needs_refresh:
+            return
+
+        with self._lock:
+            # re-check under lock
+            now = datetime.now(timezone.utc)
+            if (
+                self.env.token
+                and self.env.token_expires_at
+                and (self.env.token_expires_at - now).total_seconds() >= skew_seconds
+            ):
+                return
+
             if self.env.refresh_token:
                 try:
                     self.refresh_auth()
@@ -209,20 +244,21 @@ class VBCClient:
             resp.raise_for_status()
             return resp
 
-        # If 401, try one refresh/re-auth
-        try:
-            if self.env.refresh_token:
-                self.refresh_auth()
-            else:
-                self.authenticate()
-        except httpx.HTTPError:
-            resp.raise_for_status()
+        # If 401, try one refresh/re-auth (race-safe)
+        with self._lock:
+            try:
+                if self.env.refresh_token:
+                    self.refresh_auth()
+                else:
+                    self.authenticate()
+            except httpx.HTTPError:
+                resp.raise_for_status()
 
-        headers = kwargs.get("headers", {}) or {}
-        headers.update(self._headers())
-        resp2 = self.http.request(method, url, headers=headers, **kwargs)
-        resp2.raise_for_status()
-        return resp2
+            headers = kwargs.get("headers", {}) or {}
+            headers.update(self._headers())
+            resp2 = self.http.request(method, url, headers=headers, **kwargs)
+            resp2.raise_for_status()
+            return resp2
 
     # ---------- Helpers ----------
     def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
@@ -244,6 +280,7 @@ class VBCClient:
             "refresh_token": self.env.refresh_token,
             "token_expires_at": self.env.token_expires_at.isoformat() if self.env.token_expires_at else None,
         }
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
@@ -469,13 +506,7 @@ class VBCClient:
 # =========================================================
 # Glue helpers: SQLAlchemy getters (use your own Session)
 # =========================================================
-# Example factory functions that return closures compatible with VBCClient
 def sqlalchemy_cred_getter(session_factory, employee_code: str) -> CredGetter:
-    """
-    Returns a callable that, when invoked, opens a session and reads
-    vbc_user_username & vbc_user_password for the given employee_code.
-    """
-    # import here to avoid hard dependency if you unit test without models
     from db.models import UserDetails  # adjust import path if needed
 
     def _getter() -> tuple[str, str]:
@@ -489,9 +520,6 @@ def sqlalchemy_cred_getter(session_factory, employee_code: str) -> CredGetter:
 
 
 def sqlalchemy_extension_getter(session_factory, employee_code: str) -> ExtGetter:
-    """
-    Returns a callable that fetches the extension (e.g., vbc_extension_id) for the user.
-    """
     from db.models import UserDetails  # adjust import path if needed
 
     def _getter() -> str:
@@ -503,37 +531,3 @@ def sqlalchemy_extension_getter(session_factory, employee_code: str) -> ExtGette
             return str(ext)
 
     return _getter
-
-
-# =========================================================
-# Example usage
-# =========================================================
-if __name__ == "__main__":
-    # 1) Load account/app creds from ENV
-    #    export VBC_ACCOUNT_ID=...
-    #    export API_CLIENT_ID=...
-    #    export API_CLIENT_SECRET=...
-    env = VBCEnv.from_env()
-
-    # 2) Build DB-backed getters (replace with your actual session factory & employee code)
-    # from db.connection import SessionLocal
-    # emp_code = "EMP006"
-    # cred_get = sqlalchemy_cred_getter(SessionLocal, emp_code)
-    # ext_get = sqlalchemy_extension_getter(SessionLocal, emp_code)
-
-    # For demo w/o DB, comment out the above and set creds directly:
-    # env.vbc_user_username = "VBC_USER"
-    # env.vbc_user_password = "VBC_PASS"
-    cred_get = None
-    ext_get = None
-
-    client = VBCClient(env, cred_getter=cred_get, ext_getter=ext_get)
-
-    # Example: list users (auto-auth will happen using env creds or DB creds)
-    # print(client.provisioning_users())
-
-    # Example: click2dial using extension from DB automatically
-    # client.telephony_click2dial(to_destination="12246010476")  # from_destination auto via ext_getter
-
-    # Example: click2dial with manual extension override
-    # client.telephony_click2dial(to_destination="12246010476", from_destination="611")
