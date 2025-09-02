@@ -37,6 +37,7 @@ from routes.payments import Get_Invoice, payment
 from db.complete_initialization import setup_complete_system
 from routes.VBC_Calling import Create_Call
 from routes.ClientConsent import ClientConsent
+from routes.Dashboard import dashboard
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ def health_check():
 
 # Register all your existing routes
 try:
+    app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(ClientConsent.router, prefix="/api/v1")
     app.include_router(Create_Call.router, prefix="/api/v1")
     app.include_router(ProfileRole.departments_router, prefix="/api/v1")

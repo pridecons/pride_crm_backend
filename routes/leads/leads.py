@@ -21,6 +21,7 @@ from routes.leads.leads_fetch import load_fetch_config
 from utils.validation_utils import validate_lead_data, UniquenessValidator, FormatValidator
 from utils.user_tree import get_subordinate_users, get_subordinate_ids  # <— add this import
 from services.mail_with_file import send_mail_by_client_with_file
+from zoneinfo import ZoneInfo
 
 router = APIRouter(
     prefix="/leads",
@@ -688,7 +689,7 @@ def update_lead(
                         <tr><td><b>Device Info</b></td><td><pre>{client_consent.device_info or {} }</pre></td></tr>
                         <tr><td><b>Timezone Offset (minutes)</b></td><td>{client_consent.tz_offset_minutes}</td></tr>
                         <tr><td><b>Consented At (UTC)</b></td><td>{client_consent.consented_at_utc}</td></tr>
-                        <tr><td><b>Consented At (IST)</b></td><td>{client_consent.consented_at_ist}</td></tr>
+                        <tr><td><b>Consented At (IST)</b></td><td>{client_consent.consented_at_ist.strftime("%d-%m-%Y %I:%M %p")}</td></tr>
                         <tr><td><b>Reference ID</b></td><td>{client_consent.ref_id}</td></tr>
                         </table>
                         """,

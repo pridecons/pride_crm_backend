@@ -165,7 +165,7 @@ async def response_url_endpoint(
                     if isinstance(p.created_at, datetime)
                     else None,
                     "phone_number": p.phone_number,
-                    "email": p.email,
+                    "email": kyc_user.email or p.email,
                     "name": getattr(kyc_user, "full_name", kyc_user.full_name),
                     "mode": p.mode,
                     "employee_code": p.user_id,

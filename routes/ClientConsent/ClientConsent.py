@@ -8,6 +8,9 @@ from db.Schema.client_consent import ClientConsentCreate, ClientConsentOut
 from utils.time_and_ids import gen_ref, now_utc_ist
 from services.mail_with_file import send_mail_by_client_with_file
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 router = APIRouter(prefix="/client-consent", tags=["client consent"])
 
 def _get_client_ip(request: Request) -> str:
@@ -68,7 +71,7 @@ def create_client_consent(
         <tr><td><b>Device Info</b></td><td><pre>{payload.device_info or {} }</pre></td></tr>
         <tr><td><b>Timezone Offset (minutes)</b></td><td>{payload.tz_offset_minutes}</td></tr>
         <tr><td><b>Consented At (UTC)</b></td><td>{now_utc}</td></tr>
-        <tr><td><b>Consented At (IST)</b></td><td>{now_ist}</td></tr>
+        <tr><td><b>Consented At (IST)</b></td><td>{now_ist.strftime("%d-%m-%Y %I:%M %p")}</td></tr>
         <tr><td><b>Reference ID</b></td><td>{consent.ref_id}</td></tr>
         </table>
         """

@@ -154,8 +154,8 @@ async def payment_webhook(
         "call": payment.call or 0,
         "created_at": payment.created_at.isoformat() if isinstance(payment.created_at, datetime) else None,
         "phone_number": payment.phone_number,
-        "email": payment.email or "",
-        "name": payment.name or "",
+        "email": lead.email or payment.email or "",
+        "name": lead.name or payment.name or "",
         "mode": payment.mode,
         "employee_code": payment.user_id
     }
