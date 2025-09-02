@@ -4,12 +4,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional
 
 # adjust these imports to match your project structure
-from db import get_db
+from db.connection import get_db
 from db.models import ClientConsent, Lead
 from db.Schema.client_consent import ClientConsentCreate, ClientConsentOut
 from utils.time_and_ids import gen_ref, now_utc_ist
 
-router = APIRouter(prefix="client-consent", tags=["client-consent"])
+router = APIRouter(prefix="/client-consent", tags=["client consent"])
 
 def _get_client_ip(request: Request) -> str:
     # Prefer X-Forwarded-For (if behind proxy/load balancer)
@@ -35,18 +35,14 @@ def create_client_consent(
     """
     kyc_user = db.query(Lead).filter(Lead.id == payload.lead_id).first()
     email= kyc_user.email
-    # Check existing (unique on lead_id)
-    existing: Optional[ClientConsent] = (
-        db.query(ClientConsent).filter(ClientConsent.lead_id == payload.lead_id).one_or_none()
-    )
-    if existing:
-        # Return existing with 200 OK
-        # Manually set status_code since decorator has 201
-        request.scope["state"] = getattr(request, "scope", {})
-        return existing  # FastAPI will still respond 201 by default
-        # If you want 200 explicitly, do:
-        # from fastapi.responses import JSONResponse
-        # return JSONResponse(status_code=200, content=ClientConsentOut.from_orm(existing).dict())
+    # # Check existing (unique on lead_id)
+    # existing: Optional[ClientConsent] = (
+    #     db.query(ClientConsent).filter(ClientConsent.lead_id == payload.lead_id).one_or_none()
+    # )
+    # if existing:
+    #     request.scope["state"] = getattr(request, "scope", {})
+    #     return existing  # FastAPI will still respond 201 by default
+
 
     ip = _get_client_ip(request)
     ua = request.headers.get("user-agent", "-")[:1024]  # avoid overly long UA strings
