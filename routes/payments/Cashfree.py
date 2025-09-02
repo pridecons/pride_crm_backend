@@ -269,7 +269,7 @@ async def front_create(
 
     # 4) Send notifications
     newLink = urlparse(link).path.lstrip("/")
-    kyc_pay_link = newLink if user_lead.kyc else link
+    kyc_pay_link = newLink if user_lead.kyc else link.replace("https://","")
     await cashfree_payment_link(data.phone, data.name, data.amount, kyc_pay_link, user_lead.kyc)
 
     new_link = link if user_lead.kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
