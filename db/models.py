@@ -234,7 +234,7 @@ class UserDetails(Base):
                          nullable=False
                        )
     department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=True, index=True)
-    reference_id = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
+    # reference_id = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
     profile_role = relationship(
         "ProfileRole", 
         back_populates="users",
