@@ -2,12 +2,11 @@ from fastapi import APIRouter, Depends, Request, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional
-
-# adjust these imports to match your project structure
 from db.connection import get_db
 from db.models import ClientConsent, Lead
 from db.Schema.client_consent import ClientConsentCreate, ClientConsentOut
 from utils.time_and_ids import gen_ref, now_utc_ist
+from services.mail_with_file import send_mail_by_client_with_file
 
 router = APIRouter(prefix="/client-consent", tags=["client consent"])
 
@@ -67,6 +66,7 @@ def create_client_consent(
         db.add(consent)
         db.commit()
         db.refresh(consent)
+        send_mail_by_client_with_file(to_email=email,subject= "Pre Paymnet Consent", html_content=payload.consent_text, show_pdf=False)
         return consent
     except SQLAlchemyError as e:
         db.rollback()
