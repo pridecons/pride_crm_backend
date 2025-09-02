@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Text, Date, DateTime, Float, Boolean,
-    JSON, ARRAY, ForeignKey, func, Enum, Enum as SAEnum, text, select
+    JSON, ARRAY, ForeignKey, func, Enum, Enum as SAEnum, text, select, BigInteger
 )
 from sqlalchemy.orm import relationship, column_property
 from db.connection import Base
@@ -234,6 +234,7 @@ class UserDetails(Base):
                          nullable=False
                        )
     department_id = Column(Integer, ForeignKey("crm_departments.id"), nullable=True, index=True)
+    reference_id = Column(String(100), ForeignKey("crm_user_details.employee_code"), nullable=True)
     profile_role = relationship(
         "ProfileRole", 
         back_populates="users",
@@ -796,4 +797,23 @@ class EmailLog(Base):
 EmailTemplate.logs = relationship(
     "EmailLog", order_by=EmailLog.sent_at.desc(), back_populates="template"
 )
+
+class ClientConsent(Base):
+    __tablename__ = "crm_client_consent"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, unique=True)
+    email = Column(String(255), nullable=False)
+    consent_text = Column(String, nullable=False)
+    channel = Column(String(20), nullable=False, default="WEB")
+    purpose = Column(String(50), nullable=False, default="PAYMENT")
+    ip_address = Column(String(64), nullable=False)
+    user_agent = Column(String, nullable=False)
+    device_info = Column(JSON, nullable=True)
+    tz_offset_minutes = Column(Integer, nullable=False)
+
+    consented_at_utc = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    consented_at_ist = Column(DateTime(timezone=True), nullable=False)
+
+    ref_id = Column(String(40), unique=True, nullable=False)
 
