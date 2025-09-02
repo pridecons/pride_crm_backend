@@ -246,8 +246,6 @@ async def front_create(
         service_field = [service_field]
 
     payment = Payment(
-        name=data.name,
-        email=data.email,
         phone_number=data.phone,
         Service=service_field,
         order_id=cf_order_id,
@@ -261,6 +259,10 @@ async def front_create(
         branch_id=current_user.branch_id,
         lead_id=data.lead_id,
     )
+    if data.email:
+       payment["email"]=data.email
+    if data.name:
+       payment["name"]=data.name,
     db.add(payment)
     db.commit()
     db.refresh(payment)
@@ -273,8 +275,8 @@ async def front_create(
     await cashfree_payment_link(data.phone, data.name, data.amount, kyc_pay_link, user_lead.kyc)
 
     new_link = link if user_lead.kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
-
-    await payment_link_mail(data.email, data.name, new_link)
+    if data.email:
+       await payment_link_mail(data.email, data.name, new_link)
 
     return {
         "orderId": cf_order_id,

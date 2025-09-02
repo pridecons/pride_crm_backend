@@ -511,8 +511,8 @@ class Payment(Base):
     __tablename__ = "crm_payment"
 
     id               = Column(Integer, primary_key=True, autoincrement=True)
-    name             = Column(String(100), nullable=False)
-    email            = Column(String(100), nullable=False)
+    name             = Column(String(100), nullable=True)
+    email            = Column(String(100), nullable=True)
     phone_number     = Column(Text, nullable=False)
     order_id         = Column(String(100), nullable=True, index=True)
 

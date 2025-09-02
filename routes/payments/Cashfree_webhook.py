@@ -140,7 +140,7 @@ async def payment_webhook(
     # 7) Build auxiliary payloads
     notify_msg = (
         "<div style='font-family:Arial,sans-serif; line-height:1.5;'>"
-        f"  <p><strong>Lead:</strong> {payment.name} ({payment.phone_number})</p>"
+        f"  <p><strong>Lead:</strong> {payment.name or ""} ({payment.phone_number})</p>"
         f"  <p><strong>Status:</strong> {new_status}</p>"
         f"  <p><strong>Amount:</strong> ₹{float(payment.paid_amount or 0):,.2f}</p>"
         "</div>"
@@ -154,8 +154,8 @@ async def payment_webhook(
         "call": payment.call or 0,
         "created_at": payment.created_at.isoformat() if isinstance(payment.created_at, datetime) else None,
         "phone_number": payment.phone_number,
-        "email": payment.email,
-        "name": payment.name,
+        "email": payment.email or "",
+        "name": payment.name or "",
         "mode": payment.mode,
         "employee_code": payment.user_id
     }

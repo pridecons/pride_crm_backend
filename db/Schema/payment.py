@@ -60,8 +60,8 @@ class FrontCreate(BaseModel):
 
 
 class FrontUserCreate(BaseModel):
-    name: str
-    email: EmailStr
+    name: Optional[str]
+    email: Optional[EmailStr]
     phone: str
     service: str
     amount: float
@@ -77,8 +77,8 @@ class FrontUserCreate(BaseModel):
 
 class PaymentOut(BaseModel):
     id: int
-    name: str
-    email: str
+    name: Optional[str]
+    email: Optional[str]
     phone_number: str
     order_id: str
     Service: str  # final output as a string ("Cash" or "A, B" if list)
