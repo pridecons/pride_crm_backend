@@ -20,16 +20,22 @@ from datetime import datetime
 #     mcx_energy= "MCX Energy"
 
 class RecommendationType(str, enum.Enum):
-    equity_cash= "Equity Cash"
-    stock_future= "Stock Future"
-    index_future= "Index Future"
+    equity_cash_buy= "Equity Cash Buy"
+    equity_cash_sell= "Equity Cash Sell"
+    stock_future_buy= "Stock Future Buy"
+    stock_future_sell= "Stock Future Sell"
+    index_future_buy= "Index Future Buy"
+    index_future_sell= "Index Future Sell"
     index_option_call_buy= "Index Option Call Buy"
     index_option_put_buy= "Index Option Put Buy"
     stock_option_call_buy= "Stock Option Call Buy"
     stock_option_put_buy= "Stock Option Put Buy"
-    mcx_bullion= "MCX Bullion"
-    mcx_base_metal= "MCX Base Metal"
-    mcx_energy= "MCX Energy"
+    mcx_bullion_buy= "MCX Bullion Buy"
+    mcx_bullion_sell= "MCX Bullion Sell"
+    mcx_base_metal_buy= "MCX Base Metal Buy"
+    mcx_base_metal_sell= "MCX Base Metal Sell"
+    mcx_energy_buy= "MCX Energy Buy"
+    mcx_energy_sell= "MCX Energy Sell"
 
 class PermissionDetails(str, enum.Enum):
     # LEAD/[id]

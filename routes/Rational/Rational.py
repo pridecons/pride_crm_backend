@@ -101,6 +101,20 @@ def get_recommendation_or_404(db: Session, recommendation_id: int) -> NARRATION:
         logger.error(f"Database error fetching recommendation {recommendation_id}: {e}")
         raise DatabaseOperationError("Database error occurred while fetching recommendation")
 
+def _normalize_channels(sent_on_msg: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+    """
+    Make a safe lower-cased channel map with boolean flags.
+    Defaults: no channel unless explicitly requested (tweak as you like).
+    Valid keys: 'sms', 'email', 'whatsapp'
+    """
+    if not isinstance(sent_on_msg, dict):
+        return {"sms": False, "email": False, "whatsapp": False}
+    ch = {str(k).strip().lower(): bool(v) for k, v in sent_on_msg.items()}
+    return {
+        "sms": ch.get("sms", False),
+        "email": ch.get("email", False),
+        "whatsapp": ch.get("whatsapp", False),
+    }
 # ── 1. CREATE ───────────────────────────────────────────────────────────────────
 @router.post("/", response_model=NarrationResponse, status_code=status.HTTP_201_CREATED)
 async def create_recommendation(
@@ -116,9 +130,16 @@ async def create_recommendation(
     graph: UploadFile                    = File(None),
     templateId: Optional[int]            = Form(None),
     message: Optional[str]            = Form(None),
+    sent_on_msg: Optional[Dict[str, bool]] = Form(None),
     db: Session                          = Depends(get_db),
     current_user                        = Depends(get_current_user),
 ):
+    
+    # sent_on_msg={
+    #     "whatsapp":True,
+    #     "Email":True,
+    #     "SMS":True
+    # }
     try:
         # Validate input data
         if entry_price <= 0:
@@ -227,16 +248,19 @@ async def create_recommendation(
             'stock_name':stock_name,
             'recommendation_type':recommendation_type
         }
-        
-        background_tasks.add_task(
-            distribution_rational,
-            recommendation.id,
-            templateId,
-            message,
-            stock_details
-        )
 
-        await notification_service.notify_all("Recommendation", message, {})
+        channels = _normalize_channels(sent_on_msg)
+        
+        # background_tasks.add_task(
+        #     distribution_rational,
+        #     recommendation.id,
+        #     templateId,
+        #     message,
+        #     stock_details,
+        #     channels
+        # )
+
+        background_tasks.add_task(notification_service.notify_all, "Recommendation", message, {})
 
         # Generate PDF if rationale provided
         if rational and rational.strip():

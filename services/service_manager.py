@@ -30,6 +30,7 @@ from config import (
     BASIC_IQ_CUSTOMER_ID,
     BASIC_IQ_ENTITY_ID,
 )
+from routes.whatsapp.recommendation import whatsapp_recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -657,7 +658,8 @@ async def distribution_rational(
     recommendation_id: int,
     template_id: Union[int, str],
     message: Optional[str],
-    stock_details={}
+    stock_details={},
+    sent_on_msg={}
 ):
     """
     Hybrid quota enforcement:
@@ -715,14 +717,6 @@ async def distribution_rational(
                     </td>
                   </tr>
                   <tr>
-                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:.4px;">
-                      Stop Loss
-                    </td>
-                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:18px; font-weight:700; text-align:right; color:#111827;">
-                      {stop_loss_disp}
-                    </td>
-                  </tr>
-                  <tr>
                     <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:.4px;">
                       Target 1
                     </td>
@@ -746,6 +740,22 @@ async def distribution_rational(
                       {t3_disp}
                     </td>
                   </tr>
+                  <tr>
+                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:.4px;">
+                      Stop Loss
+                    </td>
+                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:18px; font-weight:700; text-align:right; color:#111827;">
+                      {stop_loss_disp}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:.4px;">
+                      Our Discloure
+                    </td>
+                    <td style="width:50%; padding:14px 18px; border-bottom:1px solid #f1f5f9; background:#fcfcfd; font-size:18px; font-weight:700; text-align:right; color:#111827;">
+                      https://pridecons.com/disclosure
+                    </td>
+                  </tr>
                 </table>
               </td>
             </tr>
@@ -753,7 +763,9 @@ async def distribution_rational(
             <tr>
               <td style="background:#f9fafb; padding:16px 20px; border-top:1px solid #e5e7eb;">
                 <div style="font-size:11px; color:#6b7280; line-height:16px;">
-                  This message is for informational purposes and is not investment advice. Trading involves risk.
+                  Our past performance does not guarantee the future performance. Investment in market is subject to market risks. Not with standing all the efforts to do best research, clients should understand that investing in market involves a risk of loss of both income and principal. Please ensure that you understand fully the risks involved in investment in market. <br>
+                “Registration granted by SEBI, membership of a SEBI recognized supervisory body (if any) and certification from NISM in no way guarantee performance of the intermediary or provide any assurance of returns to investors.” “Investment in securities market are subject to market risks. Read all the related documents carefully before investing.” "The securities quoted are for illustration only and are not recommendatory"
+
                 </div>
               </td>
             </tr>
@@ -764,18 +776,6 @@ async def distribution_rational(
     </table>
   </body>
 </html>"""
-
-    # Plain-text fallback (if your mailer ever forces text)
-    mail_temp_text = (
-        f"Stock Name: {stock_name or '-'}\n"
-        f"Recommendation: {rec_type_display}\n"
-        f"Entry Price: {entry_price_disp}\n"
-        f"Stop Loss: {stop_loss_disp}\n"
-        f"Target 1: {t1_disp}\n"
-        f"Target 2: {t2_disp}\n"
-        f"Target 3: {t3_disp}\n\n"
-        "This message is for informational purposes and is not investment advice. Trading involves risk."
-    )
 
 
     db = SessionLocal()
@@ -889,21 +889,23 @@ async def distribution_rational(
                 status_str = "SENT"
                 identifier = None
                 try:
-                    resp = await client.post(
-                        AIRTEL_IQ_SMS_URL,
-                        json=sms_body,
-                        headers=headers,
-                        auth=(BASIC_AUTH_USER, BASIC_AUTH_PASS),
-                    )
-                    resp.raise_for_status()
-                    api = resp.json()
-                    identifier = api.get("messageRequestId")
-                    successes += 1
-                    logger.info("SMS sent to %s (lead %s): %s", to_number, lead_id, identifier)
+                    if sent_on_msg["SMS"]:
+                        resp = await client.post(
+                            AIRTEL_IQ_SMS_URL,
+                            json=sms_body,
+                            headers=headers,
+                            auth=(BASIC_AUTH_USER, BASIC_AUTH_PASS),
+                        )
+                        resp.raise_for_status()
+                        api = resp.json()
+                        identifier = api.get("messageRequestId")
+                        successes += 1
+                        logger.info("SMS sent to %s (lead %s): %s", to_number, lead_id, identifier)
 
                     # SEND EMAIL + LOG (only if email present)
-                    if lead.email:
+                    if lead.email and sent_on_msg["Email"]:
                         try:
+                            whatsapp_recommendation(lead.mobile, stock_details)
                             send_mail_by_client(lead.email, mail_sub, mail_temp_html)
                             # Save email log
                             email_log = EmailLog(
@@ -917,6 +919,11 @@ async def distribution_rational(
                                 sent_at=datetime.now(timezone.utc),
                             )
                             db.add(email_log)
+                        except Exception as e:
+                            logger.error("Failed to send email to %s (lead %s): %s", lead.email, lead_id, e)
+                    if lead.mobile and sent_on_msg["whatsapp"]:
+                        try:
+                            whatsapp_recommendation(lead.mobile, stock_details)
                         except Exception as e:
                             logger.error("Failed to send email to %s (lead %s): %s", lead.email, lead_id, e)
 
