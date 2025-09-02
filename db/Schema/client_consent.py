@@ -13,7 +13,7 @@ class ClientConsentCreate(BaseModel):
 class ClientConsentOut(BaseModel):
     id: int
     lead_id: int
-    email: str
+    email: Optional[str]
     consent_text: str
     channel: str
     purpose: str
