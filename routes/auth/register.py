@@ -1,4 +1,4 @@
-# routes/auth/register.py - Complete User CRUD API (with senior_profile_id everywhere)
+# routes/auth/register.py - Complete User CRUD API (role->department auto mapping)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -25,7 +25,6 @@ def hash_password(password: str) -> str:
     try:
         salt = bcrypt.gensalts()
     except AttributeError:
-        # some bcrypt builds expose gensalt (singular)
         salt = bcrypt.gensalt()
     try:
         hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
@@ -41,6 +40,18 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception as e:
         print(f"Bcrypt verify error, falling back to SHA-256: {e}")
         return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
+
+# ---------------- Small helper ----------------
+def _department_id_for_role(db: Session, role_id: int) -> Optional[int]:
+    """
+    Return department_id for a given ProfileRole id.
+    If role has no department, returns None.
+    """
+    role = db.query(ProfileRole).filter(ProfileRole.id == role_id).first()
+    if not role:
+        raise HTTPException(status_code=404, detail=f"ProfileRole {role_id} not found")
+    # Assumes ProfileRole has a department_id column/relationship
+    return getattr(role, "department_id", None)
 
 # ---------------- Serializers ----------------
 def serialize_user(user: UserDetails) -> dict:
@@ -71,6 +82,7 @@ def serialize_user(user: UserDetails) -> dict:
         "vbc_user_password": getattr(user, "vbc_user_password", None),
         "created_at": user.created_at,
         "updated_at": user.updated_at,
+        "department_id": user.department_id,
         "profile_role": (
             {
                 "id": int(user.role_id),
@@ -90,8 +102,7 @@ def serialize_user(user: UserDetails) -> dict:
 # ---------------- CREATE ----------------
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
-    """Create user with hierarchy validation"""
-
+    """Create user with hierarchy validation. department_id is derived from role_id."""
     # Uniques
     if db.query(UserDetails).filter_by(phone_number=user_in.phone_number).first():
         raise HTTPException(status_code=400, detail="Phone number already registered")
@@ -108,6 +119,13 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         count += 1
         emp_code = f"EMP{count+1:03d}"
 
+    # Validate role_id and derive department_id from role
+    try:
+        role_id_val = int(user_in.role_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="role_id must be an integer")
+    department_id_val = _department_id_for_role(db, role_id_val)
+
     hashed_pw = hash_password(user_in.password)
 
     user = UserDetails(
@@ -116,7 +134,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         email=user_in.email,
         name=user_in.name,
         password=hashed_pw,
-        role_id=user_in.role_id,
+        role_id=role_id_val,
         father_name=user_in.father_name,
         is_active=user_in.is_active,
         experience=user_in.experience,
@@ -135,6 +153,8 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         vbc_extension_id=user_in.vbc_extension_id,
         vbc_user_username=user_in.vbc_user_username,
         vbc_user_password=user_in.vbc_user_password,
+        # 🔽 Always derived from role_id:
+        department_id=department_id_val,
     )
 
     try:
@@ -182,17 +202,13 @@ def get_all_users(
         role_name = (getattr(current_user, "role_name", None) or "").upper()
 
         if role_name == "SUPERADMIN":
-            # no additional restriction
             pass
-
         elif role_name == "BRANCH_MANAGER":
             b_id = _manager_branch_id(current_user)
             if b_id is None:
-                # no branch, show nothing
                 query = query.filter(UserDetails.employee_code == "__none__")
             else:
                 query = query.filter(UserDetails.branch_id == b_id)
-
         elif role_name == "HR":
             if current_user.branch_id is None:
                 query = query.filter(UserDetails.employee_code == "__none__")
@@ -203,8 +219,6 @@ def get_all_users(
         if active_only:
             query = query.filter(UserDetails.is_active.is_(True))
 
-        # For SUPERADMIN or any role, these explicit filters still apply;
-        # for BRANCH_MANAGER/HR, they further narrow within their branch.
         if branch_id is not None:
             query = query.filter(UserDetails.branch_id == branch_id)
 
@@ -259,12 +273,12 @@ def get_user_by_id(employee_code: str, db: Session = Depends(get_db)):
 @router.put("/{employee_code}")
 def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depends(get_db)):
     """
-    Update user details with:
-      - format + cross-table uniqueness checks via validate_user_data (email/phone_number/pan)
-      - role_id existence validation (ProfileRole.id is INT)
-      - senior_profile_id existence & not-self check (string FK to employee_code)
-      - permissions validated against PermissionDetails enum
-      - bcrypt password hashing
+    Update user details.
+
+    Key behavior:
+      - department_id is ALWAYS derived from role_id (if role_id is updated).
+      - If role_id is not changed, department_id remains as-is.
+      - Any department_id sent in payload is ignored.
     """
     try:
         user = db.query(UserDetails).filter_by(employee_code=employee_code).first()
@@ -281,19 +295,18 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
             validate_payload["pan"] = user_update.pan
 
         if validate_payload:
-            # Exclude the current user so updates to their own values don't false-positive
             validate_user_data(db, validate_payload, exclude_user_id=employee_code)
 
-        # ---------- 2) Role validation ----------
+        # ---------- 2) Role validation & department mapping ----------
         if user_update.role_id is not None:
             try:
                 role_id_val = int(user_update.role_id)
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail="role_id must be an integer")
-            role = db.query(ProfileRole).filter(ProfileRole.id == role_id_val).first()
-            if not role:
-                raise HTTPException(status_code=404, detail=f"ProfileRole {role_id_val} not found")
+            # validate role exists and derive department
+            dept_id_val = _department_id_for_role(db, role_id_val)
             user.role_id = role_id_val
+            user.department_id = dept_id_val  # 🔽 auto-set from role
 
         # ---------- 3) Branch ----------
         if user_update.branch_id is not None:
@@ -315,7 +328,6 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
             invalid = [p for p in (user_update.permissions or []) if p not in valid]
             if invalid:
                 raise HTTPException(status_code=400, detail=f"Invalid permission(s): {invalid}")
-            # de-dupe while preserving order
             seen, cleaned = set(), []
             for p in (user_update.permissions or []):
                 if p not in seen:
@@ -348,6 +360,9 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
             value = getattr(user_update, fname, None)
             if value is not None:
                 setattr(user, fname, value)
+
+        # 🔒 Ignore any department_id coming from payload on purpose:
+        # if getattr(user_update, "department_id", None) is not None: pass
 
         # ---------- 7) Password ----------
         if getattr(user_update, "password", None):
@@ -384,7 +399,6 @@ def delete_user(
             raise HTTPException(status_code=404, detail="User not found")
 
         if not hard:
-            # ---- Soft delete ----
             user.is_active = False
             user.updated_at = datetime.utcnow()
             db.commit()
@@ -395,7 +409,6 @@ def delete_user(
                 "mode": "soft",
             }
 
-        # ---- Hard delete ----
         branches_managed = db.query(BranchDetails).filter(BranchDetails.manager_id == employee_code).all()
         subordinates = db.query(UserDetails).filter(UserDetails.senior_profile_id == employee_code).all()
 
@@ -468,4 +481,3 @@ def reset_user_password(employee_code: str, password_data: dict, db: Session = D
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error resetting password: {str(e)}")
-
