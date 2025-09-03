@@ -259,10 +259,10 @@ async def front_create(
         branch_id=current_user.branch_id,
         lead_id=data.lead_id,
     )
-    if data.email:
-       payment["email"]=data.email
-    if data.name:
-       payment["name"]=data.name,
+    if getattr(data, "email", None):
+        payment.email = data.email          # ✅ attribute-style
+    if getattr(data, "name", None):
+        payment.name = data.name
     db.add(payment)
     db.commit()
     db.refresh(payment)
