@@ -647,19 +647,51 @@ def profile_wise_analytics(
     from_dt: datetime,
     to_dt: datetime,
 ) -> List[Dict[str, Any]]:
-    # For employees, limit to their allowed set before grouping
+    # ----- visibility / scope -----
     role = _role(current_user)
-    allowed = None
+
+    allowed = None  # for employees: list of employee_codes we can see
     if role not in ("SUPERADMIN", "BRANCH_MANAGER"):
         allowed = _allowed_codes_for_employee_scope(db, current_user, view) or []
 
-    # join Lead -> UserDetails (assignee) for profile grouping
+    # branch scoping for Branch Manager
+    bm_branch_id = None
+    if role == "BRANCH_MANAGER":
+        bm_branch_id = _branch_id_for_manager(current_user)
+
+    # ----- employees per profile (role) -----
+    emp_q = (
+        db.query(
+            UserDetails.role_id.label("profile_id"),
+            func.count(UserDetails.employee_code).label("emp_count"),
+        )
+        .filter(UserDetails.is_active.is_(True))
+    )
+    if bm_branch_id:
+        emp_q = emp_q.filter(UserDetails.branch_id == bm_branch_id)
+    if allowed is not None:
+        if not allowed:
+            emp_q = emp_q.filter(literal(False))
+        else:
+            emp_q = emp_q.filter(UserDetails.employee_code.in_(allowed))
+
+    emp_counts_rows = emp_q.group_by(UserDetails.role_id).all()
+    emp_counts: Dict[Optional[int], int] = {
+        (int(r.profile_id) if r.profile_id is not None else None): int(r.emp_count or 0)
+        for r in emp_counts_rows
+    }
+
+    # ----- lead/payment aggregates per profile -----
     q = (
         db.query(
             UserDetails.role_id.label("profile_id"),
             func.count(Lead.id).label("total_leads"),
-            func.count(case((Payment.status == "PAID", 1))).label("paid_rows"),
-            func.coalesce(func.sum(case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)), 0.0).label("paid_revenue"),
+            func.coalesce(
+                func.sum(
+                    case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)
+                ),
+                0.0,
+            ).label("paid_revenue"),
         )
         .select_from(Lead)
         .outerjoin(LeadAssignment, Lead.id == LeadAssignment.lead_id)
@@ -671,20 +703,44 @@ def profile_wise_analytics(
             Lead.created_at <= to_dt,
         )
     )
-
+    if bm_branch_id:
+        q = q.filter(Lead.branch_id == bm_branch_id)
     if allowed is not None:
-        q = q.filter(LeadAssignment.user_id.in_(allowed))
+        if not allowed:
+            q = q.filter(literal(False))
+        else:
+            q = q.filter(LeadAssignment.user_id.in_(allowed))
 
     rows = q.group_by(UserDetails.role_id).all()
 
-    return [
-        {
-            "profile_id": int(r.profile_id) if r.profile_id is not None else None,
+    # ----- merge: ensure profiles with employees but 0 leads are included -----
+    results_by_profile: Dict[Optional[int], Dict[str, Any]] = {}
+
+    for r in rows:
+        pid = int(r.profile_id) if r.profile_id is not None else None
+        results_by_profile[pid] = {
+            "profile_id": pid,
             "total_leads": int(r.total_leads or 0),
             "paid_revenue": float(r.paid_revenue or 0.0),
+            "total_employees": int(emp_counts.get(pid, 0)),
         }
-        for r in rows
-    ]
+
+    # add any profiles that had employees but no leads in the window
+    for pid, cnt in emp_counts.items():
+        if pid not in results_by_profile:
+            results_by_profile[pid] = {
+                "profile_id": pid,
+                "total_leads": 0,
+                "paid_revenue": 0.0,
+                "total_employees": int(cnt or 0),
+            }
+
+    # sort by paid_revenue desc, then total_leads desc
+    return sorted(
+        results_by_profile.values(),
+        key=lambda x: (x["paid_revenue"], x["total_leads"]),
+        reverse=True,
+    )
 
 # ------------------------------
 # 8) Department-wise analytics
@@ -768,9 +824,6 @@ def dashboard(
     v_req = _resolved_view(view)
     role = _role(current_user)
 
-    # Employees: force "team" for users table
-    v_for_users = "team" if _is_employee(current_user) else v_req
-
     payments = payment_analytics(
         db, current_user,
         view=v_req, from_dt=from_dt, to_dt=to_dt,
@@ -789,14 +842,6 @@ def dashboard(
         employee_id=employee_id,
     )
 
-    src_resp = source_and_response_wise_lead_analytics(
-        db, current_user,
-        view=v_req, from_dt=from_dt, to_dt=to_dt,
-        branch_id=branch_id,
-        profile_id=profile_id, department_id=department_id,
-        employee_id=employee_id,
-    )
-
     # top branches: admin only
     branches = top_performance_branches(
         db, current_user,
@@ -810,19 +855,8 @@ def dashboard(
         view=v_req, from_dt=from_dt, to_dt=to_dt, limit=emp_limit,
     )
 
-    # users table: employees forced to team view
-    users = user_analytics(
-        db, current_user,
-        view=v_for_users, from_dt=from_dt, to_dt=to_dt,
-    )
-
     # profile/department: admin & BM only
     profiles = profile_wise_analytics(
-        db, current_user,
-        view=v_req, from_dt=from_dt, to_dt=to_dt,
-    ) if role in ("SUPERADMIN","BRANCH_MANAGER") else _blank_list()
-
-    departments = department_wise_analytics(
         db, current_user,
         view=v_req, from_dt=from_dt, to_dt=to_dt,
     ) if role in ("SUPERADMIN","BRANCH_MANAGER") else _blank_list()
@@ -843,15 +877,12 @@ def dashboard(
             "leads": leads,
         },
         "breakdowns": {
-            "source_and_response": src_resp,
             "profile_wise": profiles,
-            "department_wise": departments,
         },
         "top": {
             "branches": branches,
             "employees": employees,
         },
-        "users": users,
     }
 
 # ——— Individual endpoints (each function separately exposed) ———
