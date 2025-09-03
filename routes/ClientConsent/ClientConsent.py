@@ -9,9 +9,6 @@ from utils.time_and_ids import gen_ref, now_utc_ist
 from services.mail_with_file import send_mail_by_client_with_file
 from datetime import datetime, timezone, timedelta
 
-from zoneinfo import ZoneInfo
-
-from datetime import datetime, timezone, timedelta
 import json
 import re
 import logging
@@ -109,8 +106,6 @@ def create_client_consent(
         except Exception as e:
             logging.exception("Failed to convert consent time to IST")
             formatted = "N/A"
-        consent["email"] = kyc_user.email
-        consent["mail_sent"] = True
         send_mail_by_client_with_file(to_email=kyc_user.email,subject= "Pre Paymnet Consent", html_content=f"""
         <h2>Pre Payment Consent Confirmation</h2>
         <p>{payload.consent_text}</p>
@@ -129,6 +124,8 @@ def create_client_consent(
         </table>
         """
         , show_pdf=False)
+        consent["email"] = kyc_user.email
+        consent["mail_sent"] = True
 
     try:
         db.add(consent)
