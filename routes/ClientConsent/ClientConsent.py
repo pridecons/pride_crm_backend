@@ -124,8 +124,8 @@ def create_client_consent(
         </table>
         """
         , show_pdf=False)
-        consent["email"] = kyc_user.email
-        consent["mail_sent"] = True
+        consent.email = kyc_user.email   
+        consent.mail_sent = True
 
     try:
         db.add(consent)
