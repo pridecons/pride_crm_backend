@@ -819,7 +819,7 @@ class ClientConsent(Base):
     __tablename__ = "crm_client_consent"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False, unique=True)
+    lead_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=False)
     email = Column(String(255), nullable=True)
     consent_text = Column(String, nullable=False)
     channel = Column(String(20), nullable=False, default="WEB")
