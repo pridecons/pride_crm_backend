@@ -237,6 +237,42 @@ def _apply_common_payment_filters(
 
     return q
 
+# Helper: users scope for target sums (matches visibility + optional filters)
+def _users_scope_for_targets(
+    db: Session,
+    current_user: UserDetails,
+    *,
+    view: Literal["self", "team", "all", "other"],
+    branch_id: Optional[int],
+    profile_id: Optional[int],
+    department_id: Optional[int],
+    employee_id: Optional[str],
+):
+    role = _role(current_user)
+    uq = db.query(UserDetails).filter(UserDetails.is_active.is_(True))
+
+    if role == "BRANCH_MANAGER":
+        b_id = _branch_id_for_manager(current_user)
+        if b_id:
+            uq = uq.filter(UserDetails.branch_id == b_id)
+    elif role not in ("SUPERADMIN",):
+        allowed = _allowed_codes_for_employee_scope(db, current_user, view) or []
+        if not allowed:
+            uq = uq.filter(literal(False))
+        else:
+            uq = uq.filter(UserDetails.employee_code.in_(allowed))
+
+    if branch_id is not None:
+        uq = uq.filter(UserDetails.branch_id == branch_id)
+    if profile_id is not None:
+        uq = uq.filter(UserDetails.role_id == profile_id)
+    if department_id is not None and hasattr(UserDetails, "department_id"):
+        uq = uq.filter(UserDetails.department_id == department_id)
+    if employee_id:
+        uq = uq.filter(UserDetails.employee_code == employee_id)
+
+    return uq
+
 # ------------------------------
 # 1) Payment analytics
 # ------------------------------
@@ -274,6 +310,7 @@ def payment_analytics(
     week_start = _week_start_today()
     month_start = _month_start_today()
     year_start = _year_start_today()
+    today = date.today()
 
     weekly_paid = (
         q.filter(Payment.status == "PAID", Payment.created_at >= week_start)
@@ -290,6 +327,24 @@ def payment_analytics(
          .with_entities(func.coalesce(func.sum(Payment.paid_amount), 0.0))
          .scalar() or 0.0
     )
+    today_paid = (
+        q.filter(
+            Payment.status == "PAID",
+            func.date(Payment.created_at) == today
+        )
+        .with_entities(func.coalesce(func.sum(Payment.paid_amount), 0.0))
+        .scalar() or 0.0
+    )
+
+    # Targets (sum user targets in same scope/filters)
+    uq = _users_scope_for_targets(
+        db, current_user,
+        view=view, branch_id=branch_id,
+        profile_id=profile_id, department_id=department_id,
+        employee_id=employee_id,
+    )
+    total_target = uq.with_entities(func.coalesce(func.sum(UserDetails.target), 0.0)).scalar() or 0.0
+    achieved_target = total_paid  # treating achieved as paid revenue in the window
 
     return {
         "total_paid": float(total_paid),
@@ -297,6 +352,9 @@ def payment_analytics(
         "weekly_paid": float(weekly_paid),
         "monthly_paid": float(monthly_paid),
         "yearly_paid": float(yearly_paid),
+        "today_paid": float(today_paid),
+        "total_target": float(total_target),
+        "achieved_target": float(achieved_target),
     }
 
 # ------------------------------
@@ -329,6 +387,7 @@ def lead_analytics(
 
     week_start = _week_start_today().date()
     month_start = _month_start_today().date()
+    today = date.today()
 
     this_week = q.filter(func.date(Lead.created_at) >= week_start).count()
     this_month = q.filter(func.date(Lead.created_at) >= month_start).count()
@@ -345,6 +404,16 @@ def lead_analytics(
         )
     ).count()
 
+    # NEW: today counts
+    today_clients = q.filter(
+        Lead.is_client.is_(True),
+        func.date(Lead.created_at) == today
+    ).count()
+    today_old_leads = q.filter(
+        Lead.is_old_lead.is_(True),
+        func.date(Lead.created_at) == today
+    ).count()
+
     return {
         "total_uploaded": total_uploaded,
         "this_week": this_week,
@@ -353,6 +422,8 @@ def lead_analytics(
         "fresh_leads": fresh_leads,
         "total_clients": total_clients,
         "total_ft": total_ft,
+        "today_clients": today_clients,
+        "today_old_leads": today_old_leads,
     }
 
 # ------------------------------
@@ -554,6 +625,19 @@ def top_performance_employee(
 
         conv_rate = round((converted / total_leads) * 100, 2) if total_leads else 0.0
 
+        # NEW: today_paid + target metrics
+        today = date.today()
+        today_paid = (
+            db.query(func.coalesce(func.sum(Payment.paid_amount), 0.0))
+              .filter(
+                  Payment.user_id == u.employee_code,
+                  Payment.status == "PAID",
+                  func.date(Payment.created_at) == today,
+              )
+              .scalar() or 0.0
+        )
+        target_val = float(u.target or 0.0)
+
         out.append({
             "employee_code": u.employee_code,
             "employee_name": u.name,
@@ -563,6 +647,9 @@ def top_performance_employee(
             "converted_leads": converted,
             "total_revenue": float(revenue),
             "conversion_rate": conv_rate,
+            "target": target_val,
+            "achieved_target": float(revenue),
+            "today_paid": float(today_paid),
         })
 
     # Sort: conversion rate desc, then revenue desc
@@ -594,6 +681,7 @@ def user_analytics(
 
     users = users_q.all()
     rows: List[Dict[str, Any]] = []
+    today = date.today()
 
     for u in users:
         # leads handled by user
@@ -624,6 +712,15 @@ def user_analytics(
               ).scalar() or 0.0
         )
 
+        today_paid = (
+            db.query(func.coalesce(func.sum(Payment.paid_amount), 0.0))
+              .filter(
+                  Payment.user_id == u.employee_code,
+                  Payment.status == "PAID",
+                  func.date(Payment.created_at) == today,
+              ).scalar() or 0.0
+        )
+
         rows.append({
             "employee_code": u.employee_code,
             "employee_name": u.name,
@@ -632,6 +729,10 @@ def user_analytics(
             "total_leads": total_leads,
             "converted_leads": converted,
             "total_revenue": float(revenue),
+            # NEW:
+            "target": float(u.target or 0.0),
+            "achieved_target": float(revenue),
+            "today_paid": float(today_paid),
         })
 
     return rows
@@ -862,7 +963,7 @@ def dashboard(
     ) if role in ("SUPERADMIN","BRANCH_MANAGER") else _blank_list()
 
     return {
-        "window": {"from": from_dt.isoformat(), "to": to_dt.isoformat()},
+        "window": {"from": from_dt.isoformat(), "to": to_dt.isoformat() },
         "filters": {
             "branch_id": branch_id,
             "source_id": source_id,

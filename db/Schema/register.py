@@ -59,6 +59,7 @@ class UserCreate(UserBase):
     role_id: str = "0"                      # keep as string input; we will coerce to int when saving
     branch_id: Optional[int] = None
     senior_profile_id: Optional[str] = None # <-- STRING employee_code
+    target: Optional[float]= None
 
     vbc_extension_id: Optional[str] = None
     vbc_user_username: Optional[str] = None
@@ -85,6 +86,7 @@ class UserUpdate(BaseModel):
     role_id: Optional[str] = None          # we’ll coerce to int in the route
     branch_id: Optional[int] = None
     senior_profile_id: Optional[str] = None# <-- STRING employee_code
+    target: Optional[float]= None
 
     vbc_extension_id: Optional[str] = None
     vbc_user_username: Optional[str] = None
@@ -145,6 +147,7 @@ class UserOut(BaseModel):
     permissions: Optional[List[str]] = None
     profile_role: Optional[ProfileRoleOut] = None
     department: Optional[DepartmentOut] = None
+    target: Optional[float]= None
 
 # Response models for specific operations
 class UserCreateResponse(BaseModel):

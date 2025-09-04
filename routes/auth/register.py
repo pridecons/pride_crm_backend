@@ -83,6 +83,7 @@ def serialize_user(user: UserDetails) -> dict:
         "created_at": user.created_at,
         "updated_at": user.updated_at,
         "department_id": user.department_id,
+        "target": user.target,
         "profile_role": (
             {
                 "id": int(user.role_id),
@@ -153,6 +154,7 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
         vbc_extension_id=user_in.vbc_extension_id,
         vbc_user_username=user_in.vbc_user_username,
         vbc_user_password=user_in.vbc_user_password,
+        target=user_in.target,
         # 🔽 Always derived from role_id:
         department_id=department_id_val,
     )
@@ -311,6 +313,9 @@ def update_user(employee_code: str, user_update: UserUpdate, db: Session = Depen
         # ---------- 3) Branch ----------
         if user_update.branch_id is not None:
             user.branch_id = user_update.branch_id
+
+        if user_update.target is not None:
+            user.target = user_update.target
 
         # ---------- 4) Senior profile validation ----------
         if user_update.senior_profile_id is not None:

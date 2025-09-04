@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from db.connection import get_db
-from db.models import PermissionDetails, UserDetails, ProfileRole
+from db.models import PermissionDetails, UserDetails, ProfileRole, Department
 
 # NOTE: Your schema can define a model like:
 # class PermissionUpdate(BaseModel):
@@ -16,12 +16,16 @@ from db.models import PermissionDetails, UserDetails, ProfileRole
 #     remove: Optional[List[str]] = None       # subtractive update
 from db.Schema.permissions import PermissionUpdate
 
+from pydantic import BaseModel, Field
+
 router = APIRouter(
     prefix="/permissions",
     tags=["permissions"],
 )
 
-
+class PermissionReplace(BaseModel):
+    # Full replacement list. Required.
+    permissions: List[str] = Field(default_factory=list)
 # ---------- helpers -----------------------------------------------------------
 
 def _all_permission_values() -> List[str]:
@@ -93,14 +97,12 @@ def get_user_permissions(
 @router.put("/user/{employee_code}")
 def update_user_permissions(
     employee_code: str,
-    permission_in: PermissionUpdate,
+    permission_in: PermissionReplace,  # now = PermissionReplace
     db: Session = Depends(get_db),
 ):
     """
-    Update a user's permissions.
-
-    - If `permissions` is provided, it's treated as a full replace.
-    - Otherwise, apply `add` and/or `remove` against the current set.
+    Replace a user's permissions with the provided list.
+    The client MUST send the full, final list in `permissions`.
     """
     try:
         user = db.query(UserDetails).filter(UserDetails.employee_code == employee_code).first()
@@ -110,33 +112,21 @@ def update_user_permissions(
                 detail=f"User {employee_code} not found"
             )
 
-        current = set(user.permissions or [])
+        # Require the field and validate
+        if permission_in.permissions is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="`permissions` is required and must be a list of permission keys."
+            )
 
-        # Full replace
-        if getattr(permission_in, "permissions", None) is not None:
-            new_perms = list(dict.fromkeys(permission_in.permissions or []))  # de-dupe, keep order
-            _validate_permissions_or_400(new_perms)
-            user.permissions = new_perms
+        # De-dupe while preserving order
+        new_perms = list(dict.fromkeys(permission_in.permissions))
+        _validate_permissions_or_400(new_perms)
 
-        else:
-            # Incremental update
-            to_add = list(dict.fromkeys((permission_in.add or [])))
-            to_remove = set(permission_in.remove or [])
-
-            if to_add:
-                _validate_permissions_or_400(to_add)
-                current.update(to_add)
-
-            if to_remove:
-                current.difference_update(to_remove)
-
-            # Keep only valid keys just in case historical data had junk
-            valid = set(_all_permission_values())
-            sanitized = [p for p in current if p in valid]
-            user.permissions = sanitized
-
+        user.permissions = new_perms
         db.commit()
         db.refresh(user)
+
         return {
             "message": f"Permissions updated for {employee_code}",
             "employee_code": employee_code,
