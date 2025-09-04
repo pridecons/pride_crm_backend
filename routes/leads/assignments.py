@@ -123,13 +123,6 @@ def get_my_assignments(
             expires_at = a.fetched_at + timedelta(hours=config.assignment_ttl_hours)
             hours_left = (expires_at - now).total_seconds() / 3600
 
-            # Audit trail
-            AddLeadStory(
-                a.lead_id,
-                current_user.employee_code,
-                f"{current_user.name} fetched assignment {a.id}"
-            )
-
             # Build nested LeadOut and inject source name
             lead_out = LeadOut.from_orm(a.lead)
             lead_out.lead_source_name = getattr(a.lead.lead_source, "name", None)

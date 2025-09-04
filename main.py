@@ -39,6 +39,11 @@ from routes.VBC_Calling import Create_Call
 from routes.ClientConsent import ClientConsent
 from routes.Dashboard import dashboard
 from routes.state import state
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
