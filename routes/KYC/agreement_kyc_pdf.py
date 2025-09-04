@@ -1131,7 +1131,7 @@ async def generate_kyc_pdf(data,mobile:str,employee_code:str , db:Session = Depe
         "txn_expiry_min": "10080",
         "white_label": "N",
         "redirect_url": f"https://pridecons.sbs/redirect/{platform}/{mobile}",
-        "response_url": f"https://crm.24x7techelp.com/api/v1/response_url/{mobile}/{employee_code}",
+        "response_url": f"https://crm.pridebuzz.in/api/v1/response_url/{mobile}/{employee_code}",
         "esign_type": "AADHAAR",
         "email_template": {
             "org_name": "Pride Trading Consultancy"

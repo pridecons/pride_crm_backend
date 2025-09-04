@@ -32,7 +32,7 @@ class OrderMeta(BaseModel):
         alias="returnUrl",
     )
     notify_url: Optional[str] = Field(
-        default="https://crm.24x7techelp.com/api/v1/payment/webhook",
+        default="https://crm.pridebuzz.in/api/v1/payment/webhook",
         description="Webhook URL for server‐to‐server notifications",
         alias="notifyUrl",
     )
@@ -48,7 +48,7 @@ class CreateOrderRequest(BaseModel):
     order_amount: float = Field(..., gt=0, alias="orderAmount")
     order_currency: str = Field(default="INR", alias="orderCurrency")
     customer_details: CustomerDetails = Field(..., alias="customerDetails")
-    order_meta: Optional[OrderMeta] = Field("https://crm.24x7techelp.com/api/v1/payment/webhook", alias="orderMeta")
+    order_meta: Optional[OrderMeta] = Field("https://crm.pridebuzz.in/api/v1/payment/webhook", alias="orderMeta")
 
 class FrontCreate(BaseModel):
     name: str

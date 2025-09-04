@@ -211,7 +211,7 @@ async def front_create(
             "customer_phone": data.phone,
         },
         order_meta={
-            "notify_url": "https://crm.24x7techelp.com/api/v1/payment/webhook",
+            "notify_url": "https://crm.pridebuzz.in/api/v1/payment/webhook",
             "payment_methods": data.payment_methods,
         },
     )
