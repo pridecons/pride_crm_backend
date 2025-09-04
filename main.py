@@ -113,7 +113,7 @@ app.add_middleware(
 )
 
 # Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/api/v1/static", StaticFiles(directory="static"), name="static")
 
 # Root endpoint
 @app.get("/")
