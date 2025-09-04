@@ -59,9 +59,9 @@ def _lead_email(lead: Optional[Lead], payment: Payment) -> str:
 # Background-safe wrappers
 # ---------------------------
 
-async def _safe_notify(user_id: str, title: str, message: str):
+async def _safe_notify(user_id: str, title: str, message: str, lead_id: str):
     try:
-        await notification_service.notify(user_id=user_id, title=title, message=message)
+        await notification_service.notify(user_id=user_id, title=title, message=message, lead_id=lead_id)
     except Exception as e:
         logger.error("Background notification failed: %s", e)
 
@@ -220,7 +220,7 @@ async def payment_webhook(
     }
 
     # 8) Background tasks
-    background_tasks.add_task(_safe_notify, actor_user_id, "Payment Update", notify_msg)
+    background_tasks.add_task(_safe_notify, actor_user_id, "Payment Update", notify_msg, lead.id)
     if lead:
         background_tasks.add_task(_safe_add_lead_story, lead.id, actor_user_id, story_msg)
 

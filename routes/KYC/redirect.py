@@ -123,6 +123,7 @@ async def response_url_endpoint(
         user_id=employee_code,
         title="Agreement Done",
         message=msg_html,
+        lead_id=kyc_user.id
     )
 
     # ---------- collect *all* eligible paid payments (not just one) ----------

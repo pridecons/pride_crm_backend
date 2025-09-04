@@ -253,8 +253,8 @@ class NotificationService:
     def get_connection_count(self) -> int:
         return sum(len(sockets) for sockets in self.active_connections.values())
 
-    async def notify(self, user_id: str, title: str, message: str, at_time: Optional[str] = None) -> bool:
-        payload: Dict[str, Any] = {"user_id": user_id, "title": title, "message": message}
+    async def notify(self, user_id: str, title: str, message: str, at_time: Optional[str] = None, lead_id: Optional[str] = None) -> bool:
+        payload: Dict[str, Any] = {"user_id": user_id, "title": title, "message": message, "lead_id": lead_id}
         if at_time:
             payload["timestamp"] = at_time
         return await self.send_to_user(user_id, payload)

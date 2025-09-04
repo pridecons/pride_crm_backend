@@ -30,7 +30,7 @@ async def send_callback_reminder(user_id: str, lead_id: int, mobile: str):
     title = "Call Back Reminder"
     message = f"The callback time for lead {mobile} has arrived. Please call now."
     try:
-        await notification_service.notify(user_id=user_id, title=title, message=message)
+        await notification_service.notify(user_id=user_id, title=title, message=message, lead_id=lead_id)
         logger.info("Sent callback reminder to user %s for lead %s", user_id, lead_id)
     except Exception as e:
         logger.exception("Failed to send callback reminder to %s for lead %s: %s",
