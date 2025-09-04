@@ -1,16 +1,17 @@
+# routes/leads/leads_fetch.py
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import or_, and_
+from sqlalchemy import and_, or_, exists
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
 from db.models import (
     Lead,
     LeadAssignment,
-    LeadFetchConfig,
+    LeadFetchConfig,      # use ORM model from db.models
     LeadFetchHistory,
     UserDetails,
 )
@@ -22,13 +23,7 @@ router = APIRouter(
     tags=["leads fetch"],
 )
 
-def load_fetch_config(db, user):
-    """Public alias for _load_fetch_config to match other imports."""
-    return _load_fetch_config(db, user)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Response DTO
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------- Schemas -----------------
 class LeadFetchResponse(BaseModel):
     id: int
     full_name: Optional[str] = None
@@ -42,21 +37,17 @@ class LeadFetchResponse(BaseModel):
     lead_response_id: Optional[int] = None
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------- Helpers -----------------
 def _role_key(role_id) -> Optional[str]:
-    """Always return a string key for role_id, whether enum/int/str/None."""
+    """Return a string key for role_id regardless of whether role_id is Enum/int/str/None."""
     if role_id is None:
         return None
     return getattr(role_id, "value", str(role_id))
 
 
-def _active_assignments_count(db: Session, user_id: str, assignment_ttl_hours: int) -> int:
-    """
-    Count how many leads are *currently assigned and not expired* for this user.
-    These are the 'unfinished' leads used by last_fetch_limit.
-    """
+def _get_user_active_assignments_count(
+    db: Session, user_id: str, assignment_ttl_hours: int
+) -> int:
     now = datetime.utcnow()
     cutoff = now - timedelta(hours=assignment_ttl_hours)
     return (
@@ -71,27 +62,32 @@ def _active_assignments_count(db: Session, user_id: str, assignment_ttl_hours: i
     )
 
 
-def _can_user_fetch(db: Session, user_id: str, cfg: LeadFetchConfig) -> Tuple[bool, int]:
-    """
-    True if user has fewer active (unexpired) assignments than last_fetch_limit.
-    """
-    active = _active_assignments_count(db, user_id, cfg.assignment_ttl_hours)
-    return (active < cfg.last_fetch_limit, active)
+def _can_user_fetch_leads(
+    db: Session, user_id: str, config: LeadFetchConfig
+) -> Tuple[bool, int]:
+    current = _get_user_active_assignments_count(
+        db, user_id, config.assignment_ttl_hours
+    )
+    # strictly less than limit to allow fetching until exactly at the cap
+    return (current < config.last_fetch_limit, current)
 
 
-def _load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, str]:
+def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, str]:
     """
-    Resolve config priority:
-      1) role_id + branch
-      2) role_id global
-      3) branch global
-      4) default in-memory values
+    Determine which LeadFetchConfig to use for the given user.
+    Precedence:
+      1) (role_id + branch_id) match
+      2) (role_id) global
+      3) (branch_id) global
+      4) in-memory defaults (not persisted)
+    Returns (config_object, source_tag)
     """
     cfg = None
     source = "default"
+
     role_key = _role_key(user.role_id)
 
-    # 1) role+branch
+    # 1) role_id + branch
     if role_key and user.branch_id is not None:
         cfg = (
             db.query(LeadFetchConfig)
@@ -102,10 +98,10 @@ def _load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig,
             .first()
         )
         if cfg:
-            return cfg, "role_branch"
+            source = "role_branch"
 
-    # 2) role global
-    if role_key and not cfg:
+    # 2) role_id global
+    if not cfg and role_key:
         cfg = (
             db.query(LeadFetchConfig)
             .filter(
@@ -115,10 +111,10 @@ def _load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig,
             .first()
         )
         if cfg:
-            return cfg, "role_global"
+            source = "role_global"
 
     # 3) branch global
-    if user.branch_id is not None and not cfg:
+    if not cfg and user.branch_id is not None:
         cfg = (
             db.query(LeadFetchConfig)
             .filter(
@@ -128,165 +124,171 @@ def _load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig,
             .first()
         )
         if cfg:
-            return cfg, "branch_global"
+            source = "branch_global"
 
-    # 4) defaults (no DB row)
-    class _Temp: ...
-    cfg = _Temp()
-    cfg.per_request_limit = 100     # how many leads per fetch call
-    cfg.daily_call_limit = 3       # how many fetch calls per day
-    cfg.last_fetch_limit = 10       # max unfinished leads allowed before blocking
-    cfg.assignment_ttl_hours = 24   # how long an assignment stays 'active'
-    cfg.old_lead_remove_days = 30
+    # 4) fallback defaults (in-memory object)
+    if not cfg:
+        class _TempCfg:
+            per_request_limit = 100
+            daily_call_limit = 50
+            last_fetch_limit = 10
+            assignment_ttl_hours = 24
+            old_lead_remove_days = 30
+
+        cfg = _TempCfg()
+        source = "memory_default"
+
     return cfg, source
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Endpoint
-# ──────────────────────────────────────────────────────────────────────────────
+# Backwards-compatibility alias for older imports:
+_load_fetch_config = load_fetch_config
+
+
+# ----------------- Endpoint -----------------
 @router.post("/fetch", response_model=dict)
 def fetch_leads(
     db: Session = Depends(get_db),
-    # NOTE: ensure your Permission enum actually has this key, e.g. "lead_manage_page"
-    # or add "fetch_lead" to PermissionDetails. Adjust the string if needed.
-    current_user: UserDetails = Depends(require_permission("fetch_lead")),
+    # Use an existing permission from PermissionDetails.
+    current_user: UserDetails = Depends(require_permission("lead_manage_page")),
 ):
     """
-    Fetch leads with 3 guardrails:
-
-    - per_request_limit: how many leads are returned in one call.
-    - daily_call_limit: how many times per day the user can call this endpoint.
-    - last_fetch_limit: max unfinished (active, unexpired) assignments a user may hold.
-                        If active >= last_fetch_limit ⇒ block new fetch.
-
-    A lead becomes "unfinished" for TTL hours (assignment_ttl_hours) from when it was fetched.
-    After TTL it is considered expired and becomes fetchable by others again.
+    Concurrency-safe fetch:
+      - Find leads with NO *fresh* assignment (NOT EXISTS subquery),
+      - Lock only crm_lead rows (FOR UPDATE OF crm_lead SKIP LOCKED),
+      - Create LeadAssignment rows and stamp TTL fields.
+    This avoids OUTER JOIN + FOR UPDATE (which Postgres rejects).
     """
     try:
-        # 1) Resolve config
-        cfg, cfg_source = _load_fetch_config(db, current_user)
-
-        # 2) Enforce outstanding limit (last_fetch_limit)
-        ok, active_count = _can_user_fetch(db, current_user.employee_code, cfg)
-        if not ok:
+        # 1) Load config + capacity checks
+        config, cfg_source = load_fetch_config(db, current_user)
+        can_fetch, active_count = _can_user_fetch_leads(
+            db, current_user.employee_code, config
+        )
+        if not can_fetch:
             return {
                 "leads": [],
-                "message": (
-                    f"You currently have {active_count} unfinished leads. "
-                    f"Reduce them below {cfg.last_fetch_limit} to fetch new leads."
-                ),
+                "message": f"You have {active_count} active assignments (limit: {config.last_fetch_limit}).",
                 "fetched_count": 0,
                 "current_assignments": active_count,
-                "limits": {
-                    "per_request_limit": cfg.per_request_limit,
-                    "daily_call_limit": cfg.daily_call_limit,
-                    "last_fetch_limit": cfg.last_fetch_limit,
-                    "assignment_ttl_hours": cfg.assignment_ttl_hours,
+                "config_used": {
+                    "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": getattr(config, "daily_call_limit", None),
+                    "last_fetch_limit": config.last_fetch_limit,
+                    "assignment_ttl_hours": config.assignment_ttl_hours,
+                    "source": cfg_source,
                 },
-                "config_source": cfg_source,
             }
 
-        # 3) Enforce daily call limit
+        # 2) Remaining capacity based on last_fetch_limit
+        remaining_slots = max(0, config.last_fetch_limit - active_count)
+        if remaining_slots == 0:
+            return {
+                "leads": [],
+                "message": f"No remaining assignment capacity (limit: {config.last_fetch_limit}).",
+                "fetched_count": 0,
+                "current_assignments": active_count,
+                "config_used": {
+                    "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": getattr(config, "daily_call_limit", None),
+                    "last_fetch_limit": config.last_fetch_limit,
+                    "assignment_ttl_hours": config.assignment_ttl_hours,
+                    "source": cfg_source,
+                },
+            }
+
+        # 3) Enforce daily (call) limit
         today = date.today()
         hist = (
             db.query(LeadFetchHistory)
             .filter_by(user_id=current_user.employee_code, date=today)
             .first()
         )
-        calls_used = hist.call_count if hist else 0
-        if calls_used >= cfg.daily_call_limit:
+        if hist and hist.call_count >= config.daily_call_limit:
             return {
                 "leads": [],
-                "message": f"Daily fetch limit ({cfg.daily_call_limit}) reached for today.",
+                "message": f"Daily fetch limit of {config.daily_call_limit} reached.",
                 "fetched_count": 0,
                 "current_assignments": active_count,
-                "limits": {
-                    "per_request_limit": cfg.per_request_limit,
-                    "daily_call_limit": cfg.daily_call_limit,
-                    "last_fetch_limit": cfg.last_fetch_limit,
-                    "assignment_ttl_hours": cfg.assignment_ttl_hours,
+                "config_used": {
+                    "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": getattr(config, "daily_call_limit", None),
+                    "last_fetch_limit": config.last_fetch_limit,
+                    "assignment_ttl_hours": config.assignment_ttl_hours,
+                    "source": cfg_source,
                 },
-                "daily_calls_used": calls_used,
-                "daily_calls_remaining": 0,
-                "config_source": cfg_source,
             }
 
-        # 4) Compute how many we can fetch right now
-        #    We must not exceed last_fetch_limit outstanding after this call.
-        remaining_slots = max(0, cfg.last_fetch_limit - active_count)
-        if remaining_slots == 0:
-            return {
-                "leads": [],
-                "message": f"No remaining assignment capacity (limit: {cfg.last_fetch_limit}).",
-                "fetched_count": 0,
-                "current_assignments": active_count,
-                "limits": {
-                    "per_request_limit": cfg.per_request_limit,
-                    "daily_call_limit": cfg.daily_call_limit,
-                    "last_fetch_limit": cfg.last_fetch_limit,
-                    "assignment_ttl_hours": cfg.assignment_ttl_hours,
-                },
-                "daily_calls_used": calls_used,
-                "daily_calls_remaining": max(0, cfg.daily_call_limit - calls_used),
-                "config_source": cfg_source,
-            }
+        # 4) Determine how many to fetch this call
+        fetch_limit = min(config.per_request_limit, remaining_slots)
 
-        fetch_limit = min(cfg.per_request_limit, remaining_slots)
+        # 5) Build NOT EXISTS subquery defining "fresh assignment"
+        now = datetime.utcnow()
+        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
 
-        # 5) Find unassigned or expired leads (scope by branch if user has one)
-        expiry_cutoff = datetime.utcnow() - timedelta(hours=cfg.assignment_ttl_hours)
-        base_q = db.query(Lead).outerjoin(LeadAssignment).filter(Lead.is_delete.is_(False))
-        if current_user.branch_id:
-            base_q = base_q.filter(Lead.branch_id == current_user.branch_id)
-
-        candidate_leads: List[Lead] = (
-            base_q.filter(
-                or_(
-                    LeadAssignment.id.is_(None),                      # never assigned
-                    LeadAssignment.fetched_at < expiry_cutoff,        # assignment expired
-                )
+        fresh_assignment_exists = (
+            db.query(LeadAssignment.id)
+            .filter(
+                LeadAssignment.lead_id == Lead.id,
+                LeadAssignment.fetched_at >= expiry_cutoff,
             )
-            .order_by(Lead.created_at.asc())  # FIFO-ish
+            .exists()
+        )
+
+        # 6) Find candidates WITHOUT any fresh assignment; lock ONLY crm_lead rows
+        q = (
+            db.query(Lead)
+            .filter(Lead.is_delete.is_(False))
+            .filter(~fresh_assignment_exists)  # NOT EXISTS fresh assignment
+        )
+
+        # Scope to user's branch (if any)
+        if current_user.branch_id:
+            q = q.filter(Lead.branch_id == current_user.branch_id)
+
+        # Lock rows only from crm_lead, avoid joining anything nullable
+        candidates: List[Lead] = (
+            q.order_by(Lead.created_at.asc())
+            .with_for_update(of=Lead, skip_locked=True)
             .limit(fetch_limit)
-            .with_for_update(skip_locked=True)  # reduce race conditions
             .all()
         )
 
-        if not candidate_leads:
+        if not candidates:
             return {
                 "leads": [],
-                "message": "No leads available right now.",
+                "message": "No leads available at this time",
                 "fetched_count": 0,
                 "current_assignments": active_count,
-                "limits": {
-                    "per_request_limit": cfg.per_request_limit,
-                    "daily_call_limit": cfg.daily_call_limit,
-                    "last_fetch_limit": cfg.last_fetch_limit,
-                    "assignment_ttl_hours": cfg.assignment_ttl_hours,
+                "config_used": {
+                    "per_request_limit": config.per_request_limit,
+                    "daily_call_limit": getattr(config, "daily_call_limit", None),
+                    "last_fetch_limit": config.last_fetch_limit,
+                    "assignment_ttl_hours": config.assignment_ttl_hours,
+                    "source": cfg_source,
                 },
-                "daily_calls_used": calls_used,
-                "daily_calls_remaining": max(0, cfg.daily_call_limit - calls_used),
-                "config_source": cfg_source,
             }
 
-        # 6) Assign them to the user; remove any expired assignment first
-        now = datetime.utcnow()
-        for lead in candidate_leads:
-            # purge expired assignment (if any)
-            expired = (
-                db.query(LeadAssignment)
+        # 7) Assign the leads and stamp TTL-related fields
+        for lead in candidates:
+            # Safety: if a fresh assignment appeared just before our insert (rare), skip
+            already_fresh = (
+                db.query(LeadAssignment.id)
                 .filter(
                     LeadAssignment.lead_id == lead.id,
-                    LeadAssignment.fetched_at < expiry_cutoff,
+                    LeadAssignment.fetched_at >= expiry_cutoff,
                 )
                 .first()
             )
-            if expired:
-                db.delete(expired)
+            if already_fresh:
+                continue
 
-            # still free? (avoid race)
-            already = db.query(LeadAssignment).filter_by(lead_id=lead.id).first()
-            if not already:
+            # Create/replace assignment for the current user
+            existing = db.query(LeadAssignment).filter(LeadAssignment.lead_id == lead.id).first()
+            if existing:
+                existing.user_id = current_user.employee_code
+                existing.fetched_at = now
+            else:
                 db.add(
                     LeadAssignment(
                         lead_id=lead.id,
@@ -294,34 +296,35 @@ def fetch_leads(
                         fetched_at=now,
                     )
                 )
-                # reflect on the Lead row (useful for quick filters/UX)
-                lead.assigned_to_user = current_user.employee_code
-                lead.conversion_deadline = now + timedelta(hours=cfg.assignment_ttl_hours)
 
-        # 7) Increment daily call counter and commit
+            # Stamp the Lead row with assignee + conversion TTL
+            lead.assigned_to_user = current_user.employee_code
+            lead.conversion_deadline = now + timedelta(hours=config.assignment_ttl_hours)
+
+        # 8) Update daily call history and commit
         if not hist:
-            db.add(LeadFetchHistory(
-                user_id=current_user.employee_code,
-                date=today,
-                call_count=1
-            ))
-            calls_used = 1
+            db.add(
+                LeadFetchHistory(
+                    user_id=current_user.employee_code,
+                    date=today,
+                    call_count=1,
+                )
+            )
         else:
             hist.call_count += 1
-            calls_used = hist.call_count
 
         db.commit()
 
-        # 8) Audit message for each fetched lead
-        for lead in candidate_leads:
+        # 9) Audit trail / story
+        for ld in candidates:
             AddLeadStory(
-                lead.id,
+                ld.id,
                 current_user.employee_code,
                 f"{current_user.name} ({current_user.employee_code}) fetched this lead",
             )
 
-        # 9) Shape response
-        payload_leads = [
+        # 10) Build response
+        response_leads = [
             LeadFetchResponse(
                 id=ld.id,
                 full_name=getattr(ld, "full_name", None),
@@ -334,23 +337,21 @@ def fetch_leads(
                 lead_source_id=getattr(ld, "lead_source_id", None),
                 lead_response_id=getattr(ld, "lead_response_id", None),
             )
-            for ld in candidate_leads
+            for ld in candidates
         ]
 
         return {
-            "leads": payload_leads,
-            "message": f"Fetched {len(payload_leads)} lead(s).",
-            "fetched_count": len(payload_leads),
-            "current_assignments": active_count + len(payload_leads),
-            "limits": {
-                "per_request_limit": cfg.per_request_limit,
-                "daily_call_limit": cfg.daily_call_limit,
-                "last_fetch_limit": cfg.last_fetch_limit,
-                "assignment_ttl_hours": cfg.assignment_ttl_hours,
+            "leads": [l.model_dump() for l in response_leads],
+            "message": f"Successfully fetched {len(response_leads)} leads",
+            "fetched_count": len(response_leads),
+            "current_assignments": active_count + len(response_leads),
+            "config_used": {
+                "per_request_limit": config.per_request_limit,
+                "daily_call_limit": getattr(config, "daily_call_limit", None),
+                "last_fetch_limit": config.last_fetch_limit,
+                "assignment_ttl_hours": config.assignment_ttl_hours,
+                "source": cfg_source,
             },
-            "daily_calls_used": calls_used,
-            "daily_calls_remaining": max(0, cfg.daily_call_limit - calls_used),
-            "config_source": cfg_source,
         }
 
     except HTTPException:
@@ -358,6 +359,9 @@ def fetch_leads(
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=500,
             detail=f"Error fetching leads: {e}",
         )
+
+
+__all__ = ["router", "load_fetch_config", "_load_fetch_config"]
