@@ -40,6 +40,7 @@ from routes.ClientConsent import ClientConsent
 from routes.Dashboard import dashboard
 from routes.state import state
 from pathlib import Path
+from routes.leads import globel_search
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
@@ -148,6 +149,7 @@ def health_check():
 
 # Register all your existing routes
 try:
+    app.include_router(globel_search.router, prefix="/api/v1")
     app.include_router(state.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(ClientConsent.router, prefix="/api/v1")
