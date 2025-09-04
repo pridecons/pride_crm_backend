@@ -47,6 +47,7 @@ class LeadOut(BaseModel):
     ft_service_type: Optional[str] = None
     lead_response_id: Optional[int] = None
     lead_source_id: Optional[int] = None
+    lead_source_name: Optional[str] = None  # 👈 added
     branch_id: Optional[int] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
@@ -129,8 +130,9 @@ def get_my_assignments(
                 f"{current_user.name} fetched assignment {a.id}"
             )
 
-            # Build nested LeadOut
+            # Build nested LeadOut and inject source name
             lead_out = LeadOut.from_orm(a.lead)
+            lead_out.lead_source_name = getattr(a.lead.lead_source, "name", None)
 
             resp_list.append(AssignmentResponse(
                 assignment_id = a.id,
@@ -141,6 +143,7 @@ def get_my_assignments(
                 hours_remaining = max(0, hours_left),
             ))
 
+        # eligibility: can fetch if active assignments <= last_fetch_limit
         can_fetch_new = len(resp_list) <= config.last_fetch_limit
 
         return MyAssignmentsResponse(

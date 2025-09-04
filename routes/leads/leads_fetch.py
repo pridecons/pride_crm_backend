@@ -1,17 +1,16 @@
-# routes/leads/leads_fetch.py
 from datetime import datetime, date, timedelta
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, exists
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
 from db.models import (
     Lead,
     LeadAssignment,
-    LeadFetchConfig,      # use ORM model from db.models
+    LeadFetchConfig,
     LeadFetchHistory,
     UserDetails,
 )
@@ -23,7 +22,6 @@ router = APIRouter(
     tags=["leads fetch"],
 )
 
-# ----------------- Schemas -----------------
 class LeadFetchResponse(BaseModel):
     id: int
     full_name: Optional[str] = None
@@ -34,18 +32,47 @@ class LeadFetchResponse(BaseModel):
     investment: Optional[str] = None
     created_at: datetime
     lead_source_id: Optional[int] = None
+    lead_source_name: Optional[str] = None   # 👈 NEW
     lead_response_id: Optional[int] = None
 
 
-# ----------------- Helpers -----------------
+from sqlalchemy import and_
+from db.models import Lead, LeadAssignment
+
+def get_user_open_assignments_count(
+    db: Session, user_id: str, assignment_ttl_hours: int
+) -> int:
+    """
+    Count only those assignments that are still 'open':
+    - within TTL
+    - assigned to this user
+    - and the lead hasn't been worked (lead_response_id IS NULL)
+      (Adjust the 'open' definition as needed for your flow.)
+    """
+    now = datetime.utcnow()
+    cutoff = now - timedelta(hours=assignment_ttl_hours)
+    return (
+        db.query(LeadAssignment)
+          .join(Lead, Lead.id == LeadAssignment.lead_id)
+          .filter(
+              LeadAssignment.user_id == user_id,
+              LeadAssignment.fetched_at >= cutoff,
+              Lead.assigned_to_user == user_id,
+              Lead.lead_response_id.is_(None)   # <-- treat as "not worked yet"
+          )
+          .count()
+    )
+
+# ---------- helpers ----------
 def _role_key(role_id) -> Optional[str]:
     """Return a string key for role_id regardless of whether role_id is Enum/int/str/None."""
     if role_id is None:
         return None
+    # If Enum-like, use .value; else coerce to str
     return getattr(role_id, "value", str(role_id))
 
 
-def _get_user_active_assignments_count(
+def get_user_active_assignments_count(
     db: Session, user_id: str, assignment_ttl_hours: int
 ) -> int:
     now = datetime.utcnow()
@@ -62,32 +89,21 @@ def _get_user_active_assignments_count(
     )
 
 
-def _can_user_fetch_leads(
-    db: Session, user_id: str, config: LeadFetchConfig
-) -> Tuple[bool, int]:
-    current = _get_user_active_assignments_count(
-        db, user_id, config.assignment_ttl_hours
-    )
-    # strictly less than limit to allow fetching until exactly at the cap
-    return (current < config.last_fetch_limit, current)
+def can_user_fetch_leads(db: Session, user_id: str, config: LeadFetchConfig) -> Tuple[bool, int]:
+    """
+    Eligible if OPEN (unworked) assignment count <= last_fetch_limit.
+    """
+    current_open = get_user_open_assignments_count(db, user_id, config.assignment_ttl_hours)
+    return (current_open <= config.last_fetch_limit, current_open)
 
 
 def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, str]:
-    """
-    Determine which LeadFetchConfig to use for the given user.
-    Precedence:
-      1) (role_id + branch_id) match
-      2) (role_id) global
-      3) (branch_id) global
-      4) in-memory defaults (not persisted)
-    Returns (config_object, source_tag)
-    """
     cfg = None
     source = "default"
 
     role_key = _role_key(user.role_id)
 
-    # 1) role_id + branch
+    # 1️⃣ role_id+branch
     if role_key and user.branch_id is not None:
         cfg = (
             db.query(LeadFetchConfig)
@@ -100,7 +116,7 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
         if cfg:
             source = "role_branch"
 
-    # 2) role_id global
+    # 2️⃣ role_id global
     if not cfg and role_key:
         cfg = (
             db.query(LeadFetchConfig)
@@ -113,7 +129,7 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
         if cfg:
             source = "role_global"
 
-    # 3) branch global
+    # 3️⃣ branch global
     if not cfg and user.branch_id is not None:
         cfg = (
             db.query(LeadFetchConfig)
@@ -126,43 +142,35 @@ def load_fetch_config(db: Session, user: UserDetails) -> Tuple[LeadFetchConfig, 
         if cfg:
             source = "branch_global"
 
-    # 4) fallback defaults (in-memory object)
+    # 4️⃣ defaults
     if not cfg:
-        class _TempCfg:
-            per_request_limit = 100
-            daily_call_limit = 50
-            last_fetch_limit = 10
-            assignment_ttl_hours = 24
-            old_lead_remove_days = 30
+        cfg_values = {
+            "per_request_limit": 100,
+            "daily_call_limit": 50,
+            "last_fetch_limit": 10,
+            "assignment_ttl_hours": 24,
+            "old_lead_remove_days": 30,
+        }
 
-        cfg = _TempCfg()
-        source = "memory_default"
+        class TempConfig:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+
+        cfg = TempConfig(**cfg_values)
 
     return cfg, source
 
 
-# Backwards-compatibility alias for older imports:
-_load_fetch_config = load_fetch_config
-
-
-# ----------------- Endpoint -----------------
 @router.post("/fetch", response_model=dict)
 def fetch_leads(
     db: Session = Depends(get_db),
-    # Use an existing permission from PermissionDetails.
-    current_user: UserDetails = Depends(require_permission("lead_manage_page")),
+    current_user: UserDetails = Depends(require_permission("fetch_lead")),
 ):
-    """
-    Concurrency-safe fetch:
-      - Find leads with NO *fresh* assignment (NOT EXISTS subquery),
-      - Lock only crm_lead rows (FOR UPDATE OF crm_lead SKIP LOCKED),
-      - Create LeadAssignment rows and stamp TTL fields.
-    This avoids OUTER JOIN + FOR UPDATE (which Postgres rejects).
-    """
     try:
-        # 1) Load config + capacity checks
+        # Load config and check per‐user active assignments
         config, cfg_source = load_fetch_config(db, current_user)
-        can_fetch, active_count = _can_user_fetch_leads(
+        can_fetch, active_count = can_user_fetch_leads(
             db, current_user.employee_code, config
         )
         if not can_fetch:
@@ -173,14 +181,13 @@ def fetch_leads(
                 "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
-                    "daily_call_limit": getattr(config, "daily_call_limit", None),
+                    "daily_call_limit": getattr(config, "daily_call_limit", None),  # NEW
                     "last_fetch_limit": config.last_fetch_limit,
-                    "assignment_ttl_hours": config.assignment_ttl_hours,
                     "source": cfg_source,
                 },
             }
 
-        # 2) Remaining capacity based on last_fetch_limit
+        # Remaining capacity based on last_fetch_limit
         remaining_slots = max(0, config.last_fetch_limit - active_count)
         if remaining_slots == 0:
             return {
@@ -190,14 +197,12 @@ def fetch_leads(
                 "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
-                    "daily_call_limit": getattr(config, "daily_call_limit", None),
                     "last_fetch_limit": config.last_fetch_limit,
-                    "assignment_ttl_hours": config.assignment_ttl_hours,
                     "source": cfg_source,
                 },
             }
 
-        # 3) Enforce daily (call) limit
+        # Enforce daily limit (call-count based)
         today = date.today()
         hist = (
             db.query(LeadFetchHistory)
@@ -212,49 +217,32 @@ def fetch_leads(
                 "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
-                    "daily_call_limit": getattr(config, "daily_call_limit", None),
                     "last_fetch_limit": config.last_fetch_limit,
-                    "assignment_ttl_hours": config.assignment_ttl_hours,
                     "source": cfg_source,
                 },
             }
 
-        # 4) Determine how many to fetch this call
-        fetch_limit = min(config.per_request_limit, remaining_slots)
+        # Determine how many to fetch this call
+        fetch_limit = config.per_request_limit
 
-        # 5) Build NOT EXISTS subquery defining "fresh assignment"
-        now = datetime.utcnow()
-        expiry_cutoff = now - timedelta(hours=config.assignment_ttl_hours)
-
-        fresh_assignment_exists = (
-            db.query(LeadAssignment.id)
-            .filter(
-                LeadAssignment.lead_id == Lead.id,
-                LeadAssignment.fetched_at >= expiry_cutoff,
-            )
-            .exists()
-        )
-
-        # 6) Find candidates WITHOUT any fresh assignment; lock ONLY crm_lead rows
-        q = (
-            db.query(Lead)
-            .filter(Lead.is_delete.is_(False))
-            .filter(~fresh_assignment_exists)  # NOT EXISTS fresh assignment
-        )
-
-        # Scope to user's branch (if any)
+        # Query unassigned or expired leads
+        expiry_cutoff = datetime.utcnow() - timedelta(hours=config.assignment_ttl_hours)
+        query = db.query(Lead).outerjoin(LeadAssignment).filter(Lead.is_delete == False)
         if current_user.branch_id:
-            q = q.filter(Lead.branch_id == current_user.branch_id)
+            query = query.filter(Lead.branch_id == current_user.branch_id)
 
-        # Lock rows only from crm_lead, avoid joining anything nullable
-        candidates: List[Lead] = (
-            q.order_by(Lead.created_at.asc())
-            .with_for_update(of=Lead, skip_locked=True)
+        leads = (
+            query.filter(
+                or_(
+                    LeadAssignment.id == None,
+                    LeadAssignment.fetched_at < expiry_cutoff,
+                )
+            )
             .limit(fetch_limit)
             .all()
         )
 
-        if not candidates:
+        if not leads:
             return {
                 "leads": [],
                 "message": "No leads available at this time",
@@ -262,46 +250,40 @@ def fetch_leads(
                 "current_assignments": active_count,
                 "config_used": {
                     "per_request_limit": config.per_request_limit,
-                    "daily_call_limit": getattr(config, "daily_call_limit", None),
                     "last_fetch_limit": config.last_fetch_limit,
-                    "assignment_ttl_hours": config.assignment_ttl_hours,
                     "source": cfg_source,
                 },
             }
 
-        # 7) Assign the leads and stamp TTL-related fields
-        for lead in candidates:
-            # Safety: if a fresh assignment appeared just before our insert (rare), skip
-            already_fresh = (
-                db.query(LeadAssignment.id)
+        # Assign leads and update Lead fields
+        now = datetime.utcnow()
+        for lead in leads:
+            # Remove expired assignment (if any)
+            expired = (
+                db.query(LeadAssignment)
                 .filter(
                     LeadAssignment.lead_id == lead.id,
-                    LeadAssignment.fetched_at >= expiry_cutoff,
+                    LeadAssignment.fetched_at < expiry_cutoff,
                 )
                 .first()
             )
-            if already_fresh:
-                continue
+            if expired:
+                db.delete(expired)
 
-            # Create/replace assignment for the current user
-            existing = db.query(LeadAssignment).filter(LeadAssignment.lead_id == lead.id).first()
-            if existing:
-                existing.user_id = current_user.employee_code
-                existing.fetched_at = now
-            else:
+            # If still unassigned, assign to current user and stamp fetched_at
+            if not db.query(LeadAssignment).filter_by(lead_id=lead.id).first():
                 db.add(
                     LeadAssignment(
                         lead_id=lead.id,
                         user_id=current_user.employee_code,
-                        fetched_at=now,
+                        fetched_at=now,  # <-- important for TTL logic
                     )
                 )
+                # also stamp the Lead record
+                lead.assigned_to_user = current_user.employee_code
+                lead.conversion_deadline = now + timedelta(hours=config.assignment_ttl_hours)
 
-            # Stamp the Lead row with assignee + conversion TTL
-            lead.assigned_to_user = current_user.employee_code
-            lead.conversion_deadline = now + timedelta(hours=config.assignment_ttl_hours)
-
-        # 8) Update daily call history and commit
+        # Update daily history and commit all changes
         if not hist:
             db.add(
                 LeadFetchHistory(
@@ -315,15 +297,15 @@ def fetch_leads(
 
         db.commit()
 
-        # 9) Audit trail / story
-        for ld in candidates:
+        # Audit story entries
+        for lead in leads:
             AddLeadStory(
-                ld.id,
+                lead.id,
                 current_user.employee_code,
                 f"{current_user.name} ({current_user.employee_code}) fetched this lead",
             )
 
-        # 10) Build response
+        # Build response payload
         response_leads = [
             LeadFetchResponse(
                 id=ld.id,
@@ -335,21 +317,21 @@ def fetch_leads(
                 investment=getattr(ld, "investment", None),
                 created_at=ld.created_at,
                 lead_source_id=getattr(ld, "lead_source_id", None),
+                lead_source_name=getattr(ld.lead_source, "name", None),  # 👈 NEW
                 lead_response_id=getattr(ld, "lead_response_id", None),
             )
-            for ld in candidates
+            for ld in leads
         ]
 
+
         return {
-            "leads": [l.model_dump() for l in response_leads],
+            "leads": response_leads,
             "message": f"Successfully fetched {len(response_leads)} leads",
             "fetched_count": len(response_leads),
             "current_assignments": active_count + len(response_leads),
             "config_used": {
                 "per_request_limit": config.per_request_limit,
-                "daily_call_limit": getattr(config, "daily_call_limit", None),
                 "last_fetch_limit": config.last_fetch_limit,
-                "assignment_ttl_hours": config.assignment_ttl_hours,
                 "source": cfg_source,
             },
         }
@@ -359,9 +341,26 @@ def fetch_leads(
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching leads: {e}",
         )
 
 
-__all__ = ["router", "load_fetch_config", "_load_fetch_config"]
+# class LeadFetchConfig(Base):
+#     __tablename__ = "crm_lead_fetch_config"
+#     id                = Column(Integer, primary_key=True, autoincrement=True)
+#     role_id              = Column(String(50), nullable=True)
+#     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
+#     per_request_limit = Column(Integer, nullable=False)
+#     daily_call_limit  = Column(Integer, nullable=False)
+#     last_fetch_limit  = Column(Integer, nullable=False)
+#     assignment_ttl_hours = Column(Integer, nullable=False, default=24*7)
+#     old_lead_remove_days = Column(Integer, nullable=True, default=30)
+
+#     # Add relationship
+#     branch = relationship("BranchDetails", foreign_keys=[branch_id])
+
+# per_request_limit ka matlab he ek bar me kitni lead fetch kar skat he je per_request_limit=100 he to ek bar me 100 lead fetch kr skta he
+# daily_call_limit ka matlab he 1 din me kitni bar fetch kr skat he jese daily_call_limit = 2 he to 1 din me 2 bar hi fetch kr skta he matlab total 200 lead fetch kr skta he 1 din me 
+# last_fetch_limit ka mtlab he ki mene lead fetch kari or sab par kam kar liye or kuch lead bachi uske bad fetch kr skta hu jese last_fetch_limit=5 he to mene 100 lead fetch kari or usme se 95 par kam kr chuka hu or last 5 bachi he to new lead fetch kr skta hu 5 se jyada hui to lead nahi fetch kr paye ga
+
