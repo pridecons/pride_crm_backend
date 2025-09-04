@@ -22,6 +22,10 @@ router = APIRouter(
     tags=["leads fetch"],
 )
 
+def load_fetch_config(db, user):
+    """Public alias for _load_fetch_config to match other imports."""
+    return _load_fetch_config(db, user)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Response DTO
 # ──────────────────────────────────────────────────────────────────────────────
