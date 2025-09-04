@@ -76,7 +76,7 @@ def get_role_permissions(role_name: str) -> List[str]:
             'rational_pdf_model_view', 'rational_graf_model_view', 'rational_status', 'rational_edit',
             'rational_add_recommadation', 'email_add_temp', 'email_edit_temp', 'email_delete_temp',
             'email_view_temp', 'sms_add', 'sms_edit', 'sms_delete', 'branch_add', 'branch_edit',
-            'branch_details', 'branch_agreement_view'
+            'branch_details', 'branch_agreement_view', "department_page"
         ],
 
         "BRANCH_MANAGER": [
