@@ -1,7 +1,10 @@
+# routes/payments/Cashfree_webhook.py
+
 import json
 import os
 import logging
 from datetime import datetime
+from typing import Optional, List
 
 from fastapi import (
     APIRouter,
@@ -13,6 +16,7 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+
 from db.connection import get_db
 from db.models import Payment, Lead, LeadAssignment
 from routes.notification.notification_service import notification_service
@@ -26,14 +30,42 @@ router = APIRouter(prefix="/payment", tags=["payment"])
 LOG_FILE = os.getenv("WEBHOOK_LOG_PATH", "payment_webhook.log")
 
 
+# ---------------------------
+# Helpers (safe + reusable)
+# ---------------------------
+
+def _fmt_inr(val: Optional[float]) -> str:
+    try:
+        return f"₹{float(val or 0):,.2f}"
+    except Exception:
+        return "₹0.00"
+
+def _lead_name(lead: Optional[Lead], payment: Payment) -> str:
+    """
+    Lead model generally has 'full_name' (not 'name').
+    Fall back to payment.name if needed.
+    """
+    if lead:
+        return getattr(lead, "full_name", None) or getattr(lead, "name", None) or (payment.name or "")
+    return payment.name or ""
+
+def _lead_email(lead: Optional[Lead], payment: Payment) -> str:
+    if lead:
+        return getattr(lead, "email", None) or (getattr(payment, "email", None) or "")
+    return getattr(payment, "email", None) or ""
+
+
+# ---------------------------
+# Background-safe wrappers
+# ---------------------------
+
 async def _safe_notify(user_id: str, title: str, message: str):
     try:
         await notification_service.notify(user_id=user_id, title=title, message=message)
     except Exception as e:
         logger.error("Background notification failed: %s", e)
 
-
-async def _safe_add_lead_story(lead_id: int, user_id: str, msg: str):
+async def _safe_add_lead_story(lead_id: Optional[int], user_id: str, msg: str):
     if not lead_id:
         logger.warning("Skipping AddLeadStory: lead_id is None")
         return
@@ -42,8 +74,7 @@ async def _safe_add_lead_story(lead_id: int, user_id: str, msg: str):
     except Exception as e:
         logger.error("Background AddLeadStory failed: %s", e)
 
-
-async def _safe_generate_invoices(payloads: list[dict]):
+async def _safe_generate_invoices(payloads: List[dict]):
     try:
         await generate_invoices_from_payments(payloads)
     except HTTPException as he:
@@ -51,6 +82,10 @@ async def _safe_generate_invoices(payloads: list[dict]):
     except Exception as e:
         logger.error("Background invoice gen failed: %s", e)
 
+
+# ---------------------------
+# Webhook Endpoint
+# ---------------------------
 
 @router.post(
     "/webhook",
@@ -64,8 +99,11 @@ async def payment_webhook(
 ):
     # 1) Read & log raw body
     raw = (await request.body()).decode("utf-8", errors="ignore")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{datetime.utcnow().isoformat()} RAW: {raw}\n")
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{datetime.utcnow().isoformat()} RAW: {raw}\n")
+    except Exception as e:
+        logger.warning("Could not write webhook log: %s", e)
 
     # 2) Parse JSON
     try:
@@ -83,7 +121,8 @@ async def payment_webhook(
     if not order_id or not status_cf:
         raise HTTPException(400, "Missing order_id or payment_status")
 
-    new_status = "PAID" if status_cf.upper() == "SUCCESS" else status_cf.upper()
+    # Normalize status: SUCCESS -> PAID
+    new_status = "PAID" if (status_cf or "").upper() == "SUCCESS" else (status_cf or "").upper()
 
     # 3) Fetch payment record
     payment = db.query(Payment).filter(Payment.order_id == order_id).first()
@@ -91,7 +130,7 @@ async def payment_webhook(
         raise HTTPException(404, "Payment record not found")
 
     # Determine lead: prefer explicit lead_id, else fallback by phone
-    lead = None
+    lead: Optional[Lead] = None
     if payment.lead_id:
         lead = db.query(Lead).filter_by(id=payment.lead_id).first()
     if not lead and payment.phone_number:
@@ -99,21 +138,32 @@ async def payment_webhook(
 
     # 4) Conversion logic
     conversion_happened = False
-    if lead and status_cf.upper() == "SUCCESS":
+    actor_user_id = payment.user_id or "SYSTEM"
+
+    if lead and (status_cf or "").upper() == "SUCCESS":
         if not lead.is_client:
             lead.is_client = True
             conversion_happened = True
 
         assignment = db.query(LeadAssignment).filter_by(lead_id=lead.id).first()
         if assignment:
-            # record story before deleting assignment
-            AddLeadStory(
+            actor_user_id = assignment.user_id or actor_user_id
+            # conversion story (bg)
+            background_tasks.add_task(
+                _safe_add_lead_story,
                 lead.id,
-                assignment.user_id,
-                f"Lead converted to client via payment {order_id}. Amount: ₹{payment.paid_amount}",
+                actor_user_id,
+                f"Lead converted to client via payment {order_id}. Amount: {_fmt_inr(payment.paid_amount)}",
             )
             db.delete(assignment)
-            conversion_happened = True
+        else:
+            # conversion story even without assignment
+            background_tasks.add_task(
+                _safe_add_lead_story,
+                lead.id,
+                actor_user_id,
+                f"Lead converted to client via payment {order_id}. Amount: {_fmt_inr(payment.paid_amount)}",
+            )
 
     old_status = (payment.status or "").upper()
     status_changed = old_status != new_status
@@ -134,19 +184,28 @@ async def payment_webhook(
             db.refresh(lead)
     except Exception as e:
         db.rollback()
-        logger.exception("DB update error for payment %s: %s", payment.id, e)
+        logger.exception("DB update error for payment %s: %s", getattr(payment, "id", "?"), e)
         raise HTTPException(500, "DB update error")
 
-    # 7) Build auxiliary payloads
+    # 7) Build auxiliary payloads (SAFE)
+    lead_name = _lead_name(lead, payment)
+    lead_email = _lead_email(lead, payment)
+
     notify_msg = (
         "<div style='font-family:Arial,sans-serif; line-height:1.5;'>"
-        f"  <p><strong>Lead:</strong> {lead.name or ""} ({payment.phone_number})</p>"
-        f"  <p><strong>Status:</strong> {new_status}</p>"
-        f"  <p><strong>Amount:</strong> ₹{float(payment.paid_amount or 0):,.2f}</p>"
+        f"<p><strong>Lead:</strong> {lead_name} ({payment.phone_number or ''})</p>"
+        f"<p><strong>Status:</strong> {new_status}" + (f" <em>(prev: {old_status})</em>" if old_status else "") + "</p>"
+        f"<p><strong>Amount:</strong> {_fmt_inr(payment.paid_amount)}</p>"
+        f"<p><strong>Mode:</strong> {payment.mode or 'N/A'}</p>"
         "</div>"
     )
 
-    story_msg = f"Payment for order {order_id} updated to {new_status}"
+    story_msg = (
+        f"Payment status updated for order {order_id}: "
+        f"{old_status or 'N/A'} → {new_status}. "
+        f"Amount: {_fmt_inr(payment.paid_amount)}, Mode: {payment.mode or 'N/A'}"
+    )
+
     invoice_payload = {
         "order_id": payment.order_id,
         "paid_amount": float(payment.paid_amount) if payment.paid_amount is not None else 0.0,
@@ -154,25 +213,18 @@ async def payment_webhook(
         "call": payment.call or 0,
         "created_at": payment.created_at.isoformat() if isinstance(payment.created_at, datetime) else None,
         "phone_number": payment.phone_number,
-        "email": lead.email or "",
-        "name": lead.name or "",
+        "email": lead_email,
+        "name": lead_name,
         "mode": payment.mode,
         "employee_code": payment.user_id
     }
 
-    # 8) Schedule background tasks (use actual lead.id if available)
-    background_tasks.add_task(_safe_notify, payment.user_id, "Payment Update", notify_msg)
-    background_tasks.add_task(
-        _safe_add_lead_story,
-        lead.id if lead else None,
-        payment.user_id,
-        story_msg,
-    )
+    # 8) Background tasks
+    background_tasks.add_task(_safe_notify, actor_user_id, "Payment Update", notify_msg)
+    if lead:
+        background_tasks.add_task(_safe_add_lead_story, lead.id, actor_user_id, story_msg)
 
-    if lead.kyc:
+    if lead and getattr(lead, "kyc", False):
         background_tasks.add_task(_safe_generate_invoices, [invoice_payload])
 
     return {"message": "processed", "new_status": new_status}
-
-
-
