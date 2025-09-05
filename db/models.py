@@ -498,7 +498,7 @@ class Lead(Base):
     created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     branch_id         = Column(Integer, ForeignKey("crm_branch_details.id"), nullable=True)
-    reference_id = Column(String(100), ForeignKey("crm_lead.id"), nullable=True, index=True)
+    reference_id = Column(Integer, ForeignKey("crm_lead.id"), nullable=True, index=True)
 
     comments          = relationship("LeadComment", back_populates="lead", cascade="all, delete-orphan")
     branch            = relationship("BranchDetails", back_populates="leads")
