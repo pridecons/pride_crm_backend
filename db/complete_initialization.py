@@ -1,6 +1,7 @@
 # db/complete_initialization.py
 """
-Single function to initialize everything - Departments, ProfileRoles, and Admin user
+Single function to initialize everything - Departments, ProfileRoles, Admin user,
+and default Lead Responses (created if missing).
 """
 
 import logging
@@ -8,7 +9,6 @@ from datetime import date
 from typing import List, Dict
 
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
 from db.connection import engine
@@ -18,12 +18,32 @@ from db.models import (
     ProfileRole,
     UserDetails,
     PermissionDetails,
+    LeadResponse,
 )
 
 from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ----------------------------- Defaults -----------------------------
+
+DEFAULT_LEAD_RESPONSES: List[str] = [
+    "FUND ISSUE",
+    "DND",
+    "INTERESTED",
+    "FT",
+    "BUSY",
+    "LANGUAGE ISSUE",
+    "CALL DISCONNECTED",
+    "NOT INTERESTED",
+    "SWITCH OFF",
+    "NOT REACHABLE",
+    "DO NOT TRADE",
+    "NPC",
+    "CALL BACK",
+]
 
 
 # ----------------------------- Helpers -----------------------------
@@ -62,7 +82,6 @@ def get_role_permissions(role_name: str) -> List[str]:
     """
     role_permissions: Dict[str, List[str]] = {
         "SUPERADMIN": [
-            # FULL access list (kept for readability), but will be validated anyway
             'lead_recording_view', 'lead_recording_upload', 'lead_story_view', 'lead_transfer', 'lead_branch_view',
             'header_global_search', 'create_lead', 'edit_lead', 'delete_lead', 'create_new_lead_response',
             'edit_response', 'delete_response', 'user_add_user', 'user_all_roles', 'user_all_branches',
@@ -85,7 +104,7 @@ def get_role_permissions(role_name: str) -> List[str]:
             'fetch_limit_edit', 'fetch_limit_delete', 'client_invoice', 'client_story', 'client_comments',
             'lead_manage_page', 'plane_page', 'attandance_page', 'client_page', 'lead_source_page',
             'lead_response_page', 'user_page', 'lead_upload_page', 'add_lead_page', 'payment_page',
-            'old_lead_page', 'new_lead_page'
+            'old_lead_page', 'new_lead_page', "permission_page"
         ],
 
         "SALES_MANAGER": [
@@ -95,8 +114,8 @@ def get_role_permissions(role_name: str) -> List[str]:
         ],
 
         "HR": [
-            'header_global_search', 'user_add_user', 'user_view_user_details', 'user_edit_user',
-            'attandance_page', 'user_page'
+            'user_add_user', 'user_view_user_details', 'user_edit_user',
+            'attandance_page', 'user_page', "permission_page"
         ],
 
         "TL": [
@@ -131,7 +150,7 @@ def get_role_permissions(role_name: str) -> List[str]:
         ],
     }
 
-    # SUPERADMIN → better to grant ALL enum permissions, not just the list
+    # SUPERADMIN → give ALL enum permissions
     if role_name == "SUPERADMIN":
         return enum_permissions()
 
@@ -143,7 +162,6 @@ def upsert_department(db: Session, name: str, description: str, available_permis
     perms = validate_permissions(available_permissions)
     dept = db.query(Department).filter_by(name=name).first()
     if dept:
-        # update available permissions if changed
         if sorted(dept.available_permissions or []) != sorted(perms):
             dept.available_permissions = perms
             db.flush()
@@ -211,7 +229,6 @@ def upsert_admin_user(db: Session, superadmin_role: ProfileRole, admin_dept_id: 
 
     user = db.query(UserDetails).filter_by(employee_code=admin_code).first()
     if user:
-        # Ensure correct role and permissions; fill essential fields if missing
         user.role_id = superadmin_role.id
         user.department_id = admin_dept_id
         user.is_active = True
@@ -229,7 +246,6 @@ def upsert_admin_user(db: Session, superadmin_role: ProfileRole, admin_dept_id: 
         db.flush()
         return user
 
-    # fresh user
     user = UserDetails(
         employee_code=admin_code,
         phone_number="9999999999",
@@ -250,18 +266,44 @@ def upsert_admin_user(db: Session, superadmin_role: ProfileRole, admin_dept_id: 
     return user
 
 
+def ensure_lead_responses(db: Session, names: List[str]) -> int:
+    """
+    Ensure each name in `names` exists as a LeadResponse row.
+    Returns number of newly created rows.
+    """
+    # normalize for case-insensitive compare
+    want = {n.strip(): n.strip().upper() for n in names if (n or "").strip()}
+    if not want:
+        return 0
+
+    existing = db.query(LeadResponse.name).all()
+    existing_norm = {row[0].strip().upper() for row in existing if row[0]}
+
+    to_create = [orig for orig, upper in want.items() if upper not in existing_norm]
+    for name in to_create:
+        db.add(LeadResponse(name=name))
+
+    if to_create:
+        db.flush()
+        logger.info(f"LeadResponse created: {to_create}")
+    else:
+        logger.info("LeadResponse: no new rows required.")
+
+    return len(to_create)
+
+
 # ----------------------------- Main initializer -----------------------------
 
 def initialize_complete_system() -> bool:
     """
-    Complete initialization function:
+    Complete initialization:
       1) Create tables
-      2) Create Departments (with validated available_permissions)
-      3) Create ProfileRoles (with validated default_permissions)
+      2) Create Departments (validated available_permissions)
+      3) Create ProfileRoles (validated default_permissions)
       4) Create/Update Super Admin user (ADMIN001) with ALL permissions
+      5) Ensure default Lead Responses exist
     """
     try:
-        # Ensure tables exist
         Base.metadata.create_all(bind=engine)
         logger.info("DB tables verified.")
 
@@ -270,13 +312,13 @@ def initialize_complete_system() -> bool:
 
             # STEP 1: Departments
             logger.info("Step 1: Creating/updating departments...")
-            departments = {}
+            departments: Dict[str, Department] = {}
 
             departments["ADMIN"] = upsert_department(
                 db,
                 name="ADMIN",
                 description="Administrative Department",
-                available_permissions=get_role_permissions("SUPERADMIN"),  # admin dept: all perms
+                available_permissions=get_role_permissions("SUPERADMIN"),
             )
 
             departments["ACCOUNTING"] = upsert_department(
@@ -354,7 +396,6 @@ def initialize_complete_system() -> bool:
                 logger.info(f"Profile ensured: {role_name} (dept={dept_key}, level={level})")
 
             if not superadmin_profile:
-                # Should not happen, but guard anyway
                 superadmin_profile = db.query(ProfileRole).filter_by(name="SUPERADMIN").first()
 
             db.commit()
@@ -363,12 +404,13 @@ def initialize_complete_system() -> bool:
             logger.info("Step 3: Creating/updating super admin user...")
             admin_user = upsert_admin_user(db, superadmin_profile, departments["ADMIN"].id)
             db.commit()
-
             logger.info("Super admin user ensured.")
-            logger.info("Login Details:")
-            logger.info(f"Employee Code: {admin_user.employee_code}")
-            logger.info(f"Email: {admin_user.email}")
-            logger.info("Password: admin123 (change after first login)")
+
+            # STEP 4: Lead Responses
+            logger.info("Step 4: Ensuring default Lead Responses...")
+            created_count = ensure_lead_responses(db, DEFAULT_LEAD_RESPONSES)
+            db.commit()
+            logger.info(f"Lead Responses created (if any): {created_count}")
 
             # Summary
             logger.info("\n" + "=" * 50)
@@ -377,6 +419,7 @@ def initialize_complete_system() -> bool:
             logger.info(f"Departments ensured: {len(departments)}")
             logger.info(f"Profile Roles ensured: {len(roles_to_create)}")
             logger.info("Admin user: Created/updated")
+            logger.info("Lead Responses: ensured")
             logger.info("\nAdmin Login:")
             logger.info("Employee Code: ADMIN001")
             logger.info("Email: admin@company.com")

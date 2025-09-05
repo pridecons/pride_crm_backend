@@ -251,14 +251,14 @@ async def create_recommendation(
 
         channels = _normalize_channels(sent_on_msg)
         
-        # background_tasks.add_task(
-        #     distribution_rational,
-        #     recommendation.id,
-        #     templateId,
-        #     message,
-        #     stock_details,
-        #     channels
-        # )
+        background_tasks.add_task(
+            distribution_rational,
+            recommendation.id,
+            templateId,
+            message,
+            stock_details,
+            channels
+        )
 
         background_tasks.add_task(notification_service.notify_all, "Recommendation", message, {})
 
