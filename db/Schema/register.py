@@ -171,3 +171,8 @@ class UserStatusResponse(BaseModel):
     message: str
     employee_code: str
     is_active: bool
+
+# ADD THIS model anywhere above the routes
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str

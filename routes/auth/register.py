@@ -9,7 +9,7 @@ from typing import Optional
 
 from db.connection import get_db
 from db.models import UserDetails, ProfileRole, PermissionDetails, BranchDetails
-from db.Schema.register import UserCreate, UserUpdate
+from db.Schema.register import UserCreate, UserUpdate, ChangePasswordRequest
 from utils.validation_utils import validate_user_data
 from sqlalchemy.exc import IntegrityError
 from routes.auth.auth_dependency import get_current_user
@@ -457,6 +457,50 @@ def delete_user(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting user: {str(e)}")
 
+# ADD THIS endpoint (e.g., just below reset_user_password)
+@router.post("/change-password")
+def change_user_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDetails = Depends(get_current_user),
+):
+    """
+    Change password by verifying the old password.
+    Only the same user or a SUPERADMIN can perform this.
+    Body: { "old_password": "...", "new_password": "..." }
+    """
+    try:       
+        user = db.query(UserDetails).filter_by(employee_code=current_user.employee_code).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # verify old password
+        if not verify_password(payload.old_password, user.password):
+            raise HTTPException(status_code=400, detail="Old password is incorrect")
+
+        # basic new password checks
+        if len(payload.new_password) < 6:
+            raise HTTPException(status_code=400, detail="New password must be at least 6 characters long")
+        if payload.new_password == payload.old_password:
+            raise HTTPException(status_code=400, detail="New password must be different from old password")
+
+        # update
+        user.password = hash_password(payload.new_password)
+        user.updated_at = datetime.utcnow()
+        db.commit()
+
+        return {
+            "message": f"Password changed successfully for {current_user.employee_code}",
+            "employee_code": current_user.employee_code,
+            "updated_at": user.updated_at,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error changing password: {str(e)}")
+
 # ---------------- RESET PASSWORD ----------------
 @router.post("/{employee_code}/reset-password")
 def reset_user_password(employee_code: str, password_data: dict, db: Session = Depends(get_db)):
@@ -486,3 +530,4 @@ def reset_user_password(employee_code: str, password_data: dict, db: Session = D
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error resetting password: {str(e)}")
+
