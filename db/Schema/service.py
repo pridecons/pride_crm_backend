@@ -1,7 +1,7 @@
 # db/Schema/service.py - Fixed for Pydantic V2
 from pydantic import BaseModel, Field, ConfigDict, condecimal
 from typing import Optional, List
-from db.models import BillingCycleEnum
+from db.models import BillingCycleEnum, PlanTypeEnum
 
 class ServiceBase(BaseModel):
     name: str = Field(..., examples=["Lead Validation"])
@@ -19,6 +19,9 @@ class ServiceBase(BaseModel):
         examples=[["consulting", "support"]],
         description="Service types / categories as an array of strings",
     )
+    plan_type: Optional[PlanTypeEnum] = Field(
+        None, examples=[PlanTypeEnum.BASIC], description="Plan type assigned to this service"
+    )
 
 class ServiceCreate(ServiceBase):
     pass
@@ -31,6 +34,7 @@ class ServiceUpdate(BaseModel):
     billing_cycle: Optional[BillingCycleEnum] = None
     CALL: Optional[int] = None
     service_type: Optional[List[str]] = None
+    plan_type: Optional[PlanTypeEnum] = None
 
 class ServiceOut(ServiceBase):
     model_config = ConfigDict(from_attributes=True)

@@ -3,7 +3,13 @@ from sqlalchemy.orm import Session
 from db.connection import get_db
 from db.models import Service
 from typing import List
-from db.Schema.service import ServiceCreate, ServiceOut, ServiceUpdate, BillingCycleEnum
+from db.Schema.service import (
+    ServiceCreate,
+    ServiceOut,
+    ServiceUpdate,
+    BillingCycleEnum,
+    PlanTypeEnum,
+)
 
 router = APIRouter(prefix="/services", tags=["Services"])
 
@@ -15,6 +21,15 @@ router = APIRouter(prefix="/services", tags=["Services"])
 )
 def list_billing_cycles() -> List[BillingCycleEnum]:
     return list(BillingCycleEnum)
+
+
+@router.get(
+    "/plan-types",
+    response_model=List[PlanTypeEnum],
+    summary="List available plan types for dropdown",
+)
+def list_plan_types() -> List[PlanTypeEnum]:
+    return list(PlanTypeEnum)
 
 
 @router.post("/", response_model=ServiceOut, status_code=status.HTTP_201_CREATED)
@@ -59,5 +74,3 @@ def delete_service(service_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Service not found")
     db.delete(svc)
     db.commit()
-
-

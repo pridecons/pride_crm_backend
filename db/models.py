@@ -616,9 +616,19 @@ class LeadRecording(Base):
     employee = relationship("UserDetails", backref="recordings")
 
 class BillingCycleEnum(str, enum.Enum):
-    MONTHLY = "MONTHLY"
-    YEARLY  = "YEARLY"
     CALL = "CALL"
+    WEEKLY    = "WEEKLY"
+    MONTHLY = "MONTHLY"
+    QUARTERLY = "QUARTERLY"
+    HARF_YEARLY  = "HARF YEARLY"
+    YEARLY  = "YEARLY"
+
+class PlanTypeEnum(str, enum.Enum):
+    FREE = "FREE"
+    BASIC = "BASIC"
+    STANDARD = "STANDARD"
+    PREMIUM = "PREMIUM"
+    ENTERPRISE = "ENTERPRISE"
 
 class Service(Base):
     __tablename__ = "crm_services"
@@ -627,6 +637,7 @@ class Service(Base):
     name             = Column(String(100), nullable=False, unique=True, index=True)
     description      = Column(Text, nullable=True)
     service_type      = Column(ARRAY(String), nullable=True)
+    plan_type = Column(Enum(PlanTypeEnum), nullable=True) #BASIC , STANDARD, PREMIUM, ENTERPRISE
 
     # Base price before discount
     price            = Column(Float, nullable=False)
