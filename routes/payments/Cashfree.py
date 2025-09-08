@@ -240,8 +240,9 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
         "dltTemplateId": str(1007888635254285654),
         "entityId": str(BASIC_IQ_ENTITY_ID),
         "message": (
-            f"Dear Client, Please find your payment link here: {paymentLink} "
-            f"Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITED https://pridecons.com"
+            f"Dear Client, Please find your payment link here: {paymentLink} Thank you."
+            f"PRIDE TRADING CONSULTANCY PRIVATE LIMITED"
+            f"https://pridecons.com"
         ),
         "messageType": "TRANSACTIONAL",
         "sourceAddress": "PRIDTT",
