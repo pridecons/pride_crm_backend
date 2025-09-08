@@ -63,13 +63,13 @@ class FrontUserCreate(BaseModel):
     name: Optional[str]
     email: Optional[EmailStr]
     phone: str
-    service: str
+    service: Optional[str]
     amount: float
     payment_methods: Optional[str]= None
-    call : int = None
-    duration_day : int = None
-    service_id: int = None
-    description: str = None
+    call : Optional[int] = None
+    duration_day : Optional[int] = None
+    service_id: Optional[int] = None
+    description: Optional[str] = None
     user_id: Optional[str]   = None
     lead_id: Optional[int]   = None
     branch_id: Optional[str] = None
