@@ -235,7 +235,7 @@ async def payment_sms_tem(dests, paymentLink):
     summary="Create Cashfree order and seed Payment record",
 )
 async def front_create(
-    data: FrontUserCreate = Body(...),
+    data: FrontUserCreate = Body(None),
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
