@@ -234,16 +234,18 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
     # Per Airtel IQ conventions:
     # - destinationAddress must be a list
     # - dltTemplateId and entityId should be strings
+    newMsg=(
+            f"Dear Client, Please find your payment link here: {paymentLink} Thank you."
+            f"PRIDE TRADING CONSULTANCY PRIVATE LIMITED"
+            f"https://pridecons.com"
+        )
+    logger.info(newMsg)
     sms_body = {
         "customerId": str(BASIC_IQ_CUSTOMER_ID),
         "destinationAddress": [msisdn],
         "dltTemplateId": str(1007888635254285654),
         "entityId": str(BASIC_IQ_ENTITY_ID),
-        "message": (
-            f"Dear Client, Please find your payment link here: {paymentLink} Thank you."
-            f"PRIDE TRADING CONSULTANCY PRIVATE LIMITED"
-            f"https://pridecons.com"
-        ),
+        "message": newMsg,
         "messageType": "TRANSACTIONAL",
         "sourceAddress": "PRIDTT",
     }
