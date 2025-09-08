@@ -239,10 +239,10 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
               https://pridecons.com"""
     logger.info(newMsg)
     sms_body = {
-        "customerId": str(BASIC_IQ_CUSTOMER_ID),
+        "customerId": BASIC_IQ_CUSTOMER_ID,
         "destinationAddress": [msisdn],
-        "dltTemplateId": str(1007888635254285654),
-        "entityId": str(BASIC_IQ_ENTITY_ID),
+        "dltTemplateId": '1007888635254285654',
+        "entityId": BASIC_IQ_ENTITY_ID,
         "message": newMsg,
         "messageType": "TRANSACTIONAL",
         "sourceAddress": "PRIDTT",
