@@ -201,50 +201,61 @@ async def front_create_upi_req(
 
 import re
 import httpx
-from fastapi import HTTPException
 from typing import Optional, Dict, Any
-
-E164_RE = re.compile(r"^\+?[1-9]\d{6,14}$")
+from fastapi import HTTPException
 
 def _to_e164_in(phone: str) -> str:
-    """Return Indian E.164. Accepts '7869...' or '91...' or '+91...'. Outputs '91XXXXXXXXXX'."""
     p = re.sub(r"\D", "", phone or "")
-    # strip leading 0s
     p = re.sub(r"^0+", "", p)
-    # strip a leading 91 once, we'll add it back consistently
     if p.startswith("91"):
         p = p[2:]
     if len(p) != 10:
-        # keep best effort; Airtel generally needs CC. Let caller decide
-        raise ValueError("invalid Indian mobile; must have 10 digits after country code")
-    return f"91{p}"  # Airtel accepts without '+' as well
+        raise ValueError("invalid Indian mobile; must be 10 digits")
+    return f"91{p}"
 
-async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, Any]]:
-    """
-    Send SMS via Airtel IQ. Returns response JSON on success, or None if gracefully handled error.
-    Does NOT raise HTTPException to avoid breaking the main flow after order creation.
-    """
+# Exact bodies as approved
+TEMPLATE_1_ID = "1007888635254285654"
+TEMPLATE_1_BODY = (
+    "Dear Client,  Please find your payment link here: {#var#}  Thank you. "
+    "PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com/"
+)
+
+TEMPLATE_2_ID = "1007988196371819449"
+TEMPLATE_2_BODY = (
+    "Dear Client,  Please find your payment link here: {#var#}  Thank you.  "
+    "PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com"
+)
+
+async def payment_sms_tem(dests: str, payment_link: str, use_template: int = 1) -> Optional[Dict[str, Any]]:
     try:
         msisdn = _to_e164_in(dests)
     except Exception as e:
-        # Log and skip sending SMS rather than failing the whole endpoint
         logger.error("Invalid phone for SMS: %s (%s)", dests, e)
         return None
 
-    # Per Airtel IQ conventions:
-    # - destinationAddress must be a list
-    # - dltTemplateId and entityId should be strings
-    newMsg=f"""Dear Client,  Please find your payment link here: {paymentLink}  Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com/"""
-    logger.info(newMsg)
-    logger.info(msisdn)
+    if use_template == 2:
+        tpl_id = TEMPLATE_2_ID
+        tpl_body = TEMPLATE_2_BODY
+    else:
+        tpl_id = TEMPLATE_1_ID
+        tpl_body = TEMPLATE_1_BODY
+
+    # IMPORTANT:
+    # 1) destinationAddress must be a list
+    # 2) dltTemplateId/entityId should be strings
+    # 3) Send templateParams in the SAME ORDER as your placeholders appear
+    # 4) Include 'message' EXACTLY as approved (some tenants require it)
     sms_body = {
-        "customerId": BASIC_IQ_CUSTOMER_ID,
+        "customerId": str(BASIC_IQ_CUSTOMER_ID),
         "destinationAddress": [msisdn],
-        "dltTemplateId": 1007888635254285654,
-        "entityId": BASIC_IQ_ENTITY_ID,
-        "message": newMsg,
+        "dltTemplateId": tpl_id,
+        "entityId": str(BASIC_IQ_ENTITY_ID),
         "messageType": "TRANSACTIONAL",
         "sourceAddress": "PRIDTT",
+        # pass the value for {#var#}
+        "templateParams": [payment_link],
+        # keep the exact registered message (including spaces/punctuation)
+        "message": tpl_body,
     }
 
     headers = {"accept": "application/json", "content-type": "application/json"}
@@ -257,17 +268,14 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
                 headers=headers,
                 auth=(BASIC_AUTH_USER, BASIC_AUTH_PASS),
             )
-            # If Airtel returns non-2xx, log and soft-fail
             if resp.status_code // 100 != 2:
-                logger.error(
-                    "Airtel IQ API error %s: %s; body: %s",
-                    resp.status_code, resp.text, sms_body
-                )
+                logger.error("Airtel IQ API error %s: %s; body: %s", resp.status_code, resp.text, sms_body)
                 return None
-            logger.info(resp.json())
-            return resp.json()
-    except Exception as e:
-        logger.exception("Failed to call SMS gateway: %s", e)
+            data = resp.json()
+            logger.info("Airtel accepted SMS: %s", data)
+            return data
+    except Exception:
+        logger.exception("Failed to call SMS gateway")
         return None
 
 @router.post(
