@@ -226,7 +226,7 @@ TEMPLATE_2_BODY = (
     "PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com"
 )
 
-async def payment_sms_tem(dests: str, payment_link: str, use_template: int = 1) -> Optional[Dict[str, Any]]:
+async def payment_sms_tem(dests: str, payment_link: str, use_template: int = 2) -> Optional[Dict[str, Any]]:
     try:
         msisdn = _to_e164_in(dests)
     except Exception as e:
