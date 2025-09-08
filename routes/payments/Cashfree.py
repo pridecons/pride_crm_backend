@@ -234,11 +234,9 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
     # Per Airtel IQ conventions:
     # - destinationAddress must be a list
     # - dltTemplateId and entityId should be strings
-    newMsg=(
-            f"""Dear Client, Please find your payment link here: {paymentLink} Thank you.
+    newMsg=f"""Dear Client, Please find your payment link here: {paymentLink} Thank you.
               PRIDE TRADING CONSULTANCY PRIVATE LIMITED
               https://pridecons.com"""
-        )
     logger.info(newMsg)
     sms_body = {
         "customerId": str(BASIC_IQ_CUSTOMER_ID),
@@ -361,7 +359,7 @@ async def front_create(
     if data.email:
         await payment_link_mail(str(data.email), name, new_link)
     # (send SMS regardless of email)
-    await payment_sms_tem(data.phone, new_link)
+    await payment_sms_tem(data.phone, link)
 
     return {
         "orderId": cf_order_id,
