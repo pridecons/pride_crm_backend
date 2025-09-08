@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-
+from typing import Optional
 from routes.notification.notification_service import notification_service
 
 router = APIRouter(
@@ -14,9 +14,10 @@ class NotificationPayload(BaseModel):
     message: str
 
 class NotificationPayloadAll(BaseModel):
-    user_id: str
     title: str
     message: str
+    user_id: Optional[str]
+    branch_id: Optional[str]
 
 @router.post("/", status_code=status.HTTP_200_OK)
 async def send_notification(payload: NotificationPayload):
