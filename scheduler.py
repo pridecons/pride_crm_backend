@@ -472,6 +472,7 @@
 #     print("\nAll tests completed!")
 
 # scheduler.py - Complete Lead Cleanup Scheduler
+# scheduler.py - Complete Lead Cleanup Scheduler (config-aware)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -479,19 +480,109 @@ import atexit
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 
 # Import your database models and utilities
 from db.connection import engine
-from db.models import Lead, LeadAssignment
+from db.models import (
+    Lead,
+    LeadAssignment,
+    LeadFetchConfig,
+    UserDetails,
+)
 from utils.AddLeadStory import AddLeadStory
 
 logger = logging.getLogger(__name__)
 
-# Create session factory (no autocommit/autoflush for safety)
+# Create session factory (safe defaults)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+# -----------------------------
+# Config resolution helpers
+# -----------------------------
+def _role_key(role_id):
+    """Return a string key for role_id regardless of whether role_id is Enum/int/str/None."""
+    if role_id is None:
+        return None
+    return getattr(role_id, "value", str(role_id))
+
+
+def load_fetch_config_for_lead(db, lead: Lead):
+    """
+    Resolve LeadFetchConfig for a given lead using priority:
+      1) Current assignee's (role_id + branch_id)
+      2) Current assignee's role_id (global)
+      3) Lead's branch (branch_global)
+      4) In-memory defaults
+    """
+    cfg = None
+
+    # Try current assignee, if any
+    assignee = None
+    if lead.assigned_to_user:
+        assignee = (
+            db.query(UserDetails)
+            .filter(UserDetails.employee_code == lead.assigned_to_user)
+            .first()
+        )
+
+    # 1) role+branch (assignee)
+    if assignee and assignee.role_id and assignee.branch_id is not None:
+        rk = _role_key(assignee.role_id)
+        cfg = (
+            db.query(LeadFetchConfig)
+            .filter(
+                LeadFetchConfig.role_id == rk,
+                LeadFetchConfig.branch_id == assignee.branch_id,
+            )
+            .first()
+        )
+        if cfg:
+            return cfg, "role_branch"
+
+    # 2) role (assignee, global)
+    if assignee and assignee.role_id:
+        rk = _role_key(assignee.role_id)
+        cfg = (
+            db.query(LeadFetchConfig)
+            .filter(
+                LeadFetchConfig.role_id == rk,
+                LeadFetchConfig.branch_id.is_(None),
+            )
+            .first()
+        )
+        if cfg:
+            return cfg, "role_global"
+
+    # 3) branch (lead branch, global)
+    if lead.branch_id is not None:
+        cfg = (
+            db.query(LeadFetchConfig)
+            .filter(
+                LeadFetchConfig.role_id.is_(None),
+                LeadFetchConfig.branch_id == lead.branch_id,
+            )
+            .first()
+        )
+        if cfg:
+            return cfg, "branch_global"
+
+    # 4) defaults
+    class TempConfig:
+        def __init__(self):
+            self.per_request_limit = 100
+            self.daily_call_limit = 50
+            self.last_fetch_limit = 10
+            self.assignment_ttl_hours = 24
+            self.old_lead_remove_days = 30
+
+    return TempConfig(), "default"
+
+
+# -----------------------------
+# Scheduler
+# -----------------------------
 class LeadCleanupScheduler:
     def __init__(self):
         self.scheduler = BackgroundScheduler()
@@ -503,9 +594,9 @@ class LeadCleanupScheduler:
     def cleanup_expired_conversion_leads(self):
         """
         Clean up expired conversion leads:
-        - For leads where assigned_for_conversion is True
-        - conversion_deadline has passed
-        - lead is not a client and not deleted
+        - assigned_for_conversion = True
+        - conversion_deadline passed
+        - not a client and not deleted
 
         Action:
         - Remove assignment
@@ -546,7 +637,6 @@ class LeadCleanupScheduler:
 
                     user_name = "Unknown User"
                     user_code = "SYSTEM"
-
                     if assignment and assignment.user:
                         user_name = assignment.user.name
                         user_code = assignment.user.employee_code
@@ -566,7 +656,7 @@ class LeadCleanupScheduler:
                         ),
                     )
 
-                    # Delete assignment if any
+                    # Delete assignment
                     if assignment:
                         db.delete(assignment)
 
@@ -574,7 +664,6 @@ class LeadCleanupScheduler:
                     lead.assigned_for_conversion = False
                     lead.assigned_to_user = None
                     lead.conversion_deadline = None
-                    # Keep lead.is_old_lead as-is (your old-lead API logic)
 
                     cleanup_count += 1
                     logger.info("Cleaned up lead %s from user %s", lead.id, user_name)
@@ -742,7 +831,6 @@ class LeadCleanupScheduler:
                 .count()
             )
 
-            # Compare DateTime vs DateTime (not date)
             clients_today = (
                 db.query(Lead)
                 .filter(
@@ -760,15 +848,125 @@ class LeadCleanupScheduler:
                 "new_clients_today": clients_today,
             }
 
-            logger.info(
-                "📊 Daily Stats: %s",
-                result,
-            )
+            logger.info("📊 Daily Stats: %s", result)
             return result
 
         except Exception as e:
             logger.error("Error generating daily stats: %s", e, exc_info=True)
             return {}
+        finally:
+            db.close()
+
+    # ------------------------------------------------------------------------
+    # 5) Release worked leads after lock window (config-aware)
+    # ------------------------------------------------------------------------
+    def release_worked_leads_after_lock_window(self):
+        """
+        Releases worked leads (lead_response_id != NULL) back to the pool
+        after the lock window determined by LeadFetchConfig:
+          - old_lead_remove_days: keep lead locked for this many days since response_changed_at.
+          - assignment_ttl_hours: if a lead is in conversion but has no explicit
+            conversion_deadline, use response_changed_at + assignment_ttl_hours
+            as an implicit conversion window.
+
+        For eligible leads:
+          - delete LeadAssignment (if any)
+          - clear assigned_to_user
+          - assigned_for_conversion = False
+          - conversion_deadline = None
+          - add a story
+        """
+        db = SessionLocal()
+        released = 0
+        try:
+            now = datetime.utcnow()
+
+            # Only worked, non-client, non-deleted leads
+            candidates = (
+                db.query(Lead)
+                .outerjoin(LeadAssignment, LeadAssignment.lead_id == Lead.id)
+                .filter(
+                    Lead.lead_response_id.isnot(None),   # worked
+                    Lead.is_client.is_(False),
+                    Lead.is_delete.is_(False),
+                )
+                .all()
+            )
+
+            for lead in candidates:
+                try:
+                    cfg, cfg_src = load_fetch_config_for_lead(db, lead)
+
+                    # Need the moment when the response changed to compute windows
+                    if not lead.response_changed_at:
+                        continue
+
+                    # Conversion window checks
+                    if lead.assigned_for_conversion:
+                        if lead.conversion_deadline:
+                            # Explicit conversion deadline still in future → skip
+                            if lead.conversion_deadline > now:
+                                continue
+                        else:
+                            # Implicit window using assignment_ttl_hours
+                            implicit_deadline = lead.response_changed_at + timedelta(
+                                hours=getattr(cfg, "assignment_ttl_hours", 24)
+                            )
+                            if implicit_deadline > now:
+                                continue  # still within implicit conversion window
+
+                    # Worked lock window from response change
+                    lock_cutoff = lead.response_changed_at + timedelta(
+                        days=getattr(cfg, "old_lead_remove_days", 30)
+                    )
+                    if lock_cutoff > now:
+                        continue  # still in lock window
+
+                    # Passed all checks → release to pool
+                    assignment = (
+                        db.query(LeadAssignment)
+                        .filter(LeadAssignment.lead_id == lead.id)
+                        .first()
+                    )
+
+                    prev_user_name = "Unknown User"
+                    prev_user_code = "SYSTEM"
+                    if assignment and assignment.user:
+                        prev_user_name = assignment.user.name
+                        prev_user_code = assignment.user.employee_code
+
+                    if assignment:
+                        db.delete(assignment)
+
+                    lead.assigned_to_user = None
+                    lead.assigned_for_conversion = False
+                    lead.conversion_deadline = None
+
+                    AddLeadStory(
+                        lead.id,
+                        "SYSTEM",
+                        (
+                            f"🔓 Lead released back to pool after lock window. "
+                            f"(config: {cfg_src}, old_lead_remove_days={getattr(cfg,'old_lead_remove_days', None)}, "
+                            f"assignment_ttl_hours={getattr(cfg,'assignment_ttl_hours', None)}). "
+                            f"Previously with: {prev_user_name} ({prev_user_code})"
+                        ),
+                    )
+
+                    released += 1
+
+                except Exception as e:
+                    logger.error("Error releasing worked lead %s: %s", lead.id, e, exc_info=True)
+                    continue
+
+            db.commit()
+            logger.info("✅ Worked-lead release completed. Released %d leads", released)
+            return released
+
+        except Exception as e:
+            logger.error("❌ Worked-lead release failed: %s", e, exc_info=True)
+            db.rollback()
+            return 0
         finally:
             db.close()
 
@@ -816,6 +1014,16 @@ class LeadCleanupScheduler:
                 name="Generate Daily Statistics",
                 replace_existing=True,
                 misfire_grace_time=300,  # 5 minutes grace
+            )
+
+            # 5. Hourly release of worked leads after lock window (config-aware)
+            self.scheduler.add_job(
+                func=self.release_worked_leads_after_lock_window,
+                trigger=CronTrigger(minute=0),  # every hour at :00
+                id="release_worked_leads",
+                name="Release Worked Leads After Lock Window",
+                replace_existing=True,
+                misfire_grace_time=600,
             )
 
             logger.info("📅 All scheduled jobs configured successfully")
@@ -868,6 +1076,7 @@ class LeadCleanupScheduler:
             expired_count = self.cleanup_expired_conversion_leads()
             old_count = self.cleanup_long_unassigned_leads()
             assignment_count = self.cleanup_very_old_assignments()
+            released_count = self.release_worked_leads_after_lock_window()
             stats = self.generate_daily_stats()
 
             result = {
@@ -877,6 +1086,7 @@ class LeadCleanupScheduler:
                     "expired_leads_cleaned": expired_count,
                     "leads_marked_old": old_count,
                     "old_assignments_cleaned": assignment_count,
+                    "worked_leads_released": released_count,
                     "stats": stats,
                 },
             }
@@ -965,7 +1175,7 @@ def get_scheduler_status():
 if __name__ == "__main__":
     print("Testing Lead Cleanup Scheduler...")
 
-    print("\n1. Testing expired lead cleanup...")
+    print("\n1. Testing expired conversion cleanup...")
     expired_count = manual_cleanup_expired_leads()
     print(f"Cleaned up {expired_count} expired leads")
 
@@ -973,19 +1183,16 @@ if __name__ == "__main__":
     old_count = manual_mark_old_leads()
     print(f"Marked {old_count} leads as old")
 
-    print("\n3. Testing scheduler status...")
+    print("\n3. Testing worked-leads release...")
+    released = lead_scheduler.release_worked_leads_after_lock_window()
+    print(f"Released {released} worked leads")
+
+    print("\n4. Testing scheduler status...")
     status = get_scheduler_status()
     print(f"Scheduler status: {status}")
 
-    print("\n4. Testing manual cleanup...")
+    print("\n5. Testing manual cleanup...")
     result = lead_scheduler.run_cleanup_now()
     print(f"Manual cleanup result: {result}")
 
     print("\nAll tests completed!")
-
-
-
-
-
-
-
