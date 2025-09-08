@@ -199,13 +199,50 @@ async def front_create_upi_req(
     }
 
 
-async def payment_sms_tem(dests, paymentLink):
+import re
+import httpx
+from fastapi import HTTPException
+from typing import Optional, Dict, Any
+
+E164_RE = re.compile(r"^\+?[1-9]\d{6,14}$")
+
+def _to_e164_in(phone: str) -> str:
+    """Return Indian E.164. Accepts '7869...' or '91...' or '+91...'. Outputs '91XXXXXXXXXX'."""
+    p = re.sub(r"\D", "", phone or "")
+    # strip leading 0s
+    p = re.sub(r"^0+", "", p)
+    # strip a leading 91 once, we'll add it back consistently
+    if p.startswith("91"):
+        p = p[2:]
+    if len(p) != 10:
+        # keep best effort; Airtel generally needs CC. Let caller decide
+        raise ValueError("invalid Indian mobile; must have 10 digits after country code")
+    return f"91{p}"  # Airtel accepts without '+' as well
+
+async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, Any]]:
+    """
+    Send SMS via Airtel IQ. Returns response JSON on success, or None if gracefully handled error.
+    Does NOT raise HTTPException to avoid breaking the main flow after order creation.
+    """
+    try:
+        msisdn = _to_e164_in(dests)
+    except Exception as e:
+        # Log and skip sending SMS rather than failing the whole endpoint
+        logger.error("Invalid phone for SMS: %s (%s)", dests, e)
+        return None
+
+    # Per Airtel IQ conventions:
+    # - destinationAddress must be a list
+    # - dltTemplateId and entityId should be strings
     sms_body = {
-        "customerId": BASIC_IQ_CUSTOMER_ID,
-        "destinationAddress": dests,
-        "dltTemplateId": 1007888635254285654,
-        "entityId": BASIC_IQ_ENTITY_ID,
-        "message": f"Dear Client, Please find your payment link here: {paymentLink} Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITED https://pridecons.com",
+        "customerId": str(BASIC_IQ_CUSTOMER_ID),
+        "destinationAddress": [msisdn],
+        "dltTemplateId": str(1007888635254285654),
+        "entityId": str(BASIC_IQ_ENTITY_ID),
+        "message": (
+            f"Dear Client, Please find your payment link here: {paymentLink} "
+            f"Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITED https://pridecons.com"
+        ),
         "messageType": "TRANSACTIONAL",
         "sourceAddress": "PRIDTT",
     }
@@ -220,14 +257,17 @@ async def payment_sms_tem(dests, paymentLink):
                 headers=headers,
                 auth=(BASIC_AUTH_USER, BASIC_AUTH_PASS),
             )
-            resp.raise_for_status()
+            # If Airtel returns non-2xx, log and soft-fail
+            if resp.status_code // 100 != 2:
+                logger.error(
+                    "Airtel IQ API error %s: %s; body: %s",
+                    resp.status_code, resp.text, sms_body
+                )
+                return None
             return resp.json()
-    except httpx.HTTPStatusError as e:
-        logger.error("Airtel IQ API error %s: %s; body: %s", e.response.status_code, e.response.text, sms_body)
-        raise HTTPException(status_code=502, detail=f"SMS gateway error: {e.response.status_code} {e.response.text}")
-    except Exception:
-        logger.exception("Failed to call SMS gateway")
-        raise HTTPException(status_code=502, detail="Failed to send SMS due to gateway error")
+    except Exception as e:
+        logger.exception("Failed to call SMS gateway: %s", e)
+        return None
 
 @router.post(
     "/create-order",
