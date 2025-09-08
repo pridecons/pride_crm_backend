@@ -60,10 +60,10 @@ class FrontCreate(BaseModel):
 
 
 class FrontUserCreate(BaseModel):
-    name: Optional[str]
-    email: Optional[EmailStr]
+    name: Optional[str] = None  
+    email: Optional[EmailStr] = None  
     phone: str
-    service: Optional[str]
+    service: Optional[str] = None  
     amount: float
     payment_methods: Optional[str]= None
     call : Optional[int] = None
