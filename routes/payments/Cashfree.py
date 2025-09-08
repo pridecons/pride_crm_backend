@@ -239,7 +239,7 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
     sms_body = {
         "customerId": BASIC_IQ_CUSTOMER_ID,
         "destinationAddress": [msisdn],
-        "dltTemplateId": '1007888635254285654',
+        "dltTemplateId": 1007888635254285654,
         "entityId": BASIC_IQ_ENTITY_ID,
         "message": newMsg,
         "messageType": "TRANSACTIONAL",
