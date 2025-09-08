@@ -236,6 +236,7 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
     # - dltTemplateId and entityId should be strings
     newMsg=f"""Dear Client,  Please find your payment link here: {paymentLink}  Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com/"""
     logger.info(newMsg)
+    logger.info(msisdn)
     sms_body = {
         "customerId": BASIC_IQ_CUSTOMER_ID,
         "destinationAddress": [msisdn],
@@ -263,6 +264,7 @@ async def payment_sms_tem(dests: str, paymentLink: str) -> Optional[Dict[str, An
                     resp.status_code, resp.text, sms_body
                 )
                 return None
+            logger.info(resp.json())
             return resp.json()
     except Exception as e:
         logger.exception("Failed to call SMS gateway: %s", e)
