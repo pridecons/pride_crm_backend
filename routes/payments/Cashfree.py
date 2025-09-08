@@ -221,10 +221,7 @@ TEMPLATE_1_BODY = (
 )
 
 TEMPLATE_2_ID = "1007988196371819449"
-TEMPLATE_2_BODY = (
-    "Dear Client,  Please find your payment link here: {#var#}  Thank you.  "
-    "PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com"
-)
+
 
 async def payment_sms_tem(dests: str, payment_link: str, use_template: int = 2) -> Optional[Dict[str, Any]]:
     try:
@@ -232,6 +229,10 @@ async def payment_sms_tem(dests: str, payment_link: str, use_template: int = 2) 
     except Exception as e:
         logger.error("Invalid phone for SMS: %s (%s)", dests, e)
         return None
+    TEMPLATE_2_BODY = (
+        f"Dear Client,  Please find your payment link here: {payment_link}  Thank you.  "
+        "PRIDE TRADING CONSULTANCY PRIVATE LIMITEDhttps://pridecons.com"
+    )
 
     if use_template == 2:
         tpl_id = TEMPLATE_2_ID
