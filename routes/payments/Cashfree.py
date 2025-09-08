@@ -350,6 +350,7 @@ async def front_create(
     lead_has_kyc = bool(user_lead.kyc) if user_lead else False
 
     # 4) Send notifications (preserve your original behavior with safer guards)
+    sms_link = link
     newLink = urlparse(link).path.lstrip("/")
     kyc_pay_link = newLink if lead_has_kyc else link.replace("https://", f"{data.lead_id}/") if data.lead_id else link
     name = data.name or "Client"
@@ -359,7 +360,7 @@ async def front_create(
     if data.email:
         await payment_link_mail(str(data.email), name, new_link)
     # (send SMS regardless of email)
-    await payment_sms_tem(data.phone, link)
+    await payment_sms_tem(data.phone, sms_link)
 
     return {
         "orderId": cf_order_id,
