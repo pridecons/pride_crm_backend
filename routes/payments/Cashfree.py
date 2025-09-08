@@ -21,6 +21,14 @@ from routes.mail_service.payment_link_mail import payment_link_mail
 from routes.whatsapp.cashfree_payment_link import cashfree_payment_link
 from routes.auth.auth_dependency import get_current_user
 from urllib.parse import urlparse
+from config import (
+    AIRTEL_IQ_SMS_URL,
+    BASIC_AUTH_PASS,
+    BASIC_AUTH_USER,
+    BASIC_IQ_CUSTOMER_ID,
+    BASIC_IQ_ENTITY_ID,
+)
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +199,36 @@ async def front_create_upi_req(
     }
 
 
+async def payment_sms_tem(dests, paymentLink):
+    sms_body = {
+        "customerId": BASIC_IQ_CUSTOMER_ID,
+        "destinationAddress": dests,
+        "dltTemplateId": 1007888635254285654,
+        "entityId": BASIC_IQ_ENTITY_ID,
+        "message": f"Dear Client, Please find your payment link here: {paymentLink} Thank you. PRIDE TRADING CONSULTANCY PRIVATE LIMITED https://pridecons.com",
+        "messageType": "TRANSACTIONAL",
+        "sourceAddress": "PRIDTT",
+    }
+
+    headers = {"accept": "application/json", "content-type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                AIRTEL_IQ_SMS_URL,
+                json=sms_body,
+                headers=headers,
+                auth=(BASIC_AUTH_USER, BASIC_AUTH_PASS),
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("Airtel IQ API error %s: %s; body: %s", e.response.status_code, e.response.text, sms_body)
+        raise HTTPException(status_code=502, detail=f"SMS gateway error: {e.response.status_code} {e.response.text}")
+    except Exception:
+        logger.exception("Failed to call SMS gateway")
+        raise HTTPException(status_code=502, detail="Failed to send SMS due to gateway error")
+
 @router.post(
     "/create-order",
     status_code=status.HTTP_201_CREATED,
@@ -278,6 +316,7 @@ async def front_create(
     new_link = link if user_lead.kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
     if data.email:
        await payment_link_mail(data.email, data.name, new_link)
+       await payment_sms_tem(data.phone, new_link)
 
     return {
         "orderId": cf_order_id,
