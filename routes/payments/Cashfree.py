@@ -235,18 +235,19 @@ async def payment_sms_tem(dests, paymentLink):
     summary="Create Cashfree order and seed Payment record",
 )
 async def front_create(
-    data: FrontUserCreate = Body(None),
+    data: FrontUserCreate = Body(...),   # ← expect a JSON body (not optional)
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
-    # 1) build & call Cashfree
+    # 1) Cashfree payload (use fallbacks if name/email absent)
     cf_payload = CreateOrderRequest(
         order_amount=data.amount,
         order_currency="INR",
         customer_details={
             "customer_id": data.phone,
-            "customer_name": data.name,
+            "customer_name": data.name or "Client",   # ← safe default
             "customer_phone": data.phone,
+            # "customer_email": str(data.email) if data.email else None,  # if Cashfree needs email
         },
         order_meta={
             "notify_url": "https://crm.pridebuzz.in/api/v1/payment/webhook",
@@ -257,31 +258,31 @@ async def front_create(
     cf_resp = await _call_cashfree("POST", "/orders", json_data=cf_body)
     cf_order_id = cf_resp.get("order_id")
     link = cf_resp.get("payment_link")
-
     if not cf_order_id or not link:
         logger.error("Invalid Cashfree create order response: %s", cf_resp)
         raise HTTPException(502, "Failed to create order on Cashfree")
 
-    # 2) Fetch & serialize your Service
-    plan_obj = db.get(Service, data.service_id)
-    if not plan_obj:
-        raise HTTPException(status_code=404, detail="Service not found")
+    # 2) Service plan (only if provided)
+    plan_json = None
+    if data.service_id is not None:
+        plan_obj = db.get(Service, data.service_id)
+        if not plan_obj:
+            raise HTTPException(status_code=404, detail="Service not found")
+        plan_json = {
+            "id": plan_obj.id,
+            "name": plan_obj.name,
+            "description": plan_obj.description,
+            "service_type": plan_obj.service_type,
+            "price": plan_obj.price,
+            "discount_percent": plan_obj.discount_percent,
+            "billing_cycle": plan_obj.billing_cycle.value if plan_obj.billing_cycle else None,
+            "discounted_price": plan_obj.discounted_price,
+        }
 
-    plan_json = {
-        "id": plan_obj.id,
-        "name": plan_obj.name,
-        "description": plan_obj.description,
-        "service_type": plan_obj.service_type,
-        "price": plan_obj.price,
-        "discount_percent": plan_obj.discount_percent,
-        "billing_cycle": plan_obj.billing_cycle.value,
-        "discounted_price": plan_obj.discounted_price,
-    }
-
-    # 3) Seed the Payment record
-    service_field = data.service
-    if isinstance(service_field, str):
-        service_field = [service_field]
+    # 3) Seed Payment record
+    service_field: Optional[List[str]] = None
+    if data.service is not None:
+        service_field = [data.service]
 
     payment = Payment(
         phone_number=data.phone,
@@ -290,33 +291,34 @@ async def front_create(
         paid_amount=data.amount,
         status="ACTIVE",
         mode="CASHFREE",
-        plan=[plan_json],
+        plan=[plan_json] if plan_json else [],
         call=data.call,
+        duration_day=data.duration_day,
         description=data.description,
         user_id=current_user.employee_code,
-        branch_id=current_user.branch_id,
+        branch_id=str(current_user.branch_id) if current_user.branch_id is not None else None,
         lead_id=data.lead_id,
+        name=data.name or None,
+        email=str(data.email) if data.email else None,
     )
-    if getattr(data, "email", None):
-        payment.email = data.email          # ✅ attribute-style
-    if getattr(data, "name", None):
-        payment.name = data.name
     db.add(payment)
     db.commit()
     db.refresh(payment)
 
-    user_lead = db.query(Lead).filter(Lead.id == data.lead_id).first()
+    user_lead = db.query(Lead).filter(Lead.id == data.lead_id).first() if data.lead_id else None
+    lead_has_kyc = bool(user_lead.kyc) if user_lead else False
 
-    # 4) Send notifications
+    # 4) Send notifications (preserve your original behavior with safer guards)
     newLink = urlparse(link).path.lstrip("/")
-    kyc_pay_link = newLink if user_lead.kyc else link.replace("https://",f"{data.lead_id}/")
+    kyc_pay_link = newLink if lead_has_kyc else link.replace("https://", f"{data.lead_id}/") if data.lead_id else link
     name = data.name or "Client"
-    await cashfree_payment_link(data.phone, name, data.amount, kyc_pay_link, user_lead.kyc)
+    await cashfree_payment_link(data.phone, name, data.amount, kyc_pay_link, lead_has_kyc)
 
-    new_link = link if user_lead.kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
+    new_link = link if lead_has_kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
     if data.email:
-       await payment_link_mail(data.email, data.name, new_link)
-       await payment_sms_tem(data.phone, new_link)
+        await payment_link_mail(str(data.email), name, new_link)
+    # (send SMS regardless of email)
+    await payment_sms_tem(data.phone, new_link)
 
     return {
         "orderId": cf_order_id,
@@ -324,3 +326,100 @@ async def front_create(
         "plan": payment.plan,
         "cashfreeResponse": cf_resp,
     }
+
+
+# @router.post(
+#     "/create-order",
+#     status_code=status.HTTP_201_CREATED,
+#     summary="Create Cashfree order and seed Payment record",
+# )
+# async def front_create(
+#     data: FrontUserCreate = Body(None),
+#     db: Session = Depends(get_db),
+#     current_user: UserDetails = Depends(get_current_user),
+# ):
+#     # 1) build & call Cashfree
+#     cf_payload = CreateOrderRequest(
+#         order_amount=data.amount,
+#         order_currency="INR",
+#         customer_details={
+#             "customer_id": data.phone,
+#             "customer_name": data.name,
+#             "customer_phone": data.phone,
+#         },
+#         order_meta={
+#             "notify_url": "https://crm.pridebuzz.in/api/v1/payment/webhook",
+#             "payment_methods": data.payment_methods,
+#         },
+#     )
+#     cf_body = cf_payload.model_dump(by_alias=False, exclude_none=True)
+#     cf_resp = await _call_cashfree("POST", "/orders", json_data=cf_body)
+#     cf_order_id = cf_resp.get("order_id")
+#     link = cf_resp.get("payment_link")
+
+#     if not cf_order_id or not link:
+#         logger.error("Invalid Cashfree create order response: %s", cf_resp)
+#         raise HTTPException(502, "Failed to create order on Cashfree")
+
+#     # 2) Fetch & serialize your Service
+#     plan_obj = db.get(Service, data.service_id)
+#     if not plan_obj:
+#         raise HTTPException(status_code=404, detail="Service not found")
+
+#     plan_json = {
+#         "id": plan_obj.id,
+#         "name": plan_obj.name,
+#         "description": plan_obj.description,
+#         "service_type": plan_obj.service_type,
+#         "price": plan_obj.price,
+#         "discount_percent": plan_obj.discount_percent,
+#         "billing_cycle": plan_obj.billing_cycle.value,
+#         "discounted_price": plan_obj.discounted_price,
+#     }
+
+#     # 3) Seed the Payment record
+#     service_field = data.service
+#     if isinstance(service_field, str):
+#         service_field = [service_field]
+
+#     payment = Payment(
+#         phone_number=data.phone,
+#         Service=service_field,
+#         order_id=cf_order_id,
+#         paid_amount=data.amount,
+#         status="ACTIVE",
+#         mode="CASHFREE",
+#         plan=[plan_json],
+#         call=data.call,
+#         description=data.description,
+#         user_id=current_user.employee_code,
+#         branch_id=current_user.branch_id,
+#         lead_id=data.lead_id,
+#     )
+#     if getattr(data, "email", None):
+#         payment.email = data.email          # ✅ attribute-style
+#     if getattr(data, "name", None):
+#         payment.name = data.name
+#     db.add(payment)
+#     db.commit()
+#     db.refresh(payment)
+
+#     user_lead = db.query(Lead).filter(Lead.id == data.lead_id).first()
+
+#     # 4) Send notifications
+#     newLink = urlparse(link).path.lstrip("/")
+#     kyc_pay_link = newLink if user_lead.kyc else link.replace("https://",f"{data.lead_id}/")
+#     name = data.name or "Client"
+#     await cashfree_payment_link(data.phone, name, data.amount, kyc_pay_link, user_lead.kyc)
+
+#     new_link = link if user_lead.kyc else link.replace("https://", "https://service.pridecons.com/payment/consent/")
+#     if data.email:
+#        await payment_link_mail(data.email, data.name, new_link)
+#        await payment_sms_tem(data.phone, new_link)
+
+#     return {
+#         "orderId": cf_order_id,
+#         "paymentId": payment.id,
+#         "plan": payment.plan,
+#         "cashfreeResponse": cf_resp,
+#     }
