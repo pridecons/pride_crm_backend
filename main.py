@@ -16,7 +16,7 @@ from db import models
 from routes.auth import login, register
 from routes.branch import branch
 
-from scheduler import lead_scheduler
+# from scheduler import lead_scheduler
 
 # Import for manual cleanup endpoint
 from routes.auth.auth_dependency import get_current_user
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 
     try:
         # 1) Start all schedulers ONCE here
-        lead_scheduler.start()          # your existing lead scheduler
+        # lead_scheduler.start()          # your existing lead scheduler
         start_scheduler()               # notification (APS) scheduler
 
         # 2) Init cache
@@ -89,10 +89,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # === Graceful shutdown ===
-    try:
-        lead_scheduler.stop()
-    except Exception as e:
-        logger.warning(f"Lead scheduler stop error: {e}")
+    # try:
+    #     lead_scheduler.stop()
+    # except Exception as e:
+    #     logger.warning(f"Lead scheduler stop error: {e}")
 
     try:
         await shutdown_scheduler()  # notification APS shutdown
@@ -122,15 +122,15 @@ app.add_middleware(
 app.mount("/api/v1/static", StaticFiles(directory="static"), name="static")
 
 # Root endpoint
-@app.get("/")
-def read_root():
-    return {
-        "message": "Welcome to Pride CRM Backend API v1.0",
-        "status": "active",
-        "scheduler_running": lead_scheduler.scheduler.running,
-        "docs": "/docs",
-        "health": "/health"
-    }
+# @app.get("/")
+# def read_root():
+#     return {
+#         "message": "Welcome to Pride CRM Backend API v1.0",
+#         "status": "active",
+#         "scheduler_running": lead_scheduler.scheduler.running,
+#         "docs": "/docs",
+#         "health": "/health"
+#     }
 
 # Health check endpoint
 @app.get("/health")
@@ -140,7 +140,7 @@ def health_check():
         return {
             "status": "healthy" if db_status else "unhealthy",
             "database": "connected" if db_status else "disconnected",
-            "scheduler_running": lead_scheduler.scheduler.running,
+            # "scheduler_running": lead_scheduler.scheduler.running,
             "version": "1.0.0"
         }
     except Exception as e:
