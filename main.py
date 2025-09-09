@@ -21,7 +21,7 @@ from routes.branch import branch
 # Import for manual cleanup endpoint
 from routes.auth.auth_dependency import get_current_user
 from routes.Permission import permissions
-from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, clients, lead_analytics, old_leads_fetch
+from routes.leads import leads, lead_sources, bulk_leads, leads_fetch, fetch_config, lead_responses, assignments, lead_navigation, lead_recordings, clients, lead_analytics, old_leads_fetch, lead_transfer
 # from routes.auth.create_admin import create_admin
 from routes.services import services
 from routes.payments import Cashfree, Cashfree_webhook
@@ -149,6 +149,7 @@ def health_check():
 
 # Register all your existing routes
 try:
+    app.include_router(lead_transfer.router, prefix="/api/v1")
     app.include_router(globel_search.router, prefix="/api/v1")
     app.include_router(state.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
