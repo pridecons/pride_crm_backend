@@ -98,6 +98,11 @@ def login(
         # Persist refresh token
         save_refresh_token(db, user.employee_code, refresh_token)
 
+        def to_dict(obj):
+            return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+
+        print(user.permissions)
+
         # Prepare user info - FIXED: removed .value calls
         user_info = {
             "employee_code": user.employee_code,
@@ -111,7 +116,7 @@ def login(
             "branch_id": user.branch_id,
             "branch_name": user.branch.name if user.branch else None,
             "is_active": user.is_active,
-            "permissions": user.profile_role.default_permissions if user.profile_role else []
+            "permissions": user.permissions if user.permissions else user.profile_role.default_permissions if user.profile_role else []
         }
 
         # Get legacy permissions if they exist (optional)
