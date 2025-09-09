@@ -98,10 +98,10 @@ def login(
         # Persist refresh token
         save_refresh_token(db, user.employee_code, refresh_token)
 
-        def to_dict(obj):
-            return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+        # def to_dict(obj):
+        #     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
 
-        print(user.permissions)
+        # print(user.permissions)
 
         # Prepare user info - FIXED: removed .value calls
         user_info = {
