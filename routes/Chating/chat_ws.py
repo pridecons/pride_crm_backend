@@ -1,168 +1,192 @@
 # routes/chat_ws.py
-from typing import Dict, Set, DefaultDict, Optional
-from collections import defaultdict
+import os
 import json
+import asyncio
+from typing import Set, DefaultDict, Dict, List, Optional
+from collections import defaultdict
 from datetime import datetime
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, exists
 
-from db.connection import SessionLocal  # use a real session in WS
+from db.connection import SessionLocal
 from db.Models.models_chat import ChatThread, ChatParticipant, ChatMessage, ThreadType
-from db.models import UserDetails
-
-# ⚠️ Adjust this import to your real token decoder / verifier.
-# For example, if you have: from routes.auth.auth_dependency import decode_access_token
-from routes.auth.auth_dependency import decode_access_token  # <-- change if different
 
 router = APIRouter(prefix="/ws", tags=["Chat WS"])
 
-# thread_id -> set of websockets
+# In-process rooms (still used even with Redis, for local sockets)
 thread_rooms: DefaultDict[int, Set[WebSocket]] = defaultdict(set)
+# One Redis listener task per thread
+thread_listeners: Dict[int, asyncio.Task] = {}
 
-
-# ---------- helpers ----------
-def _role(u: UserDetails) -> str:
-    return (getattr(u, "role_name", "") or "").upper()
-
-def _is_participant(db: Session, user_code: str, thread_id: int) -> bool:
-    return db.query(
-        exists().where(and_(
-            ChatParticipant.thread_id == thread_id,
-            ChatParticipant.user_id == user_code
-        ))
-    ).scalar()
-
-def _can_view_thread(db: Session, u: UserDetails, thread: ChatThread) -> bool:
-    role = _role(u)
-    if role == "SUPERADMIN":
-        return True
-    if role == "BRANCH_MANAGER":
-        # Manager can see all threads of their branch or where they are a participant
-        return (thread.branch_id == u.branch_id) or _is_participant(db, u.employee_code, thread.id)
-    # Employee must be a participant
-    return _is_participant(db, u.employee_code, thread.id)
-
-def _extract_bearer_token(websocket: WebSocket) -> Optional[str]:
-    # Try Authorization header first
-    auth = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
-    if auth and auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    # Fallback to ?token=... query param
-    token = websocket.query_params.get("token")
-    return token
-
-async def _auth_user_ws(websocket: WebSocket, db: Session) -> Optional[UserDetails]:
-    token = _extract_bearer_token(websocket)
-    if not token:
-        return None
+# --- Redis (optional) ---
+REDIS_URL = os.getenv("REDIS_URL")  # e.g. redis://localhost:6379/0
+redis = None
+if REDIS_URL:
     try:
-        payload = decode_access_token(token)  # must return claims incl. user id / employee_code
+        from redis.asyncio import Redis
+        redis = Redis.from_url(REDIS_URL, decode_responses=True)
     except Exception:
-        return None
-
-    # Adjust according to your JWT payload keys
-    emp_code = payload.get("sub") or payload.get("employee_code") or payload.get("user_id")
-    if not emp_code:
-        return None
-
-    user = db.query(UserDetails).filter(
-        UserDetails.employee_code == emp_code,
-        UserDetails.is_active.is_(True)
-    ).first()
-    return user
+        redis = None  # fallback to in-memory if import or connection fails
 
 
-# ---------- WebSocket endpoint ----------
+def _get_sender(websocket: WebSocket) -> str:
+    """Sender id from query or header (replace with JWT validation if needed)."""
+    sender = websocket.headers.get("x-sender") or websocket.query_params.get("sender")
+    return (sender or "").strip()
+
+
+async def _ensure_listener(thread_id: int):
+    """Start a Redis pub/sub listener per thread that rebroadcasts to local sockets."""
+    if not redis:
+        return
+    if thread_id in thread_listeners and not thread_listeners[thread_id].done():
+        return
+
+    async def _listen():
+        pubsub = redis.pubsub()
+        channel = f"chat:{thread_id}"
+        await pubsub.subscribe(channel)
+        try:
+            async for msg in pubsub.listen():
+                if msg.get("type") != "message":
+                    continue
+                payload = msg.get("data")
+                # Fan-out to all local sockets
+                for ws in list(thread_rooms[thread_id]):
+                    try:
+                        await ws.send_text(payload)
+                    except Exception:
+                        thread_rooms[thread_id].discard(ws)
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+            finally:
+                await pubsub.close()
+
+    task = asyncio.create_task(_listen(), name=f"chat-listener-{thread_id}")
+    thread_listeners[thread_id] = task
+
+
+async def _publish(thread_id: int, payload: dict):
+    """Publish via Redis if available; else local broadcast."""
+    text = json.dumps(payload, ensure_ascii=False)
+    if redis:
+        await redis.publish(f"chat:{thread_id}", text)
+    else:
+        for ws in list(thread_rooms[thread_id]):
+            try:
+                await ws.send_text(text)
+            except Exception:
+                thread_rooms[thread_id].discard(ws)
+
+
+def _participants_of_thread(db: Session, thread_id: int) -> List[str]:
+    return [
+        r.user_id
+        for r in db.query(ChatParticipant.user_id)
+                  .filter(ChatParticipant.thread_id == thread_id).all()
+    ]
+
+
+def _direct_peer(participants: List[str], me: str) -> Optional[str]:
+    if len(participants) == 2 and me in participants:
+        return participants[0] if participants[1] == me else participants[1]
+    return None
+
+
 @router.websocket("/chat/{thread_id}")
 async def chat_ws(websocket: WebSocket, thread_id: int):
     """
-    Connect with either:
-      - Header: Authorization: Bearer <access_token>
-      - or query param:  wss://.../ws/chat/123?token=<access_token>
+    Connect with:
+      wss://.../ws/chat/{thread_id}?sender=EMP001
+
+    Send JSON:
+      {"type":"send","data":{"body":"hello"}}
+    Pings:
+      {"type":"ping"}  -> ignored
+    Plain text "hello" also works.
     """
-    # Accept the connection first to be able to close with a code later
     await websocket.accept()
 
     db: Session = SessionLocal()
     try:
-        # Auth user
-        me = await _auth_user_ws(websocket, db)
-        if not me:
+        # Validate thread
+        thread = db.get(ChatThread, thread_id)
+        if not thread:
+            await websocket.close(code=4404)
+            return
+
+        # Identify sender and enforce membership
+        sender_id = _get_sender(websocket)
+        if not sender_id:
             await websocket.close(code=4401)  # unauthorized
             return
 
-        # Load thread & permission
-        thread = db.get(ChatThread, thread_id)
-        if not thread:
-            await websocket.close(code=4404)  # not found
-            return
-
-        if not _can_view_thread(db, me, thread):
+        participants = _participants_of_thread(db, thread_id)
+        if sender_id not in participants:
             await websocket.close(code=4403)  # forbidden
             return
 
-        # Register in room
+        # Join local room & ensure Redis listener
         thread_rooms[thread_id].add(websocket)
+        await _ensure_listener(thread_id)
 
-        # Event loop
+        # Precompute recipients list for this sender
+        recipients_all = [u for u in participants if u != sender_id]
+        direct_peer = _direct_peer(participants, sender_id) if thread.type == ThreadType.DIRECT else None
+
         while True:
             raw = await websocket.receive_text()
-            # simple protocol: either plain text body or JSON { "body": "..."}
+
+            # Parse JSON or treat as plain text
+            msg_type = None
+            body = None
             try:
-                parsed = json.loads(raw)
-                body = (parsed.get("body") or "").strip()
+                obj = json.loads(raw)
+                if isinstance(obj, dict):
+                    msg_type = obj.get("type")
+                    if msg_type == "ping":
+                        continue  # ignore keepalives
+                    if msg_type == "send":
+                        data = obj.get("data") or {}
+                        body = (data.get("body") or "").strip()
             except Exception:
+                # plain text
                 body = raw.strip()
 
             if not body:
-                # ignore empty messages
                 continue
 
-            # Persist message
-            msg = ChatMessage(
-                thread_id=thread_id,
-                sender_id=me.employee_code,
-                body=body,
-            )
+            # Persist (optional)
+            msg = ChatMessage(thread_id=thread_id, sender_id=sender_id, body=body)
             db.add(msg)
-
-            # bump thread updated time
             thread.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(msg)
 
-            # Broadcast as JSON
+            # Build unified envelope
             payload = {
+                "type": "message",
                 "id": msg.id,
                 "thread_id": thread_id,
-                "sender_id": me.employee_code,
                 "body": msg.body,
+                "sender_id": sender_id,
+                "recipients": recipients_all,            # all others in thread
+                "direct_recipient_id": direct_peer,      # only for DIRECT
                 "created_at": msg.created_at.isoformat(),
             }
 
-            # Fanout to current room
-            dead: Set[WebSocket] = set()
-            for ws in list(thread_rooms[thread_id]):
-                try:
-                    await ws.send_text(json.dumps(payload))
-                except Exception:
-                    dead.add(ws)
-            # cleanup broken sockets
-            for ws in dead:
-                thread_rooms[thread_id].discard(ws)
+            # Publish to everyone (clients can check sender_id/recipients)
+            await _publish(thread_id, payload)
 
     except WebSocketDisconnect:
-        # client disconnected
         pass
     except Exception:
-        # any server error -> best-effort close
         try:
-            await websocket.close(code=1011)  # internal error
+            await websocket.close(code=1011)
         except Exception:
             pass
     finally:
-        # cleanup room and DB session
         thread_rooms[thread_id].discard(websocket)
         db.close()
