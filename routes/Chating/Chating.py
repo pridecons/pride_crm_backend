@@ -93,55 +93,75 @@ def _enforce_can_add_group(db: Session, actor: UserDetails, branch_id: Optional[
 # ---------- Endpoints ----------
 
 @router.post("/direct/create", response_model=ThreadOut, status_code=201)
-def create_direct(payload: CreateDirectIn, db: Session = Depends(get_db), me: UserDetails = Depends(get_current_user)):
-    # Employee can DM only within same branch
-    peer = db.query(UserDetails).filter(
-        UserDetails.employee_code == payload.peer_employee_code,
-        UserDetails.is_active.is_(True)
-    ).first()
-    if not peer:
-        raise HTTPException(404, "Peer not found")
-
-    role = _role(me)
-    if role != "SUPERADMIN":
-        if not _ensure_same_branch(me.branch_id, peer.branch_id):
-            raise HTTPException(403, "Employees can chat only within same branch")
-
-    # Check if a direct thread already exists between the two
-    existing = (
-        db.query(ChatThread)
-        .join(ChatParticipant, ChatParticipant.thread_id == ChatThread.id)
+def create_direct(
+    payload: CreateDirectIn,
+    db: Session = Depends(get_db),
+    me: UserDetails = Depends(get_current_user),
+):
+    # 1) find peer
+    peer = (
+        db.query(UserDetails)
         .filter(
-            ChatThread.type == ThreadType.DIRECT,
-            ChatParticipant.user_id.in_([me.employee_code, peer.employee_code])
-        )
-        .group_by(ChatThread.id)
-        .having(
-            # exactly these two participants
-            (select(ChatParticipant.id).where(ChatParticipant.thread_id == ChatThread.id).count() == 2)  # not supported in SQLA Core—replace below
+            UserDetails.employee_code == payload.peer_employee_code,
+            UserDetails.is_active.is_(True),
         )
         .first()
     )
-    # ^ the COUNT in HAVING is awkward in SQLAlchemy; do a simpler approach:
-    if not existing:
-        thread = ChatThread(
-            type=ThreadType.DIRECT,
-            name=None,
-            branch_id=peer.branch_id if role != "SUPERADMIN" else (peer.branch_id if me.branch_id == peer.branch_id else None),
-            created_by=me.employee_code,
-        )
-        db.add(thread)
-        db.flush()
+    if not peer:
+        raise HTTPException(status_code=404, detail="Peer not found")
 
-        db.add_all([
+    # 2) branch rule (non-superadmins must be same branch)
+    role = _role(me)
+    if role != "SUPERADMIN":
+        if not _ensure_same_branch(me.branch_id, peer.branch_id):
+            raise HTTPException(
+                status_code=403, detail="Employees can chat only within same branch"
+            )
+
+    # 3) does a DIRECT thread with exactly these two participants already exist?
+    #    subquery: threads where both user codes appear and total participants == 2
+    two_codes = [me.employee_code, peer.employee_code]
+
+    subq = (
+        db.query(ChatParticipant.thread_id)
+        .join(ChatThread, ChatThread.id == ChatParticipant.thread_id)
+        .filter(
+            ChatThread.type == ThreadType.DIRECT,
+            ChatParticipant.user_id.in_(two_codes),
+        )
+        .group_by(ChatParticipant.thread_id)
+        .having(func.count(ChatParticipant.user_id) == 2)
+        .subquery()
+    )
+
+    existing = db.query(ChatThread).filter(ChatThread.id.in_(subq)).first()
+    if existing:
+        return existing
+
+    # 4) create a new DIRECT thread
+    thread = ChatThread(
+        type=ThreadType.DIRECT,
+        name=None,
+        # for non-superadmin, force same-branch; for superadmin, set branch if both same else None
+        branch_id=(
+            peer.branch_id
+            if role != "SUPERADMIN"
+            else (peer.branch_id if me.branch_id == peer.branch_id else None)
+        ),
+        created_by=me.employee_code,
+    )
+    db.add(thread)
+    db.flush()
+
+    db.add_all(
+        [
             ChatParticipant(thread_id=thread.id, user_id=me.employee_code, is_admin=False),
             ChatParticipant(thread_id=thread.id, user_id=peer.employee_code, is_admin=False),
-        ])
-        db.commit()
-        db.refresh(thread)
-        return thread
-
-    return existing
+        ]
+    )
+    db.commit()
+    db.refresh(thread)
+    return thread
 
 
 @router.post("/group/create", response_model=ThreadOut, status_code=201)
