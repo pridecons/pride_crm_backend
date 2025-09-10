@@ -15,8 +15,7 @@ thread_rooms: DefaultDict[int, Set[WebSocket]] = defaultdict(set)
 
 @router.websocket("/chat/{thread_id}")
 async def chat_ws(websocket: WebSocket, thread_id: int,
-                  db: Session = Depends(get_db),
-                  me = Depends(get_current_user)):
+                  db: Session = Depends(get_db)):
     thread = db.get(ChatThread, thread_id)
     if not thread:
         await websocket.close(code=4404)
