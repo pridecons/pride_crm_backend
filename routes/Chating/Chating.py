@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, exists, select, func
-
+from datetime import datetime
 from db.connection import get_db
 from db.models import UserDetails
 from db.Models.models_chat import ChatThread, ChatParticipant, ChatMessage, MessageRead, ThreadType
@@ -31,9 +31,9 @@ class ThreadOut(BaseModel):
 class MessageOut(BaseModel):
     id: int
     thread_id: int
-    sender_id: Optional[str]
+    sender_id: str | None
     body: str
-    created_at: str
+    created_at: datetime   # 👈 was str
 
     class Config:
         from_attributes = True
@@ -92,43 +92,27 @@ def _enforce_can_add_group(db: Session, actor: UserDetails, branch_id: Optional[
 
 # ---------- Endpoints ----------
 
+from sqlalchemy import func
+
 @router.post("/direct/create", response_model=ThreadOut, status_code=201)
-def create_direct(
-    payload: CreateDirectIn,
-    db: Session = Depends(get_db),
-    me: UserDetails = Depends(get_current_user),
-):
-    # 1) find peer
+def create_direct(payload: CreateDirectIn, db: Session = Depends(get_db), me: UserDetails = Depends(get_current_user)):
     peer = (
         db.query(UserDetails)
-        .filter(
-            UserDetails.employee_code == payload.peer_employee_code,
-            UserDetails.is_active.is_(True),
-        )
+        .filter(UserDetails.employee_code == payload.peer_employee_code, UserDetails.is_active.is_(True))
         .first()
     )
     if not peer:
         raise HTTPException(status_code=404, detail="Peer not found")
 
-    # 2) branch rule (non-superadmins must be same branch)
-    role = _role(me)
-    if role != "SUPERADMIN":
-        if not _ensure_same_branch(me.branch_id, peer.branch_id):
-            raise HTTPException(
-                status_code=403, detail="Employees can chat only within same branch"
-            )
+    if _role(me) != "SUPERADMIN" and me.branch_id != peer.branch_id:
+        raise HTTPException(status_code=403, detail="Employees can chat only within same branch")
 
-    # 3) does a DIRECT thread with exactly these two participants already exist?
-    #    subquery: threads where both user codes appear and total participants == 2
     two_codes = [me.employee_code, peer.employee_code]
 
     subq = (
         db.query(ChatParticipant.thread_id)
         .join(ChatThread, ChatThread.id == ChatParticipant.thread_id)
-        .filter(
-            ChatThread.type == ThreadType.DIRECT,
-            ChatParticipant.user_id.in_(two_codes),
-        )
+        .filter(ChatThread.type == ThreadType.DIRECT, ChatParticipant.user_id.in_(two_codes))
         .group_by(ChatParticipant.thread_id)
         .having(func.count(ChatParticipant.user_id) == 2)
         .subquery()
@@ -138,27 +122,19 @@ def create_direct(
     if existing:
         return existing
 
-    # 4) create a new DIRECT thread
     thread = ChatThread(
         type=ThreadType.DIRECT,
         name=None,
-        # for non-superadmin, force same-branch; for superadmin, set branch if both same else None
-        branch_id=(
-            peer.branch_id
-            if role != "SUPERADMIN"
-            else (peer.branch_id if me.branch_id == peer.branch_id else None)
-        ),
+        branch_id=(peer.branch_id if _role(me) != "SUPERADMIN" else (peer.branch_id if me.branch_id == peer.branch_id else None)),
         created_by=me.employee_code,
     )
     db.add(thread)
     db.flush()
 
-    db.add_all(
-        [
-            ChatParticipant(thread_id=thread.id, user_id=me.employee_code, is_admin=False),
-            ChatParticipant(thread_id=thread.id, user_id=peer.employee_code, is_admin=False),
-        ]
-    )
+    db.add_all([
+        ChatParticipant(thread_id=thread.id, user_id=me.employee_code, is_admin=False),
+        ChatParticipant(thread_id=thread.id, user_id=peer.employee_code, is_admin=False),
+    ])
     db.commit()
     db.refresh(thread)
     return thread
@@ -243,7 +219,6 @@ def send_message(thread_id: int, payload: SendMessageIn,
     if not _can_view_thread(db, me, thread):
         raise HTTPException(403, "Not allowed")
 
-    # employees cannot write to groups outside their branch (safety)
     if _role(me) != "SUPERADMIN" and thread.branch_id is not None and me.branch_id != thread.branch_id:
         raise HTTPException(403, "You cannot post in threads outside your branch")
 
@@ -253,13 +228,10 @@ def send_message(thread_id: int, payload: SendMessageIn,
         body=payload.body.strip(),
     )
     db.add(msg)
-
-    # bump thread updated_at
     thread.updated_at = func.now()
-
     db.commit()
     db.refresh(msg)
-    return msg
+    return msg  # ✅ ORM object; Pydantic will read attributes
 
 
 @router.post("/{thread_id}/mark-read", status_code=204)
