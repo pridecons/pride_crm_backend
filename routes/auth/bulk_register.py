@@ -1,3 +1,4 @@
+# bulk_register.py
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
 from typing import Optional, List, Dict, Any
 import csv, io, re, secrets, string
@@ -235,6 +236,16 @@ def hash_password(password: str) -> str:
     except Exception:
         return hashlib.sha256(password.encode()).hexdigest()
 
+# add alongside _as_int_or_none
+def _as_int_or_zero(v: Any) -> int:
+    s = _norm(v)
+    if s == "":
+        return 0
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+
 # ---------------- Bulk create ----------------
 # REPLACE your bulk_create_users with this validated + safe version
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
@@ -352,9 +363,9 @@ def bulk_create_users(
                 name=name,
                 password=hashed_pw,
                 role_id=role_id_val,
-                father_name=father_name,   # <-- never None
+                father_name=father_name,          # already ""
                 is_active=True,
-                experience=_norm(row.get("experience")) or None,
+                experience=_as_int_or_zero(row.get("experience")),   # <<< was None on blank
                 date_of_joining=row.get("date_of_joining") or None,
                 date_of_birth=row.get("date_of_birth") or None,
                 pan=_norm(row.get("pan")) or None,
@@ -366,13 +377,14 @@ def bulk_create_users(
                 comment=_norm(row.get("comment")) or None,
                 branch_id=branch_id,
                 senior_profile_id=_norm(row.get("senior_profile_id")) or None,
-                permissions=None,
+                permissions=[],                    # safer default than None for JSON/ARRAY
                 vbc_extension_id=_norm(row.get("vbc_extension_id")) or None,
                 vbc_user_username=_norm(row.get("vbc_user_username")) or None,
                 vbc_user_password=_norm(row.get("vbc_user_password")) or None,
                 target=_norm(row.get("target")) or None,
                 department_id=dept_id_val,
             )
+
 
             to_create.append(user)
             generated_passwords[emp_code] = raw_password
