@@ -9,16 +9,6 @@ import enum
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime   
 
-# class RecommendationType(str, enum.Enum):
-#     equity_cash= "Equity Cash"
-#     stock_future= "Stock Future"
-#     index_future= "Index Future"
-#     index_option= "Index Option"
-#     stock_option= "Stock Option"
-#     mcx_bullion= "MCX Bullion"
-#     mcx_base_metal= "MCX Base Metal"
-#     mcx_energy= "MCX Energy"
-
 class RecommendationType(str, enum.Enum):
     equity_cash_buy= "Equity Cash Buy"
     equity_cash_sell= "Equity Cash Sell"

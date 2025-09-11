@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # Import database
 from db.connection import engine, check_database_connection
 from db import models
-from db.Models import models_chat
+from db.Models import models_chat, models_research
 
 # Import routes
 from routes.auth import login, register
@@ -44,6 +44,7 @@ from pathlib import Path
 from routes.leads import globel_search
 from routes.Chating import chat_ws, Chating
 from routes.mail_service import Internal_Mailing
+from routes.Research_Report import ResearchReport
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Database connection verified")
         models.Base.metadata.create_all(engine)
         models_chat.Base.metadata.create_all(engine)
+        models_research.Base.metadata.create_all(engine)
         
         logger.info("✅ Database tables created/verified")
 
@@ -154,6 +156,7 @@ def health_check():
 
 # Register all your existing routes
 try: 
+    app.include_router(ResearchReport.router, prefix="/api/v1")
     app.include_router(chat_ws.router, prefix="/api/v1")
     app.include_router(Chating.router, prefix="/api/v1")
     app.include_router(Internal_Mailing.router, prefix="/api/v1")
@@ -215,6 +218,7 @@ except Exception as e:
 try:
     models.Base.metadata.create_all(engine)
     models_chat.Base.metadata.create_all(engine)
+    models_research.Base.metadata.create_all(engine)
     logger.info("Tables created successfully!")
 except Exception as e:
     logger.error(f"Error creating tables: {e}", exc_info=True)
