@@ -367,6 +367,7 @@ async def send_message(
         {
             "type": "message.new",
             "thread_id": thread_id,
+            "sender_id": me.employee_code
             "message": payload.body,  # created_at becomes ISO via model_dump(mode="json")
         },
     )
