@@ -86,8 +86,6 @@ class ResearchReportIn(BaseModel):
     calls_index: Optional[List[CallItem]] = None
     calls_stock: Optional[List[CallItem]] = None
 
-    is_published: Optional[bool] = False
-
 class ResearchReportOut(ResearchReportIn):
     id: int
     created_at: datetime
@@ -114,7 +112,6 @@ def _to_out(rr: ResearchReport) -> ResearchReportOut:
         fii_dii=rr.fii_dii,
         calls_index=rr.calls_index,
         calls_stock=rr.calls_stock,
-        is_published=rr.is_published,
         created_by=rr.created_by,
         created_at=rr.created_at,
         updated_at=rr.updated_at,
@@ -142,7 +139,6 @@ async def create_report(
         # ✅ split calls
         calls_index=(payload.calls_index and [i.model_dump(exclude_none=True) for i in payload.calls_index]) or None,
         calls_stock=(payload.calls_stock and [i.model_dump(exclude_none=True) for i in payload.calls_stock]) or None,
-        is_published=bool(payload.is_published),
         created_by=getattr(current_user, "employee_code", None),
     )
     await generate_outlook_pdf(rr)
