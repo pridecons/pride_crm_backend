@@ -12,6 +12,8 @@ from db.Models.models_research import ResearchReport
 from routes.auth.auth_dependency import get_current_user
 import datetime as dt
 from routes.Research_Report.generateResearchPdf import generate_outlook_pdf
+from sqlalchemy.inspection import inspect
+
 
 # (Optionally fetch from settings/env)
 STATIC_UPLOAD_DIR = os.getenv("STATIC_UPLOAD_DIR", "static/uploads")
@@ -95,26 +97,40 @@ class ResearchReportOut(ResearchReportIn):
     class Config:
         from_attributes = True
 
+
+# routes/Research_Report/ResearchReport.py
+
+from sqlalchemy.inspection import inspect
+
+# ... keep your imports and schemas as-is ...
+
+def _list_or_none(items):
+    return [i.model_dump(exclude_none=True) for i in items] if items else None
+
+def _dict_or_none(obj):
+    return obj.model_dump(exclude_none=True) if obj else None
+
 # --------- Helpers ----------
 def _to_out(rr: ResearchReport) -> ResearchReportOut:
+    # Use getattr to avoid AttributeError if a field was dropped from the model
     return ResearchReportOut(
         id=rr.id,
-        report_date=rr.report_date,
-        title=rr.title,
-        notes=rr.notes,
-        tags=rr.tags,
-        ipo=rr.ipo,
-        board_meeting=rr.board_meeting,
-        corporate_action=rr.corporate_action,
-        result_calendar=rr.result_calendar,
-        top_gainers=rr.top_gainers,
-        top_losers=rr.top_losers,
-        fii_dii=rr.fii_dii,
-        calls_index=rr.calls_index,
-        calls_stock=rr.calls_stock,
-        created_by=rr.created_by,
-        created_at=rr.created_at,
-        updated_at=rr.updated_at,
+        report_date=getattr(rr, "report_date", None),
+        title=getattr(rr, "title", None),                     # will be None if column removed
+        notes=getattr(rr, "notes", None),
+        tags=getattr(rr, "tags", None),
+        ipo=getattr(rr, "ipo", None),
+        board_meeting=getattr(rr, "board_meeting", None),
+        corporate_action=getattr(rr, "corporate_action", None),
+        result_calendar=getattr(rr, "result_calendar", None),
+        top_gainers=getattr(rr, "top_gainers", None),
+        top_losers=getattr(rr, "top_losers", None),
+        fii_dii=getattr(rr, "fii_dii", None),
+        calls_index=getattr(rr, "calls_index", None),
+        calls_stock=getattr(rr, "calls_stock", None),
+        created_by=getattr(rr, "created_by", None),
+        created_at=getattr(rr, "created_at", None),
+        updated_at=getattr(rr, "updated_at", None),
     )
 
 # --------- Create ---------
@@ -124,28 +140,43 @@ async def create_report(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
-    rr = ResearchReport(
-        report_date=payload.report_date,
-        title=payload.title,
-        notes=payload.notes,
-        tags=payload.tags,
-        ipo=(payload.ipo and [i.model_dump(exclude_none=True) for i in payload.ipo]) or None,
-        board_meeting=(payload.board_meeting and [i.model_dump(exclude_none=True) for i in payload.board_meeting]) or None,
-        corporate_action=(payload.corporate_action and [i.model_dump(exclude_none=True) for i in payload.corporate_action]) or None,
-        result_calendar=(payload.result_calendar and [i.model_dump(exclude_none=True) for i in payload.result_calendar]) or None,
-        top_gainers=(payload.top_gainers and [i.model_dump(exclude_none=True) for i in payload.top_gainers]) or None,
-        top_losers=(payload.top_losers and [i.model_dump(exclude_none=True) for i in payload.top_losers]) or None,
-        fii_dii=(payload.fii_dii and payload.fii_dii.model_dump(exclude_none=True)) or None,
-        # ✅ split calls
-        calls_index=(payload.calls_index and [i.model_dump(exclude_none=True) for i in payload.calls_index]) or None,
-        calls_stock=(payload.calls_stock and [i.model_dump(exclude_none=True) for i in payload.calls_stock]) or None,
-        created_by=getattr(current_user, "employee_code", None),
-    )
+    # Build a dict from payload (convert nested Pydantic models to dicts)
+    incoming = {
+        "report_date": payload.report_date,
+        # "title": payload.title,        # <-- dropped: don't include if column removed
+        "notes": payload.notes,
+        "tags": payload.tags,
+
+        "ipo": _list_or_none(payload.ipo),
+        "board_meeting": _list_or_none(payload.board_meeting),
+        "corporate_action": _list_or_none(payload.corporate_action),
+        "result_calendar": _list_or_none(payload.result_calendar),
+
+        "top_gainers": _list_or_none(payload.top_gainers),
+        "top_losers": _list_or_none(payload.top_losers),
+        "fii_dii": _dict_or_none(payload.fii_dii),
+
+        "calls_index": _list_or_none(payload.calls_index),
+        "calls_stock": _list_or_none(payload.calls_stock),
+
+        "created_by": getattr(current_user, "employee_code", None),
+    }
+
+    # Keep only keys that are real columns on the model
+    model_cols = {attr.key for attr in inspect(ResearchReport).mapper.column_attrs}
+    clean_kwargs = {k: v for k, v in incoming.items() if k in model_cols}
+
+    rr = ResearchReport(**clean_kwargs)
+
+    # If your PDF function doesn't require DB id, this is fine.
+    # If it needs rr.id, move this call to AFTER commit/refresh.
     await generate_outlook_pdf(rr)
+
     db.add(rr)
     db.commit()
     db.refresh(rr)
     return _to_out(rr)
+
 
 # --------- Chart Upload (returns URL) ---------
 @router.post("/upload-chart", status_code=201)
