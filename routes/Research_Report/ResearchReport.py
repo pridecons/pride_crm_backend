@@ -168,7 +168,7 @@ async def create_report(
 
     rr = ResearchReport(**clean_kwargs)
 
-    pdf_bytes = await generate_outlook_pdf(rr)
+    pdf_bytes = await generate_outlook_pdf(incoming)
 
     folder = os.path.join(STATIC_UPLOAD_DIR, "research-reports")
     os.makedirs(folder, exist_ok=True)

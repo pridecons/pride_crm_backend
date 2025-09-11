@@ -285,13 +285,30 @@ async def generate_outlook_pdf(rr_or_payload):
     """
     Accepts either:
       - ORM object ResearchReport (we adapt it), or
-      - already-prepared payload dict for the HTML template.
-    Returns signed PDF bytes (you can upload/store if needed).
+      - a dict in DB/schema shape (we still adapt it),
+      - a dict already in template shape (detected & passed through).
+    Returns signed PDF bytes.
     """
+
+    def _looks_template_shaped(d: dict) -> bool:
+        # If it already has keys used by the template, don't re-map.
+        must_have_any = {"header", "gainers", "losers", "events", "ipos", "commentary", "stockPicks", "fiiActivity"}
+        return isinstance(d, dict) and any(k in d for k in must_have_any)
+
+    # ✅ Always adapt unless it's clearly already template-shaped
     if isinstance(rr_or_payload, dict):
-        payload = rr_or_payload
+        if _looks_template_shaped(rr_or_payload):
+            payload = rr_or_payload
+        else:
+            payload = _adapt_research_report_to_html_payload(rr_or_payload)
     else:
         payload = _adapt_research_report_to_html_payload(rr_or_payload)
+
+    # (Optional) ensure a title in header
+    payload.setdefault("header", {})
+    payload["header"].setdefault("title", "Technical Market Outlook")
+
+    print("payload (template-shaped): ", payload)
 
     # 1) Build HTML
     try:
@@ -311,7 +328,6 @@ async def generate_outlook_pdf(rr_or_payload):
         pdf_reader = PdfReader(BytesIO(pdf_bytes))
         total_pages = len(pdf_reader.pages)
         for i, page in enumerate(pdf_reader.pages):
-            # derive page size from each page
             mediabox = page.mediabox
             page_width  = float(mediabox.width)
             page_height = float(mediabox.height)
@@ -324,8 +340,6 @@ async def generate_outlook_pdf(rr_or_payload):
 
             pdf_writer.add_page(page)
 
-
-
         out_io = BytesIO()
         pdf_writer.write(out_io)
         out_io.seek(0)
@@ -337,3 +351,4 @@ async def generate_outlook_pdf(rr_or_payload):
         raise
     except Exception as e:
         raise HTTPException(500, f"PDF processing/signing failed: {e}")
+
