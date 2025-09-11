@@ -95,7 +95,7 @@ def _read_rows(file: UploadFile) -> List[Dict[str, Any]]:
     if not content:
         return []
 
-    # Try XLSX if extension suggests Excel
+    # ---- Try XLSX first (if extension suggests) ----
     if name.endswith((".xlsx", ".xlsm", ".xls")):
         try:
             import openpyxl  # optional dependency
@@ -116,26 +116,52 @@ def _read_rows(file: UploadFile) -> List[Dict[str, Any]]:
                 out.append(row)
             return out
         except Exception:
-            # fall through to CSV
+            # fall through to CSV attempt
             pass
 
-    # CSV/TSV
+    # ---- CSV/TSV robust parsing ----
     try:
+        # decode with BOM handling
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
             text = content.decode("latin-1")
+        # strip UTF-8 BOM if present
+        if text and text[0] == "\ufeff":
+            text = text.lstrip("\ufeff")
 
-        sample = text[:4096]
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        reader = csv.reader(io.StringIO(text), dialect)
-        rows = list(reader)
-        if not rows:
+        # remove empty lines at top so Sniffer gets a real header
+        lines = [ln for ln in text.splitlines() if ln.strip() != ""]
+        if not lines:
             return []
+        joined = "\n".join(lines)
+
+        # try Sniffer first
+        try:
+            sample = joined[:4096]
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            delimiter = dialect.delimiter
+        except Exception:
+            # fallback: count candidates on first non-empty line
+            header_line = lines[0]
+            candidates = [",", ";", "\t", "|"]
+            counts = {d: header_line.count(d) for d in candidates}
+            delimiter = max(counts, key=counts.get)
+            if counts[delimiter] == 0:
+                delimiter = ","  # final default
+
+        reader = csv.reader(io.StringIO(joined), delimiter=delimiter, skipinitialspace=True)
+        rows = list(reader)
+        if not rows or all(len(c) == 0 for c in rows[0]):
+            raise ValueError("Header row is empty")
+
         headers = [(_norm(c)) for c in rows[0]]
         canon = _canonicalize_headers(headers)
-        out = []
+
+        out: List[Dict[str, Any]] = []
         for r in rows[1:]:
+            if not any(str(x).strip() for x in r):  # skip fully blank rows
+                continue
             row = {}
             for idx, v in enumerate(r):
                 key = canon.get(idx)
@@ -143,8 +169,11 @@ def _read_rows(file: UploadFile) -> List[Dict[str, Any]]:
                     row[key] = v
             out.append(row)
         return out
+
     except Exception as e:
+        # give a clearer message for debugging
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
+
 
 def _resolve_role_id(db: Session, row: Dict[str, Any]) -> int:
     rid = _norm(row.get("role_id"))
