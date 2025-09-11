@@ -17,7 +17,7 @@ from db.Models.models_chat import (
     ThreadType,
 )
 from routes.auth.auth_dependency import get_current_user
-
+from routes.Chating.chat_ws import room_hub
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
@@ -341,7 +341,7 @@ def get_messages(
 
 
 @router.post("/{thread_id}/send", response_model=MessageOut, status_code=201)
-def send_message(
+async def send_message(
     thread_id: int,
     payload: SendMessageIn,
     db: Session = Depends(get_db),
@@ -361,6 +361,14 @@ def send_message(
         thread_id=thread_id,
         sender_id=me.employee_code,
         body=payload.body.strip(),
+    )
+    await room_hub.broadcast_json(
+        thread_id,
+        {
+            "type": "message.new",
+            "thread_id": thread_id,
+            "message": payload.body.strip(),  # created_at becomes ISO via model_dump(mode="json")
+        },
     )
     db.add(msg)
     thread.updated_at = func.now()
