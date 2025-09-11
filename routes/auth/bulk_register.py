@@ -10,12 +10,49 @@ import bcrypt
 from db.connection import get_db
 from db.models import UserDetails, ProfileRole
 from utils.validation_utils import validate_user_data
+from datetime import datetime, date
 
 
 router = APIRouter(
     prefix="/users",
     tags=["users"],
 )
+
+
+def _parse_date_any(v):
+    """Accept date, datetime, Excel serial, or common string formats. Return date or None."""
+    if v is None or v == "":
+        return None
+    # Already a date/datetime (xlsx readers often give this)
+    if isinstance(v, date) and not isinstance(v, datetime):
+        return v
+    if isinstance(v, datetime):
+        return v.date()
+    s = str(v).strip()
+    if s == "":
+        return None
+    # Excel serial number
+    try:
+        # handle floats/ints like 45123
+        n = float(s)
+        base = date(1899, 12, 30)  # Excel 1900 date system
+        return date.fromordinal(base.toordinal() + int(n))
+    except Exception:
+        pass
+    # Common string formats
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%m.%d.%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid date format: '{s}'. Use YYYY-MM-DD or a common date format.")
+
+def _require_date(v, field_label: str):
+    d = _parse_date_any(v)
+    if d is None:
+        raise ValueError(f"{field_label} is required")
+    return d
+
 
 # add this helper near _next_emp_code
 def _current_emp_max(db: Session) -> int:
@@ -322,14 +359,10 @@ def bulk_create_users(
 
             # SAME validator you use in create/update
             validate_payload = {
-                "name": name,
                 "email": email,
                 "phone_number": phone,
                 "pan": _norm(row.get("pan")) or None,
-                "aadhaar": _norm(row.get("aadhaar")) or None,
-                "pincode": _norm(row.get("pincode")) or None,
-                "date_of_joining": row.get("date_of_joining") or None,
-                "date_of_birth": row.get("date_of_birth") or None,
+                "aadhaar": _norm(row.get("aadhaar")) or None
             }
             validate_user_data(db, validate_payload)
 
@@ -366,8 +399,8 @@ def bulk_create_users(
                 father_name=father_name,          # already ""
                 is_active=True,
                 experience=_as_int_or_zero(row.get("experience")),   # <<< was None on blank
-                date_of_joining=row.get("date_of_joining") or None,
-                date_of_birth=row.get("date_of_birth") or None,
+                date_of_joining=_require_date(row.get("date_of_joining"), "date_of_joining"),
+                date_of_birth=_require_date(row.get("date_of_birth"), "date_of_birth"),
                 pan=_norm(row.get("pan")) or None,
                 aadhaar=_norm(row.get("aadhaar")) or None,
                 address=_norm(row.get("address")) or None,
