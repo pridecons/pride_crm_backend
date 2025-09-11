@@ -14,7 +14,7 @@ from db import models
 from db.Models import models_chat, models_research
 
 # Import routes
-from routes.auth import login, register
+from routes.auth import login, register, bulk_register
 from routes.branch import branch
 
 # from scheduler import lead_scheduler
@@ -156,6 +156,7 @@ def health_check():
 
 # Register all your existing routes
 try: 
+    app.include_router(bulk_register.router, prefix="/api/v1")
     app.include_router(ResearchReport.router, prefix="/api/v1")
     app.include_router(chat_ws.router, prefix="/api/v1")
     app.include_router(Chating.router, prefix="/api/v1")
