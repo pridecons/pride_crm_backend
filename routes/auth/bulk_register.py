@@ -8,11 +8,28 @@ import bcrypt
 
 from db.connection import get_db
 from db.models import UserDetails, ProfileRole
+from utils.validation_utils import validate_user_data
+
 
 router = APIRouter(
     prefix="/users",
     tags=["users"],
 )
+
+def _current_emp_max(db: Session) -> int:
+    max_num = db.query(
+        func.max(
+            cast(
+                func.nullif(
+                    func.regexp_replace(UserDetails.employee_code, r'[^0-9]', '', 'g'),
+                    ''
+                ),
+                Integer,
+            )
+        )
+    ).scalar()
+    return int(max_num or 0)
+
 
 # ---------------- Employee code ----------------
 def _next_emp_code(db: Session) -> str:
@@ -222,43 +239,35 @@ def hash_password(password: str) -> str:
 def bulk_create_users(
     file: UploadFile = File(..., description="CSV or XLSX with user rows"),
     dry_run: bool = Query(False, description="Validate only; do not insert"),
-    # NEW: force role/branch for all rows (coming from multipart form)
+    # UI overrides (Bulk modal):
     force_role_id: Optional[int] = Form(None),
     force_branch_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
-    Bulk create users from CSV/XLSX.
-
-    Required per row when NOT forced:
-      - name, email, phone_number, role_id/role_name, branch_id
-    If `force_role_id` and/or `force_branch_id` are provided,
-    they override every row for role/branch respectively.
-
-    Behavior:
-      - Maps role -> department automatically (via _department_id_for_role)
-      - Generates unique employee_code per created row
-      - Skips duplicates on email/phone_number with an error record
-      - Returns a detailed per-row report
-      - `dry_run=true` validates without writing
+    Bulk create users from CSV/XLSX using SAME validation as single create/update.
+    - validate_user_data is applied per row.
+    - role -> department auto-mapping.
+    - father_name defaults to "" (NOT NULL safe).
+    - Employee codes are allocated in-memory sequence for this batch.
+    - dry_run=True validates without writing.
     """
     rows = _read_rows(file)
     if not rows:
         raise HTTPException(status_code=400, detail="No rows found in uploaded file")
 
-    # Apply overrides before validation
+    # ---- Apply overrides before validation ----
     if force_role_id is not None:
-        # simple validation that role exists
-        _ = _department_id_for_role(db, int(force_role_id))  # raises if missing
+        # validate role exists (also derives department later)
+        _ = _department_id_for_role(db, int(force_role_id))  # raises if invalid
         for r in rows:
             r["role_id"] = str(force_role_id)
             r.pop("role_name", None)
-
     if force_branch_id is not None:
         for r in rows:
             r["branch_id"] = str(force_branch_id)
 
-    # Preload uniqueness
+    # ---- Preload uniqueness from DB ----
     existing_emails = {
         e for (e,) in db.query(UserDetails.email).filter(UserDetails.email.isnot(None)).all()
     }
@@ -266,11 +275,16 @@ def bulk_create_users(
         p for (p,) in db.query(UserDetails.phone_number).filter(UserDetails.phone_number.isnot(None)).all()
     }
 
+    # ---- In-batch trackers ----
+    seen_emails: set = set()
+    seen_phones: set = set()
+
+    # ---- Prepare EMP sequence for this batch (avoid duplicates) ----
+    next_num = _current_emp_max(db)
+
     results: List[Dict[str, Any]] = []
     to_create: List[UserDetails] = []
     generated_passwords: Dict[str, str] = {}
-    seen_emails: set = set()
-    seen_phones: set = set()
 
     for idx, row in enumerate(rows, start=2):  # header is row 1
         rec: Dict[str, Any] = {"row": idx, "status": "pending"}
@@ -295,12 +309,31 @@ def bulk_create_users(
             role_id_val = _resolve_role_id(db, row)
             dept_id_val = _department_id_for_role(db, role_id_val)
 
-            # Uniqueness
+            # --- Build payload for SAME validator you use in create/update ---
+            pan = _norm(row.get("pan")) or None
+            aadhaar = _norm(row.get("aadhaar")) or None
+            pincode = _norm(row.get("pincode")) or None
+            doj = row.get("date_of_joining") or None
+            dob = row.get("date_of_birth") or None
+
+            validate_payload = {
+                "name": name,
+                "email": email,
+                "phone_number": phone,
+                "pan": pan,
+                "aadhaar": aadhaar,
+                "pincode": pincode,
+                "date_of_joining": doj,
+                "date_of_birth": dob,
+            }
+            # This will raise HTTPException on invalid formats/dupes (same rules)
+            validate_user_data(db, validate_payload)
+
+            # --- Extra uniqueness safe-guards (in-batch + existing sets) ---
             if email in existing_emails or email in seen_emails:
                 raise ValueError(f"Email already registered: {email}")
             if phone in existing_phones or phone in seen_phones:
                 raise ValueError(f"Phone number already registered: {phone}")
-
             seen_emails.add(email)
             seen_phones.add(phone)
 
@@ -310,7 +343,9 @@ def bulk_create_users(
                 raise ValueError("password must be at least 6 characters")
             hashed_pw = hash_password(raw_password)
 
-            emp_code = _next_emp_code(db)
+            # Allocate next EMP code from in-memory sequence
+            next_num += 1
+            emp_code = f"EMP{next_num:03d}"
 
             user = UserDetails(
                 employee_code=emp_code,
@@ -319,17 +354,17 @@ def bulk_create_users(
                 name=name,
                 password=hashed_pw,
                 role_id=role_id_val,
-                father_name=_norm(row.get("father_name")) or None,
+                father_name=_norm(row.get("father_name")) if _norm(row.get("father_name")) != "" else "",  # NOT NULL safe
                 is_active=True,
                 experience=_norm(row.get("experience")) or None,
-                date_of_joining=row.get("date_of_joining") or None,
-                date_of_birth=row.get("date_of_birth") or None,
-                pan=_norm(row.get("pan")) or None,
-                aadhaar=_norm(row.get("aadhaar")) or None,
+                date_of_joining=doj,
+                date_of_birth=dob,
+                pan=pan,
+                aadhaar=aadhaar,
                 address=_norm(row.get("address")) or None,
                 city=_norm(row.get("city")) or None,
                 state=_norm(row.get("state")) or None,
-                pincode=_norm(row.get("pincode")) or None,
+                pincode=pincode,
                 comment=_norm(row.get("comment")) or None,
                 branch_id=branch_id,
                 senior_profile_id=_norm(row.get("senior_profile_id")) or None,
@@ -351,12 +386,15 @@ def bulk_create_users(
                 "role_id": role_id_val,
                 "department_id": dept_id_val,
             })
+        except HTTPException as he:
+            # bubble up message from validate_user_data in row context
+            rec.update({"status": "error", "error": he.detail if hasattr(he, "detail") else str(he)})
         except Exception as e:
             rec.update({"status": "error", "error": str(e)})
         results.append(rec)
 
     created = [r for r in results if r["status"] == "ok"]
-    failed = [r for r in results if r["status"] == "error"]
+    failed  = [r for r in results if r["status"] == "error"]
 
     if dry_run:
         return {
@@ -365,7 +403,7 @@ def bulk_create_users(
             "results": results,
         }
 
-    # Persist
+    # ---- Persist valid rows ----
     try:
         for u in to_create:
             db.add(u)
@@ -386,7 +424,7 @@ def bulk_create_users(
                 "role_id": int(u.role_id),
                 "department_id": u.department_id,
                 "password": plain,
-                "password_masked": f"{plain[:2]}{'*'*(max(0,len(plain)-4))}{plain[-2:]}" if plain else None,
+                "password_masked": f"{plain[:2]}{'*'*(max(0, len(plain)-4))}{plain[-2:]}" if plain else None,
                 "created_at": u.created_at,
             })
 
@@ -399,3 +437,5 @@ def bulk_create_users(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Bulk insert failed: {e}")
+
+
