@@ -1,6 +1,6 @@
 # routes/internal_mailing.py
 
-from typing import List, Optional, Set, Tuple, Dict
+from typing import List, Optional, Set, Tuple, Dict, Union
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -35,10 +35,12 @@ def _ensure_smtp() -> Tuple[smtplib.SMTP_SSL, str]:
 
 def _attach_files(msg: MIMEMultipart, files: List[UploadFile]) -> None:
     for f in files or []:
+        if not f.filename:
+            continue
         content = f.file.read()
         f.file.seek(0)
-        ctype, encoding = mimetypes.guess_type(f.filename or "")
-        if ctype is None:
+        ctype, _ = mimetypes.guess_type(f.filename)
+        if not ctype:
             ctype = "application/octet-stream"
         maintype, subtype = ctype.split("/", 1)
         part = MIMEBase(maintype, subtype)
@@ -46,6 +48,7 @@ def _attach_files(msg: MIMEMultipart, files: List[UploadFile]) -> None:
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", f'attachment; filename="{f.filename}"')
         msg.attach(part)
+
 
 def _build_message(sender: str, to_email: str, subject: str, body: str, attachments: List[UploadFile]) -> MIMEMultipart:
     msg = MIMEMultipart()
@@ -111,7 +114,7 @@ def _dedupe_emails(users: List[UserDetails]) -> Dict[str, UserDetails]:
             out[em] = u
     return out
 
-# ------------- endpoint -------------
+
 @router.post(
     "/send",
     status_code=status.HTTP_200_OK,
@@ -125,8 +128,8 @@ async def send_internal_mail(
     profile_ids: Optional[str] = Form(None, description="Comma-separated role ids"),
     employee_ids: Optional[str] = Form(None, description="Comma-separated employee_codes"),
     branch_ids: Optional[str] = Form(None, description="Comma-separated branch ids"),
-    # optional attachments (any file type)
-    files: Optional[List[UploadFile]] = File(default=None),
+    # accept single OR multiple files
+    files: Union[List[UploadFile], UploadFile, None] = File(default=None),
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
@@ -135,8 +138,8 @@ async def send_internal_mail(
     - SUPERADMIN: may use all modes, including 'all' and any branches
     - BRANCH_MANAGER: may use 'profiles', 'employees', and 'branches' *but only within their branch*; cannot use 'all'
     - Other users: may use 'profiles' or 'employees' targeting only recipients within their visibility (same branch)
-      (Adjust if you want stricter/looser rules)
     """
+
     role = _role(current_user)
 
     # Parse CSV params into lists
@@ -158,14 +161,11 @@ async def send_internal_mail(
     if mode == "branches":
         if role not in {"SUPERADMIN", "BRANCH_MANAGER"}:
             raise HTTPException(status_code=403, detail="Only SUPERADMIN or BRANCH_MANAGER can mail by branch")
-        # BRANCH_MANAGER can only target their branch
         if role == "BRANCH_MANAGER":
             if current_user.branch_id is None:
                 raise HTTPException(status_code=403, detail="Branch manager has no branch assigned")
-            # If no branch_ids provided, default to their own branch
             if not branch_id_list:
                 branch_id_list = [int(current_user.branch_id)]
-            # Otherwise ensure only their branch appears
             if any(bid != int(current_user.branch_id) for bid in branch_id_list):
                 raise HTTPException(status_code=403, detail="Branch manager can only target their own branch")
 
@@ -175,26 +175,22 @@ async def send_internal_mail(
         if not profile_id_list:
             raise HTTPException(status_code=400, detail="profile_ids is required for mode=profiles")
         recipients = _collect_by_profiles(db, profile_id_list)
-
     elif mode == "employees":
         if not employee_id_list:
             raise HTTPException(status_code=400, detail="employee_ids is required for mode=employees")
         recipients = _collect_by_employees(db, employee_id_list)
-
     elif mode == "branches":
         if not branch_id_list:
             raise HTTPException(status_code=400, detail="branch_ids is required for mode=branches")
         recipients = _collect_by_branches(db, branch_id_list)
-
     elif mode == "all":
         recipients = _collect_all(db)
 
-    # Extra scoping for non-admins (limit within same branch)
+    # Scope for non-admins
     if role not in {"SUPERADMIN"}:
         user_branch = current_user.branch_id
         recipients = [u for u in recipients if u.branch_id == user_branch]
 
-    # Dedupe + no self if desired (keep self by default)
     deduped = _dedupe_emails(recipients)
     if not deduped:
         return JSONResponse(
@@ -207,7 +203,15 @@ async def send_internal_mail(
             },
         )
 
-    # Send emails one by one (simple + robust)
+    # --- Normalize files to a list ---
+    if files is None:
+        file_list: List[UploadFile] = []
+    elif isinstance(files, list):
+        file_list = files
+    else:
+        file_list = [files]
+    # ---------------------------------
+
     server, sender = _ensure_smtp()
     sent = 0
     failed = 0
@@ -216,7 +220,7 @@ async def send_internal_mail(
     try:
         for email_addr, user in deduped.items():
             try:
-                msg = _build_message(sender, email_addr, subject, body, files or [])
+                msg = _build_message(sender, email_addr, subject, body, file_list)
                 server.sendmail(sender, [email_addr], msg.as_string())
                 sent += 1
                 details.append({"email": email_addr, "status": "SENT"})
@@ -236,3 +240,5 @@ async def send_internal_mail(
             server.quit()
         except Exception:
             pass
+
+
