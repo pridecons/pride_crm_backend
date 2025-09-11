@@ -130,6 +130,7 @@ async def send_internal_mail(
     branch_ids: Optional[str] = Form(None, description="Comma-separated branch ids"),
     # accept single OR multiple files
     files: Union[List[UploadFile], UploadFile, None] = File(default=None),
+    file: Optional[UploadFile] = File(default=None),
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
@@ -204,12 +205,11 @@ async def send_internal_mail(
         )
 
     # --- Normalize files to a list ---
-    if files is None:
-        file_list: List[UploadFile] = []
-    elif isinstance(files, list):
-        file_list = files
-    else:
-        file_list = [files]
+    file_list: List[UploadFile] = []
+    if files:
+        file_list.extend(files)
+    if file:
+        file_list.append(file)
     # ---------------------------------
 
     server, sender = _ensure_smtp()
