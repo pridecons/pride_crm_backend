@@ -1,19 +1,19 @@
-# ResearchReport.py
+# routes/Research_Report/ResearchReport.py
 from typing import Optional, List, Dict
 from datetime import date, datetime
 import os, uuid
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, UploadFile, File
-from pydantic import BaseModel, Field
+import datetime as dt
+
+from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.inspection import inspect
 
 from db.connection import get_db
 from db.models import UserDetails
 from db.Models.models_research import ResearchReport
 from routes.auth.auth_dependency import get_current_user
-import datetime as dt
 from routes.Research_Report.generateResearchPdf import generate_outlook_pdf
-from sqlalchemy.inspection import inspect
-
 
 # (Optionally fetch from settings/env)
 STATIC_UPLOAD_DIR = os.getenv("STATIC_UPLOAD_DIR", "static/uploads")
@@ -72,7 +72,7 @@ class CallItem(BaseModel):
 
 class ResearchReportIn(BaseModel):
     report_date: Optional[date] = None
-    title: Optional[str] = None
+    title: Optional[str] = None          # may not exist on DB model; OK to keep in API
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
 
@@ -97,26 +97,20 @@ class ResearchReportOut(ResearchReportIn):
     class Config:
         from_attributes = True
 
-
-# routes/Research_Report/ResearchReport.py
-
-from sqlalchemy.inspection import inspect
-
-# ... keep your imports and schemas as-is ...
-
+# --------- Internal helpers ----------
 def _list_or_none(items):
     return [i.model_dump(exclude_none=True) for i in items] if items else None
 
 def _dict_or_none(obj):
     return obj.model_dump(exclude_none=True) if obj else None
 
-# --------- Helpers ----------
+# --------- Presenter ----------
 def _to_out(rr: ResearchReport) -> ResearchReportOut:
-    # Use getattr to avoid AttributeError if a field was dropped from the model
+    # Use getattr to avoid AttributeError when columns are dropped on the ORM
     return ResearchReportOut(
         id=rr.id,
         report_date=getattr(rr, "report_date", None),
-        title=getattr(rr, "title", None),                     # will be None if column removed
+        title=getattr(rr, "title", None),  # will be None if column removed in ORM
         notes=getattr(rr, "notes", None),
         tags=getattr(rr, "tags", None),
         ipo=getattr(rr, "ipo", None),
@@ -140,10 +134,10 @@ async def create_report(
     db: Session = Depends(get_db),
     current_user: UserDetails = Depends(get_current_user),
 ):
-    # Build a dict from payload (convert nested Pydantic models to dicts)
+    # Build incoming dict from Pydantic payload (lists/dicts cleaned)
     incoming = {
         "report_date": payload.report_date,
-        # "title": payload.title,        # <-- dropped: don't include if column removed
+        # "title": payload.title,   # <- DO NOT pass into ORM if column is removed
         "notes": payload.notes,
         "tags": payload.tags,
 
@@ -162,21 +156,19 @@ async def create_report(
         "created_by": getattr(current_user, "employee_code", None),
     }
 
-    # Keep only keys that are real columns on the model
+    # Keep only keys that are actual ORM columns to avoid "invalid keyword argument"
     model_cols = {attr.key for attr in inspect(ResearchReport).mapper.column_attrs}
     clean_kwargs = {k: v for k, v in incoming.items() if k in model_cols}
 
     rr = ResearchReport(**clean_kwargs)
 
-    # If your PDF function doesn't require DB id, this is fine.
-    # If it needs rr.id, move this call to AFTER commit/refresh.
+    # ✅ The PDF generator is now resilient to missing attributes (see file below)
     await generate_outlook_pdf(rr)
 
     db.add(rr)
     db.commit()
     db.refresh(rr)
     return _to_out(rr)
-
 
 # --------- Chart Upload (returns URL) ---------
 @router.post("/upload-chart", status_code=201)
@@ -209,4 +201,5 @@ def upload_chart_image(
     # Public URL
     url = "/".join([STATIC_BASE_URL.rstrip("/"), subdir.replace("\\", "/"), fname])
     return {"url": url}
+
 
