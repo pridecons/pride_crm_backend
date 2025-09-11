@@ -18,14 +18,7 @@ from routes.Research_Report.report_html import returnHtmlContent
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 ASSETS_DIR = os.path.join(PROJECT_ROOT, "logo")
-WATERMARK_LOGO = os.path.join(ASSETS_DIR, "pride.png")  # used for watermark
-
-def _read_bytes(path: str) -> bytes:
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except Exception:
-        return b""
+WATERMARK_LOGO = os.path.join(ASSETS_DIR, "pride-logo1.png")  # used for watermark
 
 async def sign_pdf(pdf_bytes: bytes) -> bytes:
     """Sign the PDF bytes using certificate and return the signed bytes."""
@@ -115,147 +108,178 @@ def create_footer_overlay(page_width: float, page_height: float, page_number=Non
 
 def _adapt_research_report_to_html_payload(rr) -> dict:
     """
-    Convert your ResearchReport ORM object into the dict
-    that returnHtmlContent() expects.
+    Adapt an ORM object or dict into the payload shape returnHtmlContent() expects.
+    This is schema-agnostic and resilient to missing attributes/keys.
     """
-    # Header
-    hdr_date = (rr.report_date or datetime.utcnow().date()).strftime("%Y-%m-%d")
+
+    def get_any(src, *names, default=None):
+        # Try attrs first, then dict keys
+        for n in names:
+            if hasattr(src, n):
+                return getattr(src, n)
+            if isinstance(src, dict) and n in src:
+                return src[n]
+        # last chance: __dict__
+        if hasattr(src, "__dict__"):
+            d = vars(src)
+            for n in names:
+                if n in d:
+                    return d[n]
+        return default
+
+    def as_iter(x):
+        if not x:
+            return []
+        return x if isinstance(x, (list, tuple)) else []
+
+    # ----- header -----
+    report_date = get_any(rr, "report_date", "date", default=datetime.utcnow().date())
+    if hasattr(report_date, "strftime"):
+        hdr_date = report_date.strftime("%Y-%m-%d")
+    else:
+        hdr_date = str(report_date) or datetime.utcnow().strftime("%Y-%m-%d")
+
+    title = get_any(rr, "title", "report_title", "name", default="Technical Market Outlook")
+
     payload = {
         "header": {
             "date": hdr_date,
             "time": datetime.utcnow().strftime("%H:%M"),
-            "title": rr.title or "Technical Market Outlook",
+            "title": title,
         },
-        # Top gainers/losers mapping
         "gainers": [],
         "losers": [],
-        # Events: combine board meetings / corporate actions / results as a simple table
         "events": [],
-        # IPOs
         "ipos": [],
-        # Commentary (we’ll map index & stock calls concisely)
         "commentary": [],
-        # Stock picks
         "stockPicks": [],
-        # FII activity (flatten FII/DII if given)
         "fiiActivity": [],
-        # Optional images
         "commentary_images": {},
         "stockpick_images": {},
     }
 
-    # Map gainers/losers (if your schema uses top_gainers/top_losers)
-    if rr.top_gainers:
-        for g in rr.top_gainers:
-            payload["gainers"].append({
-                "symbol": g.get("symbol"),
-                "cmp": g.get("cmp"),
-                "change": g.get("price_change"),
-                "changePct": g.get("change_pct"),
-            })
-    if rr.top_losers:
-        for l in rr.top_losers:
-            payload["losers"].append({
-                "symbol": l.get("symbol"),
-                "cmp": l.get("cmp"),
-                "change": l.get("price_change"),
-                "changePct": l.get("change_pct"),
-            })
+    # ----- market movers -----
+    top_gainers = get_any(rr, "top_gainers", "gainers", default=[])
+    top_losers  = get_any(rr, "top_losers",  "losers",  default=[])
 
-    # IPOs
-    if rr.ipo:
-        for i in rr.ipo:
-            payload["ipos"].append({
-                "company": i.get("company"),
-                "category": i.get("category"),
-                "lotSize": i.get("lot_size"),
-                "priceRange": i.get("price_range"),
-                "openDate": (i.get("open_date") or "") if isinstance(i.get("open_date"), str) else (i.get("open_date") and i.get("open_date").strftime("%Y-%m-%d")) or "",
-                "closeDate": (i.get("close_date") or "") if isinstance(i.get("close_date"), str) else (i.get("close_date") and i.get("close_date").strftime("%Y-%m-%d")) or "",
-            })
+    for g in as_iter(top_gainers):
+        # support dict rows or objects with attrs
+        payload["gainers"].append({
+            "symbol": get_any(g, "symbol", default=""),
+            "cmp": get_any(g, "cmp", "price", "ltp", default=""),
+            "change": get_any(g, "price_change", "change", default=""),
+            "changePct": get_any(g, "change_pct", "changePct", default=""),
+        })
 
-    # Events: unify three lists into one table (optional)
-    if rr.board_meeting:
-        for e in rr.board_meeting:
-            payload["events"].append({
-                "company": e.get("company"),
-                "date": (e.get("date") or "") if isinstance(e.get("date"), str) else (e.get("date") and e.get("date").strftime("%Y-%m-%d")) or "",
-                "type": "Board Meeting",
-                "ltp": "",
-                "change": "",
-            })
-    if rr.corporate_action:
-        for e in rr.corporate_action:
-            payload["events"].append({
-                "company": e.get("company"),
-                "date": (e.get("ex_date") or "") if isinstance(e.get("ex_date"), str) else (e.get("ex_date") and e.get("ex_date").strftime("%Y-%m-%d")) or "",
-                "type": e.get("action"),
-                "ltp": "",
-                "change": "",
-            })
-    if rr.result_calendar:
-        for e in rr.result_calendar:
-            payload["events"].append({
-                "company": e.get("company"),
-                "date": (e.get("date") or "") if isinstance(e.get("date"), str) else (e.get("date") and e.get("date").strftime("%Y-%m-%d")) or "",
-                "type": e.get("type"),
-                "ltp": e.get("ltp"),
-                "change": e.get("change"),
-            })
+    for l in as_iter(top_losers):
+        payload["losers"].append({
+            "symbol": get_any(l, "symbol", default=""),
+            "cmp": get_any(l, "cmp", "price", "ltp", default=""),
+            "change": get_any(l, "price_change", "change", default=""),
+            "changePct": get_any(l, "change_pct", "changePct", default=""),
+        })
 
-    # Commentary: from index calls
-    if rr.calls_index:
-        for c in rr.calls_index:
-            payload["commentary"].append({
-                "indexName": c.get("symbol"),
-                "text": c.get("view") or "",
-                "level1": f"Entry: {c.get('entry_at') or ''} / Buy Above: {c.get('buy_above') or ''}",
-                "level2": f"T1: {c.get('t1') or ''}  T2: {c.get('t2') or ''}",
-                "level3": f"SL: {c.get('sl') or ''}",
-            })
-            # Optional image bytes could be attached in payload["commentary_images"][idx] = <bytes>
+    # ----- IPOs -----
+    ipos = get_any(rr, "ipo", "ipos", "ipo_list", default=[])
+    for i in as_iter(ipos):
+        open_dt  = get_any(i, "open_date", "openDate", default="")
+        close_dt = get_any(i, "close_date", "closeDate", default="")
+        def _fmt(d):
+            if not d: return ""
+            if hasattr(d, "strftime"): return d.strftime("%Y-%m-%d")
+            return str(d)
+        payload["ipos"].append({
+            "company":    get_any(i, "company", "name", default=""),
+            "category":   get_any(i, "category", default=""),
+            "lotSize":    get_any(i, "lot_size", "lotSize", default=""),
+            "priceRange": get_any(i, "price_range", "priceRange", default=""),
+            "openDate":   _fmt(open_dt),
+            "closeDate":  _fmt(close_dt),
+        })
 
-    # Stock picks: from stock calls
-    if rr.calls_stock:
-        for s in rr.calls_stock:
-            payload["stockPicks"].append({
-                "name": s.get("symbol"),
-                "cmp": s.get("entry_at"),
-                "commentary": s.get("view") or "",
-                "buyLevel": s.get("buy_above"),
-                "target1": s.get("t1"),
-                "target2": s.get("t2"),
-                "stopLoss": s.get("sl"),
-                # if you host images, you can load bytes and put in stockpick_images
-            })
+    # ----- Events (board meetings / corporate actions / results) -----
+    for e in as_iter(get_any(rr, "board_meeting", "board_meetings", default=[])):
+        dt = get_any(e, "date", default="")
+        dt = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else (dt or "")
+        payload["events"].append({
+            "company": get_any(e, "company", "name", default=""),
+            "date": dt,
+            "type": "Board Meeting",
+            "ltp": "",
+            "change": "",
+        })
+    for e in as_iter(get_any(rr, "corporate_action", "corporate_actions", default=[])):
+        dt = get_any(e, "ex_date", "date", default="")
+        dt = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else (dt or "")
+        payload["events"].append({
+            "company": get_any(e, "company", "name", default=""),
+            "date": dt,
+            "type": get_any(e, "action", "type", default="Corporate Action"),
+            "ltp": "",
+            "change": "",
+        })
+    for e in as_iter(get_any(rr, "result_calendar", "results", default=[])):
+        dt = get_any(e, "date", default="")
+        dt = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else (dt or "")
+        payload["events"].append({
+            "company": get_any(e, "company", "name", default=""),
+            "date": dt,
+            "type": get_any(e, "type", default="Result"),
+            "ltp": get_any(e, "ltp", default=""),
+            "change": get_any(e, "change", default=""),
+        })
 
-    # FII Activity (if rr.fii_dii provided)
-    if rr.fii_dii and isinstance(rr.fii_dii, dict):
-        d = rr.fii_dii
-        d_date = d.get("date")
-        if isinstance(d_date, datetime):
-            d_date = d_date.date()
-        d_date_str = d_date.strftime("%Y-%m-%d") if d_date else datetime.utcnow().strftime("%Y-%m-%d")
-        if d.get("fii_fpi"):
-            f = d["fii_fpi"]
+    # ----- Commentary (index calls) -----
+    for c in as_iter(get_any(rr, "calls_index", "index_calls", default=[])):
+        payload["commentary"].append({
+            "indexName": get_any(c, "symbol", "index", default=""),
+            "text":      get_any(c, "view", "comment", default=""),
+            "level1":    f"Entry: {get_any(c,'entry_at','entry','',default='')} / Buy Above: {get_any(c,'buy_above','buyAbove',default='')}",
+            "level2":    f"T1: {get_any(c,'t1',default='')}  T2: {get_any(c,'t2',default='')}",
+            "level3":    f"SL: {get_any(c,'sl','stoploss',default='')}",
+        })
+
+    # ----- Stock picks (stock calls) -----
+    for s in as_iter(get_any(rr, "calls_stock", "stock_calls", default=[])):
+        payload["stockPicks"].append({
+            "name":       get_any(s, "symbol", "name", default=""),
+            "cmp":        get_any(s, "entry_at", "cmp", default=""),
+            "commentary": get_any(s, "view", "comment", default=""),
+            "buyLevel":   get_any(s, "buy_above", "buyAbove", default=""),
+            "target1":    get_any(s, "t1", default=""),
+            "target2":    get_any(s, "t2", default=""),
+            "stopLoss":   get_any(s, "sl", "stoploss", default=""),
+        })
+
+    # ----- FII / DII -----
+    fii_dii = get_any(rr, "fii_dii", "fiiActivity", default=None)
+    if isinstance(fii_dii, dict):
+        d_date = fii_dii.get("date")
+        if hasattr(d_date, "strftime"):
+            d_date_str = d_date.strftime("%Y-%m-%d")
+        else:
+            d_date_str = d_date or datetime.utcnow().strftime("%Y-%m-%d")
+        if fii_dii.get("fii_fpi"):
+            f = fii_dii["fii_fpi"]
             payload["fiiActivity"].append({
                 "item": "FII/FPI",
                 "date": d_date_str,
-                "buy": f.get("buy"),
+                "buy":  f.get("buy"),
                 "sell": f.get("sell"),
                 "netPosition": ( (f.get("buy") or 0) - (f.get("sell") or 0) ),
             })
-        if d.get("dii"):
-            f = d["dii"]
+        if fii_dii.get("dii"):
+            f = fii_dii["dii"]
             payload["fiiActivity"].append({
                 "item": "DII",
                 "date": d_date_str,
-                "buy": f.get("buy"),
+                "buy":  f.get("buy"),
                 "sell": f.get("sell"),
                 "netPosition": ( (f.get("buy") or 0) - (f.get("sell") or 0) ),
             })
 
     return payload
+
 
 async def generate_outlook_pdf(rr_or_payload):
     """
@@ -286,14 +310,21 @@ async def generate_outlook_pdf(rr_or_payload):
         pdf_writer = PdfWriter()
         pdf_reader = PdfReader(BytesIO(pdf_bytes))
         total_pages = len(pdf_reader.pages)
-        page_width, page_height = 595.276, 841.890  # A4 in points
-
-        wm = create_watermark_overlay(page_width, page_height)
         for i, page in enumerate(pdf_reader.pages):
+            # derive page size from each page
+            mediabox = page.mediabox
+            page_width  = float(mediabox.width)
+            page_height = float(mediabox.height)
+
+            wm = create_watermark_overlay(page_width, page_height)
             page.merge_page(wm)
+
             footer = create_footer_overlay(page_width, page_height, i+1, total_pages)
             page.merge_page(footer)
+
             pdf_writer.add_page(page)
+
+
 
         out_io = BytesIO()
         pdf_writer.write(out_io)

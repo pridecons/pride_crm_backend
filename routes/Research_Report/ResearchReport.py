@@ -16,8 +16,8 @@ from routes.auth.auth_dependency import get_current_user
 from routes.Research_Report.generateResearchPdf import generate_outlook_pdf
 
 # (Optionally fetch from settings/env)
-STATIC_UPLOAD_DIR = os.getenv("STATIC_UPLOAD_DIR", "static/uploads")
-STATIC_BASE_URL   = os.getenv("STATIC_BASE_URL", "/static/uploads")
+STATIC_UPLOAD_DIR = os.getenv("STATIC_UPLOAD_DIR", "static/report")
+STATIC_BASE_URL   = os.getenv("STATIC_BASE_URL", "/static/report")
 
 router = APIRouter(prefix="/research", tags=["Research Report"])
 
@@ -127,8 +127,14 @@ def _to_out(rr: ResearchReport) -> ResearchReportOut:
         updated_at=getattr(rr, "updated_at", None),
     )
 
+class GenerateReportOut(BaseModel):
+    message: str
+    file_path: str
+    url: str
+
+
 # --------- Create ---------
-@router.post("/", response_model=ResearchReportOut, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=GenerateReportOut, status_code=status.HTTP_201_CREATED)
 async def create_report(
     payload: ResearchReportIn = Body(...),
     db: Session = Depends(get_db),
@@ -162,13 +168,24 @@ async def create_report(
 
     rr = ResearchReport(**clean_kwargs)
 
-    # ✅ The PDF generator is now resilient to missing attributes (see file below)
-    await generate_outlook_pdf(rr)
+    pdf_bytes = await generate_outlook_pdf(rr)
+
+    folder = os.path.join(STATIC_UPLOAD_DIR, "research-reports")
+    os.makedirs(folder, exist_ok=True)
+
+    fname = f"research_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.pdf"
+    fs_path = os.path.join(folder, fname)
+    with open(fs_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    public_url = f"{STATIC_BASE_URL}/research-reports/{fname}"
+    print("public_url : ",public_url)
 
     db.add(rr)
     db.commit()
     db.refresh(rr)
-    return _to_out(rr)
+    return GenerateReportOut(message="PDF generated", file_path=fs_path, url=public_url)
+
 
 # --------- Chart Upload (returns URL) ---------
 @router.post("/upload-chart", status_code=201)
