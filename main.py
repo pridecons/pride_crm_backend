@@ -45,6 +45,7 @@ from routes.leads import globel_search
 from routes.Chating import chat_ws, Chating
 from routes.mail_service import Internal_Mailing
 from routes.Research_Report import ResearchReport
+from utils.migrations import run_migrations
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
@@ -138,6 +139,14 @@ app.mount("/api/v1/static", StaticFiles(directory="static"), name="static")
 #         "docs": "/docs",
 #         "health": "/health"
 #     }
+
+@app.on_event("startup")
+def _migrate_on_start():
+    # DEV auto-generate + apply, set env var in dev only:
+    #   AUTO_MIGRATE=1 uvicorn main:app --reload
+    dev_auto = os.getenv("AUTO_MIGRATE", "0") == "1"
+    run_migrations(dev_autogenerate=dev_auto)
+
 
 # Health check endpoint
 @app.get("/health")

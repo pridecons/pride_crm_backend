@@ -30,3 +30,4 @@ celery
 redis
 apscheduler==3.10.4
 openpyxl
+alembic
