@@ -50,6 +50,8 @@ from routes.mail_service import Internal_Mailing
 from routes.Research_Report import ResearchReport
 from utils.migrations import run_migrations
 from db.connection import SessionLocal
+from routes.Reports import Client_Report
+from routes.Stock.AngelOne import live_price
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
@@ -179,6 +181,8 @@ def health_check():
 
 # Register all your existing routes
 try: 
+    app.include_router(live_price.router, prefix="/api/v1")
+    app.include_router(Client_Report.router, prefix="/api/v1")
     app.include_router(VBC_Scheduler.router, prefix="/api/v1")
     app.include_router(Reports.router, prefix="/api/v1")
     app.include_router(bulk_register.router, prefix="/api/v1")

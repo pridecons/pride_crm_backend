@@ -11,7 +11,7 @@ from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, select, literal
+from sqlalchemy import func, and_, or_, select, literal, case  # <-- case imported here
 
 from db.connection import get_db
 from db.models import Lead, Payment, UserDetails, LeadAssignment, LeadSource, LeadResponse, BranchDetails
@@ -77,7 +77,6 @@ def _bounds(from_date: Optional[date], to_date: Optional[date], fallback_days: i
 
 
 # ---------- column dictionary (internal keys -> label + builder) ----------
-# We’ll build rows as dicts using these keys, then allow selecting subset.
 COLUMN_MAP = {
     "client_name":          ("Client Name",        lambda r: r.client_name),
     "pan":                  ("PAN",                lambda r: r.pan),
@@ -137,6 +136,11 @@ def _clients_base_query(
 
     role = _role(current_user)
 
+    # Prebuild CASE expressions for reuse
+    paid_amount_case = case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)
+    paid_flag_case = case((Payment.status == "PAID", 1), else_=0)
+    paid_dt_case = case((Payment.status == "PAID", Payment.created_at), else_=None)
+
     # Start with Lead + joins we need for projection
     q = (
         db.query(
@@ -156,15 +160,15 @@ def _clients_base_query(
             Lead.city.label("city"),
             Lead.state.label("state"),
             Lead.pincode.label("pincode"),
-            func.coalesce(func.sum(func.case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)), 0.0).label("fees_collected"),
-            func.sum(func.case((Payment.status == "PAID", 1), else_=0)).label("payments_count"),
-            func.min(func.case((Payment.status == "PAID", Payment.created_at), else_=None)).label("first_payment_date"),
-            func.max(func.case((Payment.status == "PAID", Payment.created_at), else_=None)).label("last_payment_date"),
+            func.coalesce(func.sum(paid_amount_case), 0.0).label("fees_collected"),
+            func.sum(paid_flag_case).label("payments_count"),
+            func.min(paid_dt_case).label("first_payment_date"),
+            func.max(paid_dt_case).label("last_payment_date"),
             func.coalesce(Lead.ft_service_type, "").label("product"),
             Lead.ft_from_date.label("service_start"),
             Lead.ft_to_date.label("service_end"),
             # simplistic renewal: last paid payment date (same as last_payment_date)
-            func.max(func.case((Payment.status == "PAID", Payment.created_at), else_=None)).label("renewal_date"),
+            func.max(paid_dt_case).label("renewal_date"),
             LeadSource.name.label("lead_source"),
             LeadResponse.name.label("lead_response"),
             LeadAssignment.user_id.label("employee_code"),
@@ -203,7 +207,6 @@ def _clients_base_query(
             )
 
     # ---- Client (fee-paying) filter: at least one PAID payment in window ----
-    # Decide date dimension for window
     if filter_by == "registration_date":
         q = q.filter(Lead.created_at >= from_dt, Lead.created_at <= to_dt)
         # ensure paid exists (not necessarily in same window)
@@ -234,9 +237,9 @@ def _clients_base_query(
     if department_id and hasattr(UserDetails, "department_id"):
         q = q.filter(UserDetails.department_id == department_id)
     if min_amount is not None:
-        q = q.having(func.coalesce(func.sum(func.case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)), 0.0) >= float(min_amount))
+        q = q.having(func.coalesce(func.sum(paid_amount_case), 0.0) >= float(min_amount))
     if max_amount is not None:
-        q = q.having(func.coalesce(func.sum(func.case((Payment.status == "PAID", Payment.paid_amount), else_=0.0)), 0.0) <= float(max_amount))
+        q = q.having(func.coalesce(func.sum(paid_amount_case), 0.0) <= float(max_amount))
     if search:
         t = f"%{search.strip()}%"
         q = q.filter(
@@ -265,28 +268,29 @@ def _clients_base_query(
 
 # ---------- response models ----------
 class ClientRow(BaseModel):
-    client_name: Optional[str]
-    pan: Optional[str]
-    registration_date: Optional[str]
-    email: Optional[str]
-    mobile: Optional[str]
-    address: Optional[str]
-    city: Optional[str]
-    state: Optional[str]
-    pincode: Optional[str]
-    fees_collected: float
-    payments_count: int
-    first_payment_date: Optional[str]
-    last_payment_date: Optional[str]
-    product: Optional[str]
-    service_start: Optional[str]
-    service_end: Optional[str]
-    renewal_date: Optional[str]
-    lead_source: Optional[str]
-    lead_response: Optional[str]
-    employee_code: Optional[str]
-    employee_name: Optional[str]
-    branch_name: Optional[str]
+    client_name: Optional[str] = None
+    pan: Optional[str] = None
+    registration_date: Optional[str] = None
+    email: Optional[str] = None
+    mobile: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    fees_collected: Optional[float] = None
+    payments_count: Optional[int] = None
+    first_payment_date: Optional[str] = None
+    last_payment_date: Optional[str] = None
+    product: Optional[str] = None
+    service_start: Optional[str] = None
+    service_end: Optional[str] = None
+    renewal_date: Optional[str] = None
+    lead_source: Optional[str] = None
+    lead_response: Optional[str] = None
+    employee_code: Optional[str] = None
+    employee_name: Optional[str] = None
+    branch_name: Optional[str] = None
+
 
 class ClientReportResponse(BaseModel):
     window: Dict[str, str]
@@ -345,6 +349,10 @@ def clients_report(
         raise HTTPException(status_code=400, detail=f"Unknown columns: {unknown}")
 
     from_dt, to_dt = _bounds(from_date, to_date, days)
+
+    # Reuse CASE expr for order_by as well
+    paid_dt_case = case((Payment.status == "PAID", Payment.created_at), else_=None)
+
     q = _clients_base_query(
         db, current_user,
         view=view, from_dt=from_dt, to_dt=to_dt, filter_by=filter_by,
@@ -355,7 +363,7 @@ def clients_report(
 
     total = q.count()
     rows_sql = (
-        q.order_by(func.max(func.case((Payment.status == "PAID", Payment.created_at), else_=None)).desc())
+        q.order_by(func.max(paid_dt_case).desc())
          .offset(skip).limit(limit).all()
     )
     shaped = _shape_rows(rows_sql, cols)
@@ -408,6 +416,7 @@ def clients_report_export(
         raise HTTPException(status_code=400, detail=f"Unknown columns: {unknown}")
 
     from_dt, to_dt = _bounds(from_date, to_date, days)
+
     q = _clients_base_query(
         db, current_user,
         view=view, from_dt=from_dt, to_dt=to_dt, filter_by=filter_by,
@@ -416,7 +425,7 @@ def clients_report_export(
         min_amount=min_amount, max_amount=max_amount, search=search,
     )
 
-    rows_sql = q.order_by(func.max(func.case((Payment.status == "PAID", Payment.created_at), else_=None)).desc()).all()
+    rows_sql = q.order_by(func.max(case((Payment.status == "PAID", Payment.created_at), else_=None)).desc()).all()
     shaped = _shape_rows(rows_sql, cols)
 
     # Friendly headers
@@ -472,3 +481,176 @@ def clients_report_export(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+# ---------- API: Client full details + payments by lead_id ----------
+from pydantic import BaseModel
+
+class PaymentRow(BaseModel):
+    id: Optional[int] = None
+    status: Optional[str] = None
+    paid_amount: Optional[float] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    payment_mode: Optional[str] = None
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+
+class AssignmentRow(BaseModel):
+    employee_code: Optional[str] = None
+    employee_name: Optional[str] = None
+
+class ClientDetailsResponse(BaseModel):
+    client: Dict[str, Any]
+    assignments: List[AssignmentRow] = []
+    payments_summary: Dict[str, Any]
+    payments: List[PaymentRow] = []
+
+@router.get("/clients/{lead_id}", response_model=ClientDetailsResponse)
+def client_details(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserDetails = Depends(get_current_user),
+):
+    role = _role(current_user)
+
+    # --- build base query for the requested lead with visibility rules applied ---
+    q = (
+        db.query(
+            Lead,
+            BranchDetails.name.label("branch_name"),
+            LeadSource.name.label("lead_source"),
+            LeadResponse.name.label("lead_response"),
+            UserDetails.name.label("primary_employee_name"),
+        )
+        .select_from(Lead)
+        .outerjoin(BranchDetails, Lead.branch_id == BranchDetails.id)
+        .outerjoin(LeadSource, Lead.lead_source_id == LeadSource.id)
+        .outerjoin(LeadResponse, Lead.lead_response_id == LeadResponse.id)
+        .outerjoin(UserDetails, Lead.assigned_to_user == UserDetails.employee_code)
+        .filter(Lead.is_delete.is_(False), Lead.id == lead_id)
+    )
+
+    if role == "SUPERADMIN":
+        pass
+    elif role == "BRANCH_MANAGER":
+        b_id = _branch_id_for_manager(current_user)
+        if b_id:
+            q = q.filter(Lead.branch_id == b_id)
+        else:
+            q = q.filter(literal(False))
+    else:
+        allowed = _allowed_codes_for_employee_scope(db, current_user, view="all") or []
+        if not allowed:
+            q = q.filter(literal(False))
+        else:
+            q = q.filter(
+                or_(
+                    Lead.assigned_to_user.in_(allowed),
+                    _exists_assignment_for_allowed(allowed),
+                )
+            )
+
+    row = q.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Client not found or not visible.")
+
+    lead: Lead = row[0]
+    branch_name = row.branch_name
+    lead_source = row.lead_source
+    lead_response = row.lead_response
+    primary_employee_name = row.primary_employee_name
+
+    # ---- all assignments (historical/current) ----
+    assigns = (
+        db.query(LeadAssignment.user_id, UserDetails.name)
+        .outerjoin(UserDetails, LeadAssignment.user_id == UserDetails.employee_code)
+        .filter(LeadAssignment.lead_id == lead_id)
+        .all()
+    )
+    assignments = [
+        AssignmentRow(employee_code=a.user_id, employee_name=getattr(a, "name", None))
+        for a in assigns
+    ]
+
+    # ---- all payments (any status) newest first ----
+    payments_sql = (
+        db.query(Payment)
+        .filter(Payment.lead_id == lead_id)
+        .order_by(Payment.created_at.desc())
+        .all()
+    )
+
+    def _dt(v):
+        try:
+            return v.isoformat() if v else None
+        except Exception:
+            return None
+
+    payments = []
+    for p in payments_sql:
+        payments.append(
+            PaymentRow(
+                id=getattr(p, "id", None),
+                status=getattr(p, "status", None),
+                paid_amount=float(getattr(p, "paid_amount", 0.0) or 0.0)
+                if hasattr(p, "paid_amount")
+                else None,
+                created_at=_dt(getattr(p, "created_at", None)),
+                updated_at=_dt(getattr(p, "updated_at", None)),
+                payment_mode=getattr(p, "payment_mode", None) if hasattr(p, "payment_mode") else None,
+                reference_no=getattr(p, "reference_no", None) if hasattr(p, "reference_no") else None,
+                notes=getattr(p, "notes", None) if hasattr(p, "notes") else None,
+            )
+        )
+
+    # ---- quick summary (PAID only) ----
+    total_paid = (
+        db.query(func.coalesce(func.sum(Payment.paid_amount), 0.0))
+        .filter(Payment.lead_id == lead_id, Payment.status == "PAID")
+        .scalar()
+        or 0.0
+    )
+    paid_dates = (
+        db.query(
+            func.min(Payment.created_at),
+            func.max(Payment.created_at),
+            func.count(Payment.id),
+        )
+        .filter(Payment.lead_id == lead_id, Payment.status == "PAID")
+        .first()
+    )
+    first_paid_at, last_paid_at, paid_count = paid_dates if paid_dates else (None, None, 0)
+
+    client_payload = {
+        "lead_id": lead.id,
+        "client_name": lead.full_name,
+        "pan": lead.pan,
+        "registration_date": _dt(lead.created_at),
+        "email": lead.email,
+        "mobile": lead.mobile,
+        "address": lead.address,
+        "city": lead.city,
+        "state": lead.state,
+        "pincode": lead.pincode,
+        "product": getattr(lead, "ft_service_type", None),
+        "service_start": _dt(getattr(lead, "ft_from_date", None)),
+        "service_end": _dt(getattr(lead, "ft_to_date", None)),
+        "lead_source": lead_source,
+        "lead_response": lead_response,
+        "branch_name": branch_name,
+        "employee_primary_code": getattr(lead, "assigned_to_user", None),
+        "employee_primary_name": primary_employee_name,
+    }
+
+    return ClientDetailsResponse(
+        client=client_payload,
+        assignments=assignments,
+        payments_summary={
+            "count_paid": int(paid_count or 0),
+            "total_paid": float(total_paid or 0.0),
+            "first_payment_date": _dt(first_paid_at),
+            "last_payment_date": _dt(last_paid_at),
+        },
+        payments=payments,
+    )
+
