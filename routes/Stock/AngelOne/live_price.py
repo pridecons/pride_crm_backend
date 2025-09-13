@@ -159,7 +159,7 @@ async def quotes(symbols: str = Query(..., description="Comma-separated e.g. NIF
 
 
 # ------------------ WS: Live stream (proxy) ------------------
-@router.websocket("/stream")
+@router.websocket("/ws/stream")
 async def stream(ws: WebSocket, symbols: str = Query(..., description="Comma-separated")):
     """
     Sends messages like: {"symbol":"NIFTY","ltp":25114.0}
