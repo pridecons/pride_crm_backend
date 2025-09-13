@@ -243,6 +243,8 @@ def upsert_admin_user(db: Session, superadmin_role: ProfileRole, admin_dept_id: 
         user.state = user.state or "System State"
         user.pincode = user.pincode or "000000"
         user.comment = user.comment or "Auto-updated super admin user"
+        user.vbc_user_username = "info.prideconsultancy@gmail.com"
+        user.vbc_user_password = "Pride@##2025"
         db.flush()
         return user
 
@@ -260,6 +262,8 @@ def upsert_admin_user(db: Session, superadmin_role: ProfileRole, admin_dept_id: 
         date_of_joining=date.today(),
         date_of_birth=date(1990, 1, 1),
         permissions=full_perms,
+        vbc_user_username= "info.prideconsultancy@gmail.com",
+        vbc_user_password= "Pride@##2025"
     )
     db.add(user)
     db.flush()

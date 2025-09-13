@@ -13,6 +13,7 @@ from db.Schema.register import UserCreate, UserUpdate, ChangePasswordRequest
 from utils.validation_utils import validate_user_data
 from sqlalchemy.exc import IntegrityError
 from routes.auth.auth_dependency import get_current_user
+from sqlalchemy import and_
 
 router = APIRouter(
     prefix="/users",
@@ -210,12 +211,23 @@ def get_all_users(
             if b_id is None:
                 query = query.filter(UserDetails.employee_code == "__none__")
             else:
-                query = query.filter(UserDetails.branch_id == b_id)
+                query = query.filter(
+                    and_(
+                        UserDetails.branch_id == b_id,
+                        UserDetails.employee_code != current_user.employee_code
+                    )
+                )
         elif role_name == "HR":
             if current_user.branch_id is None:
                 query = query.filter(UserDetails.employee_code == "__none__")
             else:
-                query = query.filter(UserDetails.branch_id == current_user.branch_id)
+                query = query.filter(
+                    and_(
+                        UserDetails.branch_id == current_user.branch_id,
+                        UserDetails.employee_code != current_user.employee_code,
+                        UserDetails.role_name != "BRANCH_MANAGER"
+                    )
+                )
 
         # ---------- Existing filters ----------
         if active_only:

@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 # Import database
 from db.connection import engine, check_database_connection
 from db import models
-from db.Models import models_chat, models_research
+from db.Models import models_chat, models_research, models_VBC
+from Scheduler import VBC_Scheduler
+from Scheduler.VBC_Scheduler import start_vbc_ingest_scheduler, stop_vbc_ingest_scheduler
 
 # Import routes
 from routes.auth import login, register, bulk_register
@@ -37,6 +39,7 @@ from routes.notification.notification_scheduler import start_scheduler, shutdown
 from routes.payments import Get_Invoice, payment
 from db.complete_initialization import setup_complete_system
 from routes.VBC_Calling import Create_Call
+from routes.VBC_Calling.Reports import Reports
 from routes.ClientConsent import ClientConsent
 from routes.Dashboard import dashboard
 from routes.state import state
@@ -46,6 +49,7 @@ from routes.Chating import chat_ws, Chating
 from routes.mail_service import Internal_Mailing
 from routes.Research_Report import ResearchReport
 from utils.migrations import run_migrations
+from db.connection import SessionLocal
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "static")).resolve()
@@ -58,6 +62,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting CRM Backend...")
 
     try:
+        start_vbc_ingest_scheduler(interval_hours=2)
         # 1) Start all schedulers ONCE here
         # lead_scheduler.start()          # your existing lead scheduler
         start_scheduler()               # notification (APS) scheduler
@@ -73,6 +78,7 @@ async def lifespan(app: FastAPI):
         models.Base.metadata.create_all(engine)
         models_chat.Base.metadata.create_all(engine)
         models_research.Base.metadata.create_all(engine)
+        models_VBC.Base.metadata.create_all(engine)
         
         logger.info("✅ Database tables created/verified")
 
@@ -141,6 +147,14 @@ app.mount("/api/v1/static", StaticFiles(directory="static"), name="static")
 #     }
 
 @app.on_event("startup")
+def on_startup():
+    start_vbc_ingest_scheduler(interval_hours=2)
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_vbc_ingest_scheduler()
+
+@app.on_event("startup")
 def _migrate_on_start():
     # DEV auto-generate + apply, set env var in dev only:
     #   AUTO_MIGRATE=1 uvicorn main:app --reload
@@ -165,6 +179,8 @@ def health_check():
 
 # Register all your existing routes
 try: 
+    app.include_router(VBC_Scheduler.router, prefix="/api/v1")
+    app.include_router(Reports.router, prefix="/api/v1")
     app.include_router(bulk_register.router, prefix="/api/v1")
     app.include_router(ResearchReport.router, prefix="/api/v1")
     app.include_router(chat_ws.router, prefix="/api/v1")
@@ -229,6 +245,7 @@ try:
     models.Base.metadata.create_all(engine)
     models_chat.Base.metadata.create_all(engine)
     models_research.Base.metadata.create_all(engine)
+    models_VBC.Base.metadata.create_all(engine)
     logger.info("Tables created successfully!")
 except Exception as e:
     logger.error(f"Error creating tables: {e}", exc_info=True)
